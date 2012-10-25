@@ -1,11 +1,7 @@
 /**
-	Main header for the FileWatcher class. Declares all implementation
-	classes to reduce compilation overhead.
+	@author Martín Lucas Golini
 
-	@author James Wynn
-	@date 4/15/2009
-
-	Copyright (c) 2009 James Wynn (james@jameswynn.com)
+	Copyright (c) 2012 Martín Lucas Golini
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +20,9 @@
 	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 	THE SOFTWARE.
+
+	This software is a fork of the "simplefilewatcher" by James Wynn (james@jameswynn.com)
+	http://code.google.com/p/simplefilewatcher/ also MIT licensed.
 */
 
 #ifndef ESFW_HPP
