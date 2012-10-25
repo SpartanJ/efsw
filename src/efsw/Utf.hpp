@@ -34,7 +34,7 @@
 #include <locale>
 #include <string>
 #include <cstdlib>
-#include <eepp/declares.hpp>
+#include <efsw/base.hpp>
 
 namespace efsw {
 
