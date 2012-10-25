@@ -17,17 +17,37 @@ solution "efsw"
 		targetdir("./lib")
 		includedirs { "include", "src" }
 		files { "src/efsw/*.cpp", osfiles }
-		
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
-			targetname "efsw-debug"
+			targetname "efsw-static-debug"
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
-			targetname "efsw"
+			targetname "efsw-static-release"
 	
+	project "efsw-test"
+		kind "ConsoleApp"
+		language "C++"
+		links { "efsw-static-lib" }
+		files { "src/test/*.cpp" }
+		includedirs { "include", "src" }
+		
+		configuration "not windows and not haiku"
+			links { "pthread" }
+		
+		configuration "debug"
+			defines { "DEBUG" }
+			flags { "Symbols" }
+			targetname "efsw-test-debug"
+
+		configuration "release"
+			defines { "NDEBUG" }
+			flags { "Optimize" }
+			targetname "efsw-test-release"
+
 	project "efsw-shared-lib"
 		kind "SharedLib"
 		language "C++"
@@ -44,24 +64,3 @@ solution "efsw"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
 			targetname "efsw"
-
-	project "efsw-test"
-		kind "ConsoleApp"
-		language "C++"
-		links { "efsw-static-lib" }
-		files { "src/test/*.cpp" }
-		includedirs { "include", "src" }
-		
-		if not os.is("windows") then
-			links { "pthread" }
-		end
-		
-		configuration "debug"
-			defines { "DEBUG" }
-			flags { "Symbols" }
-			targetname "efsw-test-debug"
-
-		configuration "release"
-			defines { "NDEBUG" }
-			flags { "Optimize" }
-			targetname "efsw-test-release"

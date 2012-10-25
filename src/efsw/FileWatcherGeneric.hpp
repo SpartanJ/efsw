@@ -29,24 +29,41 @@
 
 #include <efsw/FileWatcherImpl.hpp>
 #include <efsw/FileInfo.hpp>
+#include <efsw/FileSystem.hpp>
 #include <list>
 #include <map>
 
 namespace efsw
 {
+	class DirectoryWatch;
+
+	class WatcherGeneric : public Watcher
+	{
+		public:
+			DirectoryWatch *		DirWatch;
+			FileWatcherImpl *		WatcherImpl;
+			DirectoryWatch *		CurDirWatch;
+
+			WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive );
+
+			~WatcherGeneric();
+
+			void watch();
+	};
+
 	class DirectoryWatch
 	{
 		public:
 			typedef std::map<std::string, FileInfo> FileInfoMap;
 			typedef std::map<std::string, DirectoryWatch*> DirWatchMap;
 
-			WatchStruct *	Watcher;
-			std::string		Directory;
-			FileInfoMap		Files;
-			DirWatchMap		Directories;
-			bool			Recursive;
+			WatcherGeneric *	Watch;
+			std::string			Directory;
+			FileInfoMap			Files;
+			DirWatchMap			Directories;
+			bool				Recursive;
 
-			DirectoryWatch( WatchStruct * ws, const std::string& directory, bool recursive );
+			DirectoryWatch( WatcherGeneric * ws, const std::string& directory, bool recursive );
 
 			~DirectoryWatch();
 
@@ -64,7 +81,7 @@ namespace efsw
 	class FileWatcherGeneric : public FileWatcherImpl
 	{
 	public:
-		typedef std::list<WatchStruct*> WatchList;
+		typedef std::list<WatcherGeneric*> WatchList;
 
 		FileWatcherGeneric();
 
@@ -84,7 +101,7 @@ namespace efsw
 		void watch();
 
 		/// Handles the action
-		void handleAction(WatchStruct* watch, const std::string& filename, unsigned long action);
+		void handleAction(Watcher * watch, const std::string& filename, unsigned long action);
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();

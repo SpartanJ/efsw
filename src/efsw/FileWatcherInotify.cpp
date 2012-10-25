@@ -38,15 +38,6 @@ namespace efsw
 		return pos;
 	}
 
-	class WatchStruct
-	{
-		public:
-			WatchID					ID;
-			std::string				Directory;
-			FileWatchListener	*	Listener;
-			bool					Recursive;
-	};
-
 	FileWatcherInotify::FileWatcherInotify() :
 		mFD(-1),
 		mThread(NULL)
@@ -102,7 +93,7 @@ namespace efsw
 				return Errors::Log::createLastError( Errors::Unspecified, std::string(strerror(errno)) );
 		}
 		
-		WatchStruct* pWatch = new WatchStruct();
+		Watcher * pWatch	= new Watcher();
 		pWatch->Listener	= watcher;
 		pWatch->ID			= wd;
 		pWatch->Directory	= dir;
@@ -141,7 +132,7 @@ namespace efsw
 		{
 			if( directory == iter->second->Directory )
 			{
-				WatchStruct * watch = iter->second;
+				Watcher * watch = iter->second;
 
 				if ( watch->Recursive )
 				{
@@ -178,7 +169,7 @@ namespace efsw
 		if( iter == mWatches.end() )
 			return;
 
-		WatchStruct * watch = iter->second;
+		Watcher * watch = iter->second;
 
 		if ( watch->Recursive )
 		{
@@ -227,7 +218,7 @@ namespace efsw
 					struct inotify_event *pevent = (struct inotify_event *)&buff[i];
 
 					mWatchesLock.lock();
-					WatchStruct* watch = mWatches[pevent->wd];
+					Watcher * watch = mWatches[pevent->wd];
 					mWatchesLock.unlock();
 
 					handleAction(watch, pevent->name, pevent->mask);
@@ -237,7 +228,7 @@ namespace efsw
 		} while( mFD > 0 );
 	}
 
-	void FileWatcherInotify::handleAction(WatchStruct* watch, const std::string& filename, unsigned long action)
+	void FileWatcherInotify::handleAction(Watcher* watch, const std::string& filename, unsigned long action)
 	{
 		if(!watch || !watch->Listener)
 		{

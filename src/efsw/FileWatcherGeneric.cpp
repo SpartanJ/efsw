@@ -1,45 +1,30 @@
 #include <efsw/FileWatcherGeneric.hpp>
 #include <efsw/System.hpp>
-#include <efsw/FileSystem.hpp>
 
 namespace efsw
 {
 
-class WatchStruct
+WatcherGeneric::WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive ) :
+	Watcher( id, directory, fwl, recursive ),
+	WatcherImpl( fw )
 {
-	public:
-		WatchID					ID;
-		FileWatchListener	*	Listener;
-		DirectoryWatch *		DirWatch;
-		FileWatcherImpl *		WatcherImpl;
-		DirectoryWatch *		CurDirWatch;
-		std::string				Directory;
+	FileSystem::dirAddSlashAtEnd( Directory );
 
-		WatchStruct( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive ) :
-			ID( id ),
-			Listener( fwl ),
-			WatcherImpl( fw ),
-			Directory( directory )
-		{
-			FileSystem::dirAddSlashAtEnd( Directory );
+	DirWatch = CurDirWatch = new DirectoryWatch( this, directory, recursive );
+}
 
-			DirWatch = CurDirWatch = new DirectoryWatch( this, directory, recursive );
-		}
+WatcherGeneric::~WatcherGeneric()
+{
+	efSAFE_DELETE( DirWatch );
+}
 
-		~WatchStruct()
-		{
-			efSAFE_DELETE( DirWatch );
-		}
+void WatcherGeneric::watch()
+{
+	DirWatch->watch();
+}
 
-		void watch()
-		{
-			DirWatch->watch();
-		}
-
-};
-
-DirectoryWatch::DirectoryWatch( WatchStruct * ws, const std::string& directory, bool recursive ) :
-	Watcher( ws ),
+DirectoryWatch::DirectoryWatch( WatcherGeneric * ws, const std::string& directory, bool recursive ) :
+	Watch( ws ),
 	Directory( directory ),
 	Recursive( recursive ),
 	Deleted( false )
@@ -79,9 +64,9 @@ DirectoryWatch::~DirectoryWatch()
 	/// If the directory was deleted mark the files as deleted
 	if ( Deleted )
 	{
-		DirectoryWatch * oldWatch = Watcher->CurDirWatch;
+		DirectoryWatch * oldWatch = Watch->CurDirWatch;
 
-		Watcher->CurDirWatch = this;
+		Watch->CurDirWatch = this;
 
 		FileInfoMap::iterator it;
 		FileInfo fi;
@@ -92,11 +77,11 @@ DirectoryWatch::~DirectoryWatch()
 
 			if ( !fi.isDirectory() )
 			{
-				Watcher->WatcherImpl->handleAction( Watcher, it->first, Actions::Delete );
+				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Delete );
 			}
 		}
 
-		Watcher->CurDirWatch = oldWatch;
+		Watch->CurDirWatch = oldWatch;
 	}
 
 	DirWatchMap::iterator it = Directories.begin();
@@ -115,7 +100,7 @@ DirectoryWatch::~DirectoryWatch()
 
 void DirectoryWatch::watch()
 {
-	DirectoryWatch * oldWatch = Watcher->CurDirWatch;
+	DirectoryWatch * oldWatch = Watch->CurDirWatch;
 
 	FileInfoMap files;
 
@@ -152,8 +137,8 @@ void DirectoryWatch::watch()
 				Files[ it->first ] = fi;
 
 				/// handle modified event
-				Watcher->CurDirWatch = this;
-				Watcher->WatcherImpl->handleAction( Watcher, it->first, Actions::Modified );
+				Watch->CurDirWatch = this;
+				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Modified );
 			}
 		}
 		else
@@ -162,8 +147,8 @@ void DirectoryWatch::watch()
 			Files[ it->first ] = fi;
 
 			/// handle add event
-			Watcher->CurDirWatch = this;
-			Watcher->WatcherImpl->handleAction( Watcher, it->first, Actions::Add );
+			Watch->CurDirWatch = this;
+			Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Add );
 		}
 
 		/// Is directory and recursive?
@@ -182,7 +167,7 @@ void DirectoryWatch::watch()
 			else
 			{
 				/// Creates the new directory watcher of the subfolder and check for new files
-				dw = new DirectoryWatch( Watcher, it->first, Recursive );
+				dw = new DirectoryWatch( Watch, it->first, Recursive );
 				dw->watch();
 
 				/// Add it to the list of directories
@@ -191,7 +176,7 @@ void DirectoryWatch::watch()
 		}
 	}
 
-	Watcher->CurDirWatch = oldWatch;
+	Watch->CurDirWatch = oldWatch;
 
 	/// The files or directories that remains were deleted
 	for ( it = FilesCpy.begin(); it != FilesCpy.end(); it++ )
@@ -222,16 +207,16 @@ void DirectoryWatch::watch()
 		}
 
 		/// File or Directory deleted
-		Watcher->CurDirWatch = this;
+		Watch->CurDirWatch = this;
 
 		/// handle delete event
-		Watcher->WatcherImpl->handleAction( Watcher, it->first, Actions::Delete );
+		Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Delete );
 
 		/// Remove the file or directory from the list of files
 		Files.erase( it->first );
 	}
 
-	Watcher->CurDirWatch = oldWatch;
+	Watch->CurDirWatch = oldWatch;
 }
 
 void DirectoryWatch::GetFiles( const std::string& directory, FileInfoMap& files )
@@ -276,7 +261,7 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	mLastWatchID++;
 
-	WatchStruct * pWatch		= new WatchStruct( mLastWatchID, dir, watcher, this, recursive );
+	WatcherGeneric * pWatch		= new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive );
 
 	mWatchesLock.lock();
 	mWatches.push_back(pWatch);
@@ -345,9 +330,9 @@ void FileWatcherGeneric::run()
 	} while ( mInitOK );
 }
 
-void FileWatcherGeneric::handleAction(WatchStruct* watch, const std::string& filename, unsigned long action)
+void FileWatcherGeneric::handleAction(Watcher * watch, const std::string& filename, unsigned long action)
 {
-	watch->Listener->handleFileAction( watch->ID, watch->CurDirWatch->Directory, filename, (Action)action );
+	watch->Listener->handleFileAction( watch->ID, reinterpret_cast<WatcherGeneric*>( watch )->CurDirWatch->Directory, filename, (Action)action );
 }
 
 std::list<std::string> FileWatcherGeneric::directories()

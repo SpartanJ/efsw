@@ -17,7 +17,7 @@ namespace efsw
 	{
 	public:
 		/// type for a map from WatchID to WatchStruct pointer
-		typedef std::map<WatchID, WatchStruct*> WatchMap;
+		typedef std::map<WatchID, Watcher*> WatchMap;
 
 	public:
 		FileWatcherInotify();
@@ -38,7 +38,7 @@ namespace efsw
 		void watch();
 
 		/// Handles the action
-		void handleAction(WatchStruct* watch, const std::string& filename, unsigned long action);
+		void handleAction(Watcher * watch, const std::string& filename, unsigned long action);
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();

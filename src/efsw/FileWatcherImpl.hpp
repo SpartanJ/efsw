@@ -7,7 +7,30 @@
 
 namespace efsw {
 
-class WatchStruct;
+class Watcher
+{
+	public:
+		Watcher() :
+			ID(0),
+			Directory(""),
+			Listener(NULL),
+			Recursive(false)
+		{
+		}
+
+		Watcher( WatchID id, std::string directory, FileWatchListener * listener, bool recursive ) :
+			ID( id ),
+			Directory( directory ),
+			Listener( listener ),
+			Recursive( recursive )
+		{
+		}
+
+		WatchID					ID;
+		std::string				Directory;
+		FileWatchListener	*	Listener;
+		bool					Recursive;
+};
 
 class FileWatcherImpl
 {
@@ -30,7 +53,7 @@ class FileWatcherImpl
 		virtual void watch() = 0;
 
 		/// Handles the action
-		virtual void handleAction(WatchStruct* watch, const std::string& filename, unsigned long action) = 0;
+		virtual void handleAction(Watcher * watch, const std::string& filename, unsigned long action) = 0;
 
 		/// @return Returns a list of the directories that are being watched
 		virtual std::list<std::string> directories() = 0;
