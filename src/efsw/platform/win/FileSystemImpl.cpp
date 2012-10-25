@@ -7,9 +7,13 @@
 #endif
 #include <windows.h>
 
+#ifndef EFSW_COMPILER_MSVC
+#include <dirent.h>
+#endif
+
 namespace efsw { namespace Platform {
 
-std::map<std::string, FileInfo> FileSystem::filesInfoFrotpath( const std::string& path )
+std::map<std::string, FileInfo> FileSystem::filesInfoFromPath( const std::string& path )
 {
 	std::map<std::string, FileInfo> files;
 
@@ -112,6 +116,12 @@ char FileSystem::getOSSlash()
 {
 	return '\\';
 }
+
+bool FileSystem::isDirectory( const std::string& path )
+{
+	return GetFileAttributes( (LPCTSTR) path.c_str() ) != INVALID_FILE_ATTRIBUTES;
+}
+
 
 }}
 

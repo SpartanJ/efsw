@@ -19,7 +19,7 @@ namespace Platform {
 
 class ThreadImpl {
 	public:
-		ThreadImpl( cThread * owner );
+		ThreadImpl( Thread * owner );
 		
 		void wait();
 		

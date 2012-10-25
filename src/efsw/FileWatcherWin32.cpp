@@ -1,11 +1,12 @@
 #include <efsw/FileWatcherWin32.hpp>
+#include <efsw/System.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
 #define _WIN32_WINNT 0x0550
 #include <windows.h>
 
-#if defined(_MSC_VER)
+#ifdef EFSW_COMPILER_MSVC
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -102,7 +103,7 @@ namespace efsw
 
 			if (!HasOverlappedIoCompleted(&pWatch->mOverlapped))
 			{
-				sleepEx(5, TRUE);
+				SleepEx(5, TRUE);
 			}
 
 			CloseHandle(pWatch->mOverlapped.hEvent);
@@ -146,9 +147,11 @@ namespace efsw
 
 #pragma endregion
 
-	FileWatcherWin32::FileWatcherWin32()
-		: mLastWatchID(0)
+	FileWatcherWin32::FileWatcherWin32() :
+		mLastWatchID(0),
+		mThread( NULL )
 	{
+		mInitOK = true;
 	}
 
 	FileWatcherWin32::~FileWatcherWin32()
@@ -160,6 +163,12 @@ namespace efsw
 			DestroyWatch(iter->second);
 		}
 		mWatches.clear();
+
+		mInitOK = false;
+
+		mThread->wait();
+
+		efSAFE_DELETE( mThread );
 	}
 
 	WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
@@ -212,8 +221,21 @@ namespace efsw
 
 	void FileWatcherWin32::watch()
 	{
-		/// @TODO: Implement threaded watch()
-		MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, MWMO_ALERTABLE);
+		if ( NULL == mThread )
+		{
+			mThread = new Thread( &FileWatcherWin32::run, this );
+			mThread->launch();
+		}
+	}
+
+	void FileWatcherWin32::run()
+	{
+		do
+		{
+			MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, MWMO_ALERTABLE);
+
+			if ( mInitOK ) System::sleep( 500 );
+		} while ( mInitOK );
 	}
 
 	void FileWatcherWin32::handleAction(WatchStruct* watch, const std::string& filename, unsigned long action)
@@ -242,16 +264,12 @@ namespace efsw
 	{
 		std::list<std::string> dirs;
 
-		mWatchesLock.lock();
-
 		WatchMap::iterator it = mWatches.begin();
 
 		for ( ; it != mWatches.end(); it++ )
 		{
 			dirs.push_back( std::string( it->second->mDirName ) );
 		}
-
-		mWatchesLock.unlock();
 
 		return dirs;
 	}

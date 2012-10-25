@@ -3,6 +3,7 @@
 
 #include <efsw/base.hpp>
 #include <efsw/String.hpp>
+#include <efsw/FileInfo.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -15,6 +16,8 @@ class FileSystem {
 		static std::map<std::string, FileInfo> filesInfoFromPath( const std::string& path );
 
 		static char getOSSlash();
+
+		static bool isDirectory( const std::string& path );
 };
 
 }}

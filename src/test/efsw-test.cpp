@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <efsw/efsw.hpp>
 #include <efsw/System.hpp>
+#include <efsw/FileSystem.hpp>
 
 /// Processes a file action
 class UpdateListener : public efsw::FileWatchListener
@@ -53,9 +54,13 @@ class UpdateListener : public efsw::FileWatchListener
 		}
 };
 
+std::string FileRemoveFileName( const std::string& filepath ) {
+    return filepath.substr( 0, filepath.find_last_of("/\\") + 1 );
+}
+
 int main(int argc, char **argv)
 {
-	try 
+	try
 	{
 		UpdateListener * ul = new UpdateListener();
 
@@ -63,7 +68,9 @@ int main(int argc, char **argv)
 		efsw::FileWatcher fileWatcher(true);
 
 		// add a watch to the system
-		efsw::WatchID watchID = fileWatcher.addWatch( "/tmp", ul, true );
+		std::string path( FileRemoveFileName( std::string( *argv ) ) + "test" );
+
+		efsw::WatchID watchID = fileWatcher.addWatch( path, ul, true );
 		
 		std::cout << "Press ^C to exit demo" << std::endl;
 
@@ -84,7 +91,7 @@ int main(int argc, char **argv)
 
 			//count+= 100;
 		}
-	} 
+	}
 	catch( std::exception& e ) 
 	{
 		fprintf(stderr, "An exception has occurred: %s\n", e.what());

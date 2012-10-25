@@ -1,11 +1,12 @@
 #include <efsw/platform/win/ThreadImpl.hpp>
 #include <efsw/Thread.hpp>
+#include <assert.h>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
 namespace efsw { namespace Platform {
 
-ThreadImpl::ThreadImpl( cThread * owner ) {
+ThreadImpl::ThreadImpl( Thread *owner ) {
 	mThread = reinterpret_cast<HANDLE>( _beginthreadex( NULL, 0, &ThreadImpl::entryPoint, owner, 0, &mThreadId ) );
 
 	if ( !mThread )

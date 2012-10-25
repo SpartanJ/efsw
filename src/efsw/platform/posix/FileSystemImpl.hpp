@@ -14,6 +14,8 @@ class FileSystem {
 		static std::map<std::string, FileInfo> filesInfoFromPath( const std::string& path );
 
 		static char getOSSlash();
+
+		static bool isDirectory( const std::string& path );
 };
 
 }}

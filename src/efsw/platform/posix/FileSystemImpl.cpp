@@ -38,6 +38,19 @@ char FileSystem::getOSSlash()
 	return '/';
 }
 
+bool FileSystem::isDirectory( const std::string& path )
+{
+	struct stat st;
+	int res = stat( path.c_str(), &st );
+
+	if ( 0 == res )
+	{
+		return static_cast<bool>( S_ISDIR(st.st_mode) );
+	}
+
+	return false;
+}
+
 }}
 
 #endif

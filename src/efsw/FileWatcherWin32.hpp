@@ -47,6 +47,11 @@ namespace efsw
 		/// The last watchid
 		WatchID mLastWatchID;
 
+        Thread * mThread;
+
+        Mutex mWatchesLock;
+    private:
+        void run();
 	};
 }
 
