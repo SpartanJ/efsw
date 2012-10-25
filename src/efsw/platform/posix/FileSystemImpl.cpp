@@ -1,0 +1,43 @@
+#include <efsw/platform/posix/FileSystemImpl.hpp>
+
+#if defined( EFSW_PLATFORM_POSIX )
+
+#include <dirent.h>
+#include <cstring>
+
+namespace efsw { namespace Platform {
+
+std::map<std::string, FileInfo> FileSystem::filesInfoFromPath( const std::string& path )
+{
+	std::map<std::string, FileInfo> files;
+
+	DIR *dp;
+	struct dirent *dirp;
+
+	if( ( dp = opendir( path.c_str() ) ) == NULL)
+		return files;
+
+	while ( ( dirp = readdir(dp) ) != NULL)
+	{
+		if ( strcmp( dirp->d_name, ".." ) != 0 && strcmp( dirp->d_name, "." ) != 0 )
+		{
+			std::string name( dirp->d_name );
+			std::string fpath( path + name );
+
+			files[ name ] = FileInfo( fpath );
+		}
+	}
+
+	closedir(dp);
+
+	return files;
+}
+
+char FileSystem::getOSSlash()
+{
+	return '/';
+}
+
+}}
+
+#endif
