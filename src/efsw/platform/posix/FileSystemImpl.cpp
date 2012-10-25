@@ -4,6 +4,7 @@
 
 #include <dirent.h>
 #include <cstring>
+#include <sys/stat.h>
 
 namespace efsw { namespace Platform {
 
