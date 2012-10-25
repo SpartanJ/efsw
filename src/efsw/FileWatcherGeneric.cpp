@@ -332,7 +332,7 @@ void FileWatcherGeneric::run()
 
 void FileWatcherGeneric::handleAction(Watcher * watch, const std::string& filename, unsigned long action)
 {
-	watch->Listener->handleFileAction( watch->ID, reinterpret_cast<WatcherGeneric*>( watch )->CurDirWatch->Directory, filename, (Action)action );
+	watch->Listener->handleFileAction( watch->ID, static_cast<WatcherGeneric*>( watch )->CurDirWatch->Directory, filename, (Action)action );
 }
 
 std::list<std::string> FileWatcherGeneric::directories()

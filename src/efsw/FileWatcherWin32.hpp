@@ -6,17 +6,45 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
+#define _WIN32_WINNT 0x0550
+#include <windows.h>
+
+#ifdef EFSW_COMPILER_MSVC
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "ole32.lib")
+
+// disable secure warnings
+#pragma warning (disable: 4996)
+#endif
+
 #include <map>
 
 namespace efsw
 {
+	/// Internal watch data
+	struct WatcherStructWin32;
+
+	class WatcherWin32 : public Watcher
+	{
+		public:
+			WatcherStructWin32 * Struct;
+			HANDLE DirHandle;
+			BYTE mBuffer[32 * 1024];
+			LPARAM lParam;
+			DWORD NotifyFilter;
+			bool StopNow;
+			FileWatcherImpl* Watch;
+			char* DirName;
+	};
+
 	/// Implementation for Win32 based on ReadDirectoryChangesW.
 	/// @class FileWatcherWin32
 	class FileWatcherWin32 : public FileWatcherImpl
 	{
 	public:
-		/// type for a map from WatchID to WatchStruct pointer
-		typedef std::map<WatchID, WatchStruct*> WatchMap;
+		/// type for a map from WatchID to WatcherWin32 pointer
+		typedef std::map<WatchID, WatcherStructWin32*> WatchMap;
 
 	public:
 		FileWatcherWin32();
@@ -37,12 +65,12 @@ namespace efsw
 		void watch();
 
 		/// Handles the action
-		void handleAction(WatchStruct* watch, const std::string& filename, unsigned long action);
+		void handleAction(Watcher* watch, const std::string& filename, unsigned long action);
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	private:
-		/// Map of WatchID to WatchStruct pointers
+		/// Map of WatchID to WatcherWin32 pointers
 		WatchMap mWatches;
 		/// The last watchid
 		WatchID mLastWatchID;

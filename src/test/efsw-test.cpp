@@ -32,41 +32,34 @@ std::string FileRemoveFileName( const std::string& filepath ) {
 
 int main(int argc, char **argv)
 {
-	try
+	UpdateListener * ul = new UpdateListener();
+
+	// create the file watcher object
+	efsw::FileWatcher fileWatcher;
+
+	// add a watch to the system
+	std::string path( FileRemoveFileName( std::string( *argv ) ) + "test" );
+
+	efsw::WatchID watchID = fileWatcher.addWatch( path, ul, true );
+
+	std::cout << "Press ^C to exit demo" << std::endl;
+
+	// starts watching
+	fileWatcher.watch();
+
+	// adds another watch after started watching...
+	//efsw::WatchID watchID2 = fileWatcher.addWatch( "./test2", ul, true );
+	//efsw::System::sleep( 1000 );
+	//fileWatcher.removeWatch( watchID );
+	//fileWatcher.removeWatch( "./test2" );
+
+	int count = 0;
+
+	while( count < 1000 )
 	{
-		UpdateListener * ul = new UpdateListener();
+		efsw::System::sleep( 100 );
 
-		// create the file watcher object
-		efsw::FileWatcher fileWatcher(true);
-
-		// add a watch to the system
-		std::string path( FileRemoveFileName( std::string( *argv ) ) + "test" );
-
-		efsw::WatchID watchID = fileWatcher.addWatch( path, ul, true );
-		
-		std::cout << "Press ^C to exit demo" << std::endl;
-
-		// starts watching
-		fileWatcher.watch();
-
-		// adds another watch after started watching...
-		//efsw::WatchID watchID2 = fileWatcher.addWatch( "./test2", ul, true );
-		//efsw::System::sleep( 1000 );
-		//fileWatcher.removeWatch( watchID );
-		//fileWatcher.removeWatch( "./test2" );
-
-		int count = 0;
-
-		while( count < 1000 )
-		{
-			efsw::System::sleep( 100 );
-
-			//count+= 100;
-		}
-	}
-	catch( std::exception& e ) 
-	{
-		fprintf(stderr, "An exception has occurred: %s\n", e.what());
+		//count+= 100;
 	}
 
 	return 0;
