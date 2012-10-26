@@ -64,8 +64,15 @@ namespace efsw
 	bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear)
 	{
 		return ReadDirectoryChangesW(
-			pWatch->Watch->DirHandle, pWatch->Watch->mBuffer, sizeof(pWatch->Watch->mBuffer), pWatch->Watch->Recursive,
-			pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped, _clear ? 0 : WatchCallback) != 0;
+					pWatch->Watch->DirHandle,
+					pWatch->Watch->mBuffer,
+					sizeof(pWatch->Watch->mBuffer),
+					pWatch->Watch->Recursive,
+					pWatch->Watch->NotifyFilter,
+					NULL,
+					&pWatch->Overlapped,
+					_clear ? 0 : WatchCallback
+		) != 0;
 	}
 
 	/// Stops monitoring a directory.
@@ -104,13 +111,18 @@ namespace efsw
 		WatcherWin32 * pWatch = new WatcherWin32();
 		tWatch->Watch = pWatch;
 
-		pWatch->DirHandle = CreateFile(szDirectory, FILE_LIST_DIRECTORY,
-			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, 
-			OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
+		pWatch->DirHandle = CreateFile(
+								szDirectory,
+								GENERIC_READ,
+								FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+								NULL,
+								OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+								NULL
+							);
 
 		if (pWatch->DirHandle != INVALID_HANDLE_VALUE)
 		{
-			tWatch->Overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+			tWatch->Overlapped.hEvent = CreateEvent(NULL, FALSE, FALSE, "ol_event_basic");
 			pWatch->NotifyFilter = NotifyFilter;
 			pWatch->Recursive = recursive;
 
@@ -165,6 +177,9 @@ namespace efsw
 		if(!watch)
 			return Errors::Log::createLastError( Errors::FileNotFound, directory );
 
+		// Add the handle to the handles vector
+		mHandles.push_back( watch->Watch->DirHandle );
+
 		watch->Watch->ID = watchid;
 		watch->Watch->Watch = this;
 		watch->Watch->Listener = watcher;
@@ -200,6 +215,18 @@ namespace efsw
 		WatcherStructWin32* watch = iter->second;
 		mWatches.erase(iter);
 
+		// Remove handle from the handle vector
+		HandleVector::iterator it = mHandles.begin();
+
+		for ( ; it != mHandles.end(); it++ )
+		{
+			if ( watch->Watch->DirHandle == (*it) )
+			{
+				mHandles.erase( it );
+				break;
+			}
+		}
+
 		DestroyWatch(watch);
 	}
 
@@ -214,11 +241,53 @@ namespace efsw
 
 	void FileWatcherWin32::run()
 	{
+		WatchMap::iterator it;
+
 		do
 		{
-			MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, MWMO_ALERTABLE);
+			DWORD wait_result = WaitForMultipleObjectsEx( mHandles.size(), &mHandles[0], FALSE, 1000, FALSE );
 
-			if ( mInitOK ) System::sleep( 500 );
+			switch ( wait_result )
+			{
+				case WAIT_ABANDONED_0:
+				case WAIT_ABANDONED_0 + 1:
+					//"Wait abandoned."
+					break;
+				case WAIT_TIMEOUT:
+					break;
+				case WAIT_FAILED:
+					//"Wait failed."
+					break;
+				case WAIT_OBJECT_0:
+				case WAIT_OBJECT_0 + 1:
+					// Don't trust the result - multiple objects may be signalled during a single call.
+					// Search for the overlapped folder
+					for ( it = mWatches.begin(); it != mWatches.end(); it++ )
+					{
+						WatcherStructWin32 * watch = (WatcherStructWin32 *)it->second;
+
+						if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
+						{
+							DWORD bytes;
+
+							if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+							{
+								WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
+							}
+							else
+							{
+								//"GetOverlappedResult failed."
+							}
+
+							break;
+						}
+					}
+
+					break;
+				default:
+					//"Unknown return value from WaitForMultipleObjectsEx."
+					break;
+			}
 		} while ( mInitOK );
 	}
 

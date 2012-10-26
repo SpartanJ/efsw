@@ -37,8 +37,10 @@ int main(int argc, char **argv)
 	// create the file watcher object
 	efsw::FileWatcher fileWatcher;
 
+	std::string CurPath( FileRemoveFileName( std::string( *argv ) ) );
+
 	// add a watch to the system
-	std::string path( FileRemoveFileName( std::string( *argv ) ) + "test" );
+	std::string path( CurPath + "test" );
 
 	efsw::WatchID watchID = fileWatcher.addWatch( path, ul, true );
 
@@ -48,7 +50,10 @@ int main(int argc, char **argv)
 	fileWatcher.watch();
 
 	// adds another watch after started watching...
-	//efsw::WatchID watchID2 = fileWatcher.addWatch( "./test2", ul, true );
+	efsw::System::sleep( 1000 );
+
+	efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
+
 	//efsw::System::sleep( 1000 );
 	//fileWatcher.removeWatch( watchID );
 	//fileWatcher.removeWatch( "./test2" );

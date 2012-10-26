@@ -6,6 +6,8 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
+#include <vector>
+
 #define _WIN32_WINNT 0x0550
 #include <windows.h>
 
@@ -45,7 +47,7 @@ namespace efsw
 	public:
 		/// type for a map from WatchID to WatcherWin32 pointer
 		typedef std::map<WatchID, WatcherStructWin32*> WatchMap;
-
+		typedef std::vector<HANDLE>	HandleVector;
 	public:
 		FileWatcherWin32();
 
@@ -72,6 +74,10 @@ namespace efsw
 	private:
 		/// Map of WatchID to WatcherWin32 pointers
 		WatchMap mWatches;
+
+		/// Keeps an updated handles vector
+		HandleVector mHandles;
+
 		/// The last watchid
 		WatchID mLastWatchID;
 
