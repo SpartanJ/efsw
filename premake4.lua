@@ -35,8 +35,9 @@ solution "efsw"
 		files { "src/test/*.cpp" }
 		includedirs { "include", "src" }
 		
-		configuration "not windows and not haiku"
+		if not os.is("windows") and not os.is("haiku") then
 			links { "pthread" }
+		end
 		
 		configuration "debug"
 			defines { "DEBUG" }
