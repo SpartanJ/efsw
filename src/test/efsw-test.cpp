@@ -105,7 +105,7 @@ int main(int argc, char **argv)
 
 	while( true )
 	{
-		efsw::System::sleep( 100 );
+		efsw::System::sleep( 1000 );
 	}
 
 	return 0;

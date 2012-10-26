@@ -116,13 +116,14 @@ namespace efsw
 								GENERIC_READ,
 								FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 								NULL,
-								OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+								OPEN_EXISTING,
+								FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
 								NULL
 							);
 
 		if (pWatch->DirHandle != INVALID_HANDLE_VALUE)
 		{
-			tWatch->Overlapped.hEvent = CreateEvent(NULL, FALSE, FALSE, "ol_event_basic");
+			tWatch->Overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 			pWatch->NotifyFilter = NotifyFilter;
 			pWatch->Recursive = recursive;
 
@@ -268,39 +269,42 @@ namespace efsw
 				case WAIT_FAILED:
 					//"Wait failed."
 					break;
-				case WAIT_OBJECT_0:
-				case WAIT_OBJECT_0 + 1:
+				default:
+				{
 					// Don't trust the result - multiple objects may be signalled during a single call.
 					// Search for the overlapped folder
-					mWatchesLock.lock();
-
-					for ( it = mWatches.begin(); it != mWatches.end(); it++ )
+					if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mHandles.size() )
 					{
-						WatcherStructWin32 * watch = (WatcherStructWin32 *)it->second;
+						mWatchesLock.lock();
 
-						if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
+						for ( it = mWatches.begin(); it != mWatches.end(); it++ )
 						{
-							DWORD bytes;
+							WatcherStructWin32 * watch = (WatcherStructWin32 *)it->second;
 
-							if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+							if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
 							{
-								WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
-							}
-							else
-							{
-								//"GetOverlappedResult failed."
-							}
+								DWORD bytes;
 
-							break;
+								if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+								{
+									WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
+								}
+								else
+								{
+									//"GetOverlappedResult failed."
+								}
+
+								break;
+							}
 						}
+
+						mWatchesLock.unlock();
 					}
-
-					mWatchesLock.unlock();
-
-					break;
-				default:
-					//"Unknown return value from WaitForMultipleObjectsEx."
-					break;
+					else
+					{
+						//"Unknown return value from WaitForMultipleObjectsEx."
+					}
+				}
 			}
 		} while ( mInitOK );
 	}
