@@ -24,7 +24,17 @@ char FileSystem::getOSSlash()
 void FileSystem::dirAddSlashAtEnd( std::string& dir )
 {
 	if ( dir.size() && dir[ dir.size() - 1 ] != getOSSlash() )
+	{
 		dir += getOSSlash();
+	}
+}
+
+void FileSystem::dirRemoveSlashAtEnd( std::string& dir )
+{
+	if ( dir.size() && dir[ dir.size() - 1 ] == getOSSlash() )
+	{
+		dir.erase( dir.size() - 1 );
+	}
 }
 
 }

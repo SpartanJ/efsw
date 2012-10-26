@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <signal.h>
 #include <efsw/efsw.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileSystem.hpp>
@@ -16,7 +17,6 @@ class UpdateListener : public efsw::FileWatchListener
 				case efsw::Actions::Add:		return "Add";
 				case efsw::Actions::Modified:	return "Modified";
 				case efsw::Actions::Delete:		return "Delete";
-				default:						return "Unknown";
 			}
 		}
 
@@ -27,44 +27,85 @@ class UpdateListener : public efsw::FileWatchListener
 };
 
 std::string FileRemoveFileName( const std::string& filepath ) {
-    return filepath.substr( 0, filepath.find_last_of("/\\") + 1 );
+	return filepath.substr( 0, filepath.find_last_of("/\\") + 1 );
 }
 
 int main(int argc, char **argv)
 {
-	UpdateListener * ul = new UpdateListener();
-
-	// create the file watcher object
-	efsw::FileWatcher fileWatcher;
-
-	std::string CurPath( FileRemoveFileName( std::string( *argv ) ) );
-
-	// add a watch to the system
-	std::string path( CurPath + "test" );
-
-	efsw::WatchID watchID = fileWatcher.addWatch( path, ul, true );
-
 	std::cout << "Press ^C to exit demo" << std::endl;
 
-	// starts watching
-	fileWatcher.watch();
+	bool commonTest = true;
+	bool useGeneric = false;
+	std::string path;
 
-	// adds another watch after started watching...
-	efsw::System::sleep( 1000 );
+	if ( argc >= 2 )
+	{
+		path = std::string( argv[1] );
 
-	efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
+		if ( efsw::FileSystem::isDirectory( path ) )
+		{
+			commonTest	= false;
+		}
 
-	//efsw::System::sleep( 1000 );
-	//fileWatcher.removeWatch( watchID );
-	//fileWatcher.removeWatch( "./test2" );
+		if ( argc >= 3 )
+		{
+			if ( std::string( argv[2] ) == "true" )
+			{
+				useGeneric = true;
+			}
+		}
+	}
 
-	int count = 0;
+	UpdateListener * ul = new UpdateListener();
 
-	while( count < 1000 )
+	/// create the file watcher object
+	efsw::FileWatcher fileWatcher( useGeneric );
+
+	if ( commonTest )
+	{
+		std::string CurPath( FileRemoveFileName( std::string( argv[0] ) ) );
+
+		/// add a watch to the system
+		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test", ul, true );
+
+		/// starts watching
+		fileWatcher.watch();
+
+		/// adds another watch after started watching...
+		efsw::System::sleep( 1000 );
+
+		efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
+
+		//efsw::System::sleep( 1000 );
+		//fileWatcher.removeWatch( watchID );
+		//efsw::System::sleep( 1000 );
+		//fileWatcher.removeWatch( watchID2 );
+	}
+	else
+	{
+		efsw::WatchID err;
+
+		if ( ( err = fileWatcher.addWatch( path, ul, true ) ) > 0 )
+		{
+			fileWatcher.watch();
+
+			std::cout << "Watching directory: " << path.c_str() << std::endl;
+
+			if ( useGeneric )
+			{
+				std::cout << "Using generic backend watcher" << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "Error trying to watch directory: " << path.c_str() << std::endl;
+			std::cout << efsw::Errors::Log::getLastErrorLog().c_str() << std::endl;
+		}
+	}
+
+	while( true )
 	{
 		efsw::System::sleep( 100 );
-
-		//count+= 100;
 	}
 
 	return 0;

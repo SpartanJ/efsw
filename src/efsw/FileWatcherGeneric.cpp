@@ -40,6 +40,11 @@ DirectoryWatch::DirectoryWatch( WatcherGeneric * ws, const std::string& director
 
 	FileSystem::dirAddSlashAtEnd( Directory );
 
+	/// Why i'm doing this? stat in mingw32 doesn't work for directories if the dir path ends with a path slash
+	std::string dir( Directory );
+	FileSystem::dirRemoveSlashAtEnd( dir );
+	DirInfo = FileInfo( dir );
+
 	GetFiles( Directory, Files );
 
 	if ( Recursive )
@@ -102,6 +107,14 @@ void DirectoryWatch::watch()
 {
 	DirectoryWatch * oldWatch = Watch->CurDirWatch;
 
+	FileInfo curFI( DirInfo.Filepath );
+	bool dirchanged	= DirInfo != curFI;
+
+	if ( dirchanged )
+	{
+		DirInfo			= curFI;
+	}
+
 	FileInfoMap files;
 
 	GetFiles( Directory, files );
@@ -111,72 +124,101 @@ void DirectoryWatch::watch()
 		return;
 	}
 
-	FileInfoMap FilesCpy = Files;
+	FileInfoMap FilesCpy;
+
+	/// If the directory not changed means that no file changed
+	/// But a subdirectory could have changed
+
+	if ( dirchanged )
+	{
+		FilesCpy = Files;
+	}
+
 	FileInfoMap::iterator it;
-	FileInfoMap::iterator fif;
 	DirWatchMap::iterator dit;
 	DirectoryWatch * dw;
 	FileInfo fi;
 
-	for ( it = files.begin(); it != files.end(); it++ )
+	if ( dirchanged )
 	{
-		fi	= it->second;
+		FileInfoMap::iterator fif;
 
-		/// File existed before?
-		fif = Files.find( it->first );
-
-		if ( fif != Files.end() )
+		for ( it = files.begin(); it != files.end(); it++ )
 		{
-			/// Erase from the file list copy
-			FilesCpy.erase( it->first );
+			fi	= it->second;
 
-			/// File changed?
-			if ( (*fif).second != fi )
+			/// File existed before?
+			fif = Files.find( it->first );
+
+			if ( fif != Files.end() )
 			{
-				/// Update the new file info
-				Files[ it->first ] = fi;
+				/// Erase from the file list copy
+				FilesCpy.erase( it->first );
 
-				/// handle modified event
-				Watch->CurDirWatch = this;
-				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Modified );
-			}
-		}
-		else
-		{
-			/// New file found
-			Files[ it->first ] = fi;
+				/// File changed?
+				if ( (*fif).second != fi )
+				{
+					/// Update the new file info
+					Files[ it->first ] = fi;
 
-			/// handle add event
-			Watch->CurDirWatch = this;
-			Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Add );
-		}
-
-		/// Is directory and recursive?
-		if ( fi.isDirectory() && Recursive )
-		{
-			/// Directory existed?
-			dit = Directories.find( it->first );
-
-			if ( dit != Directories.end() )
-			{
-				dw = (*dit).second;
-
-				/// Just watch
-				dw->watch();
+					/// handle modified event
+					Watch->CurDirWatch = this;
+					Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Modified );
+				}
 			}
 			else
 			{
-				/// Creates the new directory watcher of the subfolder and check for new files
-				dw = new DirectoryWatch( Watch, it->first, Recursive );
-				dw->watch();
+				/// New file found
+				Files[ it->first ] = fi;
 
-				/// Add it to the list of directories
-				Directories[ it->first ] = dw;
+				/// handle add event
+				Watch->CurDirWatch = this;
+				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Add );
 			}
+
+			/// Is directory and recursive?
+			if ( Recursive && fi.isDirectory() )
+			{
+				/// Directory existed?
+				dit = Directories.find( it->first );
+
+				if ( dit != Directories.end() )
+				{
+					dw = dit->second;
+
+					/// Just watch
+					dw->watch();
+				}
+				else
+				{
+					/// Creates the new directory watcher of the subfolder and check for new files
+					dw = new DirectoryWatch( Watch, it->first, Recursive );
+					dw->watch();
+
+					/// Add it to the list of directories
+					Directories[ it->first ] = dw;
+				}
+			}
+		}
+	}
+	else
+	{
+		/// If the dir didn't change, process the subdirectories looking for changes
+		for ( dit = Directories.begin(); dit != Directories.end(); dit++ )
+		{
+			dw = dit->second;
+
+			/// Just watch
+			dw->watch();
 		}
 	}
 
 	Watch->CurDirWatch = oldWatch;
+
+	if ( !dirchanged )
+	{
+		return;
+	}
 
 	/// The files or directories that remains were deleted
 	for ( it = FilesCpy.begin(); it != FilesCpy.end(); it++ )

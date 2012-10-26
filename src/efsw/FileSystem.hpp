@@ -1,4 +1,4 @@
-#ifndef EFSW_FILESYSTEM_HPP 
+#ifndef EFSW_FILESYSTEM_HPP
 #define EFSW_FILESYSTEM_HPP
 
 #include <efsw/base.hpp>
@@ -17,6 +17,8 @@ class FileSystem
 		static char getOSSlash();
 
 		static void dirAddSlashAtEnd( std::string& dir );
+
+		static void dirRemoveSlashAtEnd( std::string& dir );
 };
 
 }

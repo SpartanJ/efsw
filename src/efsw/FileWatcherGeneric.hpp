@@ -61,6 +61,7 @@ namespace efsw
 			std::string			Directory;
 			FileInfoMap			Files;
 			DirWatchMap			Directories;
+			FileInfo			DirInfo;
 			bool				Recursive;
 
 			DirectoryWatch( WatcherGeneric * ws, const std::string& directory, bool recursive );
