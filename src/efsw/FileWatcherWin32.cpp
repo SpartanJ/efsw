@@ -186,13 +186,17 @@ namespace efsw
 		watch->Watch->DirName = new char[directory.length()+1];
 		strcpy(watch->Watch->DirName, directory.c_str());
 
+		mWatchesLock.lock();
 		mWatches.insert(std::make_pair(watchid, watch));
+		mWatchesLock.unlock();
 
 		return watchid;
 	}
 
 	void FileWatcherWin32::removeWatch(const std::string& directory)
 	{
+		mWatchesLock.lock();
+
 		WatchMap::iterator iter = mWatches.begin();
 		WatchMap::iterator end = mWatches.end();
 		for(; iter != end; ++iter)
@@ -203,10 +207,14 @@ namespace efsw
 				return;
 			}
 		}
+
+		mWatchesLock.unlock();
 	}
 
 	void FileWatcherWin32::removeWatch(WatchID watchid)
 	{
+		mWatchesLock.lock();
+
 		WatchMap::iterator iter = mWatches.find(watchid);
 
 		if(iter == mWatches.end())
@@ -228,6 +236,8 @@ namespace efsw
 		}
 
 		DestroyWatch(watch);
+
+		mWatchesLock.unlock();
 	}
 
 	void FileWatcherWin32::watch()
@@ -262,6 +272,8 @@ namespace efsw
 				case WAIT_OBJECT_0 + 1:
 					// Don't trust the result - multiple objects may be signalled during a single call.
 					// Search for the overlapped folder
+					mWatchesLock.lock();
+
 					for ( it = mWatches.begin(); it != mWatches.end(); it++ )
 					{
 						WatcherStructWin32 * watch = (WatcherStructWin32 *)it->second;
@@ -282,6 +294,8 @@ namespace efsw
 							break;
 						}
 					}
+
+					mWatchesLock.unlock();
 
 					break;
 				default:
@@ -317,12 +331,16 @@ namespace efsw
 	{
 		std::list<std::string> dirs;
 
+		mWatchesLock.lock();
+
 		WatchMap::iterator it = mWatches.begin();
 
 		for ( ; it != mWatches.end(); it++ )
 		{
 			dirs.push_back( std::string( it->second->Watch->DirName ) );
 		}
+
+		mWatchesLock.unlock();
 
 		return dirs;
 	}
