@@ -26,7 +26,7 @@ typedef SOPHIST_uint64		Uint64;
 	#if ( defined( _MSCVER ) || defined( _MSC_VER ) )
 		#define EFSW_COMPILER_MSVC
 	#endif
-#elif defined(__APPLE_CC__) || defined(BSD)
+#elif defined(__APPLE_CC__) || defined( __FreeBSD__ ) || defined(__OpenBSD__) || defined( __NetBSD__ ) || defined( __DragonFly__ )
 ///	This includes OS X, iOS and BSD
 #	define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
 #elif defined(__linux__)

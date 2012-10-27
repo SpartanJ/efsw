@@ -1,5 +1,3 @@
-#include <cstdio>
-#include <signal.h>
 #include <efsw/efsw.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileSystem.hpp>

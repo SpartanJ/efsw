@@ -7,7 +7,7 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 
 #include <map>
-#include <sys/types.hpp>
+#include <sys/types.h>
 
 namespace efsw
 {
