@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <string.h>
 #include <efsw/FileSystem.hpp>
+#include <efsw/System.hpp>
 
 namespace efsw
 {	
@@ -30,9 +31,11 @@ namespace efsw
 		return 1;
 	}
 	
-	WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener) :
-		Watcher( watchid, dirname, listener, true )
+	WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive ) :
+		Watcher( watchid, dirname, listener, recursive )
 	{
+		mDescriptor			= kqueue();
+
 		memset( mChangeList, 0, MAX_CHANGE_EVENT_SIZE );
 
 		mChangeListCount = 0;
@@ -40,13 +43,14 @@ namespace efsw
 		addAll();
 	}
 
+	WatcherKqueue::~WatcherKqueue()
+	{
+		close( mDescriptor );
+	}
+
 	void WatcherKqueue::addFile(const std::string& name, bool imitEvents)
 	{
 		fprintf(stderr, "ADDED: %s\n", name.c_str());
-
-		// create entry
-		struct stat attrib;
-		stat(name.c_str(), &attrib);
 
 		int fd = open(name.c_str(), O_RDONLY);
 
@@ -58,10 +62,7 @@ namespace efsw
 
 		++mChangeListCount;
 
-		char* namecopy = new char[name.length() + 1];
-		strncpy(namecopy, name.c_str(), name.length());
-		namecopy[name.length()] = 0;
-
+		// create entry
 		FileInfo * entry = new FileInfo( name );
 
 		// set the event data at the end of the list
@@ -171,29 +172,23 @@ namespace efsw
 
 						handleAction( entry->Filepath, Actions::Modified );
 					}
-
-					ke++;
 				}
 				else if(result < 0)
 				{
 					removeFile( entry->Filepath );
-
-					ke++;
 				}
 				else
 				{
 					addFile(fname);
-
-					ke++;
 				}
 			}
 			else
 			{
 				// just add
 				addFile(fname);
-
-				ke++;
 			}
+
+			ke++;
 		}
 
 		closedir(dir);
@@ -201,17 +196,13 @@ namespace efsw
 
 	void WatcherKqueue::handleAction(const std::string& filename, efsw::Action action)
 	{
-		Listener->handleFileAction( ID, Directory, filename, action );
+		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action );
 	}
 
 	void WatcherKqueue::addAll()
 	{
 		// scan directory and call addFile(name, false) on each file
-		if( !FileSystem::isDirectory( Directory.c_str() ) )
-		{
-			Errors::Log::createLastError( Errors::FileNotFound, Directory );
-			return;
-		}
+		FileSystem::dirAddSlashAtEnd( Directory );
 
 		// add base dir
 		int fd = open( Directory.c_str(), O_RDONLY );
@@ -223,7 +214,7 @@ namespace efsw
 				EV_ADD | EV_ENABLE | EV_ONESHOT,
 				NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
 				0,
-				new FileInfo( Directory )
+				0
 		);
 
 		fprintf(stderr, "ADDED: %s\n", Directory.c_str());
@@ -238,33 +229,16 @@ namespace efsw
 			{
 				addFile( fi.Filepath , false );
 			}
-		}
-	}
-
-	void WatcherKqueue::removeAll()
-	{
-		KEvent* ke = NULL;
-
-		// go through list removing each file and sending an event
-		for(int i = 0; i < mChangeListCount; ++i)
-		{
-			ke = &mChangeList[i];
-
-			FileInfo * entry = reinterpret_cast<FileInfo*>( ke->udata );
-
-			handleAction(entry->Filepath, Actions::Delete);
-
-			// delete
-			close(ke->ident);
-
-			efSAFE_DELETE(entry);
+			else if ( Recursive && fi.isDirectory() )
+			{
+				// create another watcher
+			}
 		}
 	}
 
 	FileWatcherKqueue::FileWatcherKqueue() :
 		mThread( NULL )
 	{
-		mDescriptor			= kqueue();
 		mTimeOut.tv_sec		= 0;
 		mTimeOut.tv_nsec	= 0;
 		mInitOK				= true;
@@ -280,13 +254,16 @@ namespace efsw
 		}
 
 		mWatches.clear();
-		
-		close( mDescriptor );
 	}
 
 	WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
 	{
-		WatcherKqueue* watch = new WatcherKqueue(++mLastWatchID, directory, watcher);
+		if( !FileSystem::isDirectory( directory ) )
+		{
+			return Errors::Log::createLastError( Errors::FileNotFound, directory );
+		}
+
+		WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, directory, watcher, recursive );
 		mWatchesLock.lock();
 		mWatches.insert(std::make_pair(mLastWatchID, watch));
 		mWatchesLock.unlock();
@@ -307,16 +284,16 @@ namespace efsw
 		do
 		{
 			int nev = 0;
-			struct kevent event;
+			KEvent event;
 
 			WatchMap::iterator iter	= mWatches.begin();
 			WatchMap::iterator end	= mWatches.end();
 
-			for(; iter != end; ++iter)
+			for (; iter != end; ++iter)
 			{
 				WatcherKqueue* watch = iter->second;
 
-				while( ( nev = kevent( mDescriptor, (KEvent*)&(watch->mChangeList), watch->mChangeListCount + 1, &event, 1, &mTimeOut ) ) != 0 )
+				while( ( nev = kevent( watch->mDescriptor, (KEvent*)&(watch->mChangeList), watch->mChangeListCount + 1, &event, 1, &mTimeOut ) ) != 0 )
 				{
 					if( nev == -1 )
 					{
@@ -356,6 +333,8 @@ namespace efsw
 						}
 					}
 				}
+
+				System::sleep( 500 );
 			}
 		} while( mInitOK );
 	}

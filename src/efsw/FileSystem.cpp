@@ -37,4 +37,9 @@ void FileSystem::dirRemoveSlashAtEnd( std::string& dir )
 	}
 }
 
+std::string FileSystem::fileNameFromPath( const std::string& filepath )
+{
+	return filepath.substr( filepath.find_last_of( getOSSlash() ) + 1 );
+}
+
 }

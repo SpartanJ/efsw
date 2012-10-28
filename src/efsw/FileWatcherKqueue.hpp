@@ -12,7 +12,7 @@
 
 namespace efsw
 {
-	#define MAX_CHANGE_EVENT_SIZE 50
+	#define MAX_CHANGE_EVENT_SIZE 2000
 	typedef struct kevent KEvent;
 
 	class WatcherKqueue : public Watcher
@@ -22,7 +22,12 @@ namespace efsw
 			KEvent mChangeList[MAX_CHANGE_EVENT_SIZE];
 			size_t mChangeListCount;
 
-			WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener);
+			/// The descriptor for the kqueue
+			int mDescriptor;
+
+			WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive );
+
+			~WatcherKqueue();
 
 			void addFile(const std::string& name, bool imitEvents = true);
 
@@ -36,8 +41,6 @@ namespace efsw
 			void handleAction(const std::string& filename, efsw::Action action);
 
 			void addAll();
-
-			void removeAll();
 	};
 
 	/// Implementation for OSX based on kqueue.
@@ -74,8 +77,7 @@ namespace efsw
 	private:
 		/// Map of WatchID to WatchStruct pointers
 		WatchMap mWatches;
-		/// The descriptor for the kqueue
-		int mDescriptor;
+
 		/// time out data
 		struct timespec mTimeOut;
 		/// WatchID allocator

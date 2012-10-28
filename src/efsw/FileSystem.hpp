@@ -19,6 +19,9 @@ class FileSystem
 		static void dirAddSlashAtEnd( std::string& dir );
 
 		static void dirRemoveSlashAtEnd( std::string& dir );
+
+		static std::string fileNameFromPath( const std::string& filepath );
+
 };
 
 }
