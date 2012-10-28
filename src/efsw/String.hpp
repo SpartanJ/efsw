@@ -49,6 +49,15 @@ class String {
 
 	static const std::size_t InvalidPos; ///< Represents an invalid position in the string
 
+	/** Determine if a string starts with the string passed
+	** @param start The substring expected to start
+	** @param str The string to compare
+	** @return -1 if the substring is no in str, otherwise the size of the substring
+	*/
+	static int strStartsWith( const std::string& start, const std::string& str );
+
+	static int strStartsWith( const String& start, const String& str );
+
 	/** @brief Construct from an UTF-8 string to UTF-32 according
 	** @param uf8String UTF-8 string to convert
 	**/

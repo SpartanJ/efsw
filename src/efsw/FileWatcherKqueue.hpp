@@ -7,17 +7,46 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 
 #include <map>
+#include <sys/event.h>
 #include <sys/types.h>
 
 namespace efsw
 {
+	#define MAX_CHANGE_EVENT_SIZE 50
+	typedef struct kevent KEvent;
+
+	class WatcherKqueue : public Watcher
+	{
+		public:
+			// index 0 is always the directory
+			KEvent mChangeList[MAX_CHANGE_EVENT_SIZE];
+			size_t mChangeListCount;
+
+			WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener);
+
+			void addFile(const std::string& name, bool imitEvents = true);
+
+			void removeFile(const std::string& name, bool imitEvents = true);
+
+			// called when the directory is actually changed
+			// means a file has been added or removed
+			// rescans the watched directory adding/removing files and sending notices
+			void rescan();
+
+			void handleAction(const std::string& filename, efsw::Action action);
+
+			void addAll();
+
+			void removeAll();
+	};
+
 	/// Implementation for OSX based on kqueue.
 	/// @class FileWatcherKqueue
 	class FileWatcherKqueue : public FileWatcherImpl
 	{
 	public:
 		/// type for a map from WatchID to WatchStruct pointer
-		typedef std::map<WatchID, WatchStruct*> WatchMap;
+		typedef std::map<WatchID, WatcherKqueue*> WatchMap;
 
 	public:
 		FileWatcherKqueue();
@@ -38,7 +67,7 @@ namespace efsw
 		void watch();
 
 		/// Handles the action
-		void handleAction(WatchStruct* watch, const std::string& filename, unsigned long action);
+		void handleAction(Watcher* watch, const std::string& filename, unsigned long action);
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
@@ -52,6 +81,11 @@ namespace efsw
 		/// WatchID allocator
 		int mLastWatchID;
 
+		Thread * mThread;
+
+		Mutex mWatchesLock;
+
+		void run();
 	};
 }
 

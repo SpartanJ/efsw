@@ -44,5 +44,6 @@ typedef SOPHIST_uint64		Uint64;
 #define efCOMMA ,
 
 #define efSAFE_DELETE(p)		{ if(p) { delete (p);			(p)=NULL; } }
+#define efSAFE_DELETE_ARRAY(p)  { if(p) { delete [] (p);		(p)=NULL; } }
 
 #endif

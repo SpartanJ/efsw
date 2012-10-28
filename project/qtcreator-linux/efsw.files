@@ -84,3 +84,4 @@
 ../../src/efsw/FileSystem.cpp
 ../../src/efsw/FileInfo.cpp
 ../../src/test/efsw-test.cpp
+../../premake4.lua

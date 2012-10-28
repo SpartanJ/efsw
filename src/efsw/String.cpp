@@ -6,6 +6,54 @@ namespace efsw {
 
 const std::size_t String::InvalidPos = StringType::npos;
 
+int String::strStartsWith( const std::string& start, const std::string& str )
+{
+	int pos		= -1;
+	size_t size	= start.size();
+
+	if ( str.size() >= size )
+	{
+		for ( std::size_t i = 0; i < size; i++ )
+		{
+			if ( start[i] == str[i] )
+			{
+				pos = (int)i;
+			}
+			else
+			{
+				pos = -1;
+				break;
+			}
+		}
+	}
+
+	return pos;
+}
+
+int String::strStartsWith( const String& start, const String& str )
+{
+	int pos		= -1;
+	size_t size	= start.size();
+
+	if ( str.size() >= size )
+	{
+		for ( std::size_t i = 0; i < size; i++ )
+		{
+			if ( start[i] == str[i] )
+			{
+				pos = (int)i;
+			}
+			else
+			{
+				pos = -1;
+				break;
+			}
+		}
+	}
+
+	return pos;
+}
+
 String::String()
 {
 }

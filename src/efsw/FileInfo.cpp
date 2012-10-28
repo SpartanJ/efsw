@@ -43,6 +43,17 @@ bool FileInfo::isDirectory()
 	return S_ISDIR(Permissions);
 }
 
+bool FileInfo::isRegularFile()
+{
+	return S_ISREG(Permissions);
+}
+
+bool FileInfo::exists()
+{
+	struct stat st;
+	return stat( Filepath.c_str(), &st ) == 0;
+}
+
 FileInfo& FileInfo::operator=( const FileInfo& Other )
 {
 	this->Filepath = Other.Filepath;

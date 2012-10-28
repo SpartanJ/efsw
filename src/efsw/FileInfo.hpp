@@ -2,6 +2,7 @@
 #define EFSW_FILEINFO_HPP
 
 #include <string>
+#include <map>
 
 namespace efsw {
 
@@ -20,12 +21,18 @@ class FileInfo
 
 		bool isDirectory();
 
+		bool isRegularFile();
+
+		bool exists();
+
 		std::string Filepath;
 		unsigned long long ModificationTime;
 		unsigned long OwnerId;
 		unsigned long GroupId;
 		unsigned long Permissions;
 };
+
+typedef std::map<std::string, FileInfo> FileInfoMap;
 
 }
 

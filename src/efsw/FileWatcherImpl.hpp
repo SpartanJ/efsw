@@ -7,6 +7,7 @@
 
 namespace efsw {
 
+/** @brief Base Watcher class */
 class Watcher
 {
 	public:

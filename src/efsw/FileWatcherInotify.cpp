@@ -10,34 +10,12 @@
 #include <sys/inotify.h>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
+#include <efsw/String.hpp>
 
 #define BUFF_SIZE ((sizeof(struct inotify_event)+FILENAME_MAX)*1024)
 
 namespace efsw
 {
-	int strStartsWith( const std::string& start, const std::string str ) {
-		int pos		= -1;
-		size_t size	= start.size();
-
-		if ( str.size() >= size )
-		{
-			for ( std::size_t i = 0; i < size; i++ )
-			{
-				if ( start[i] == str[i] )
-				{
-					pos = (int)i;
-				}
-				else
-				{
-					pos = -1;
-					break;
-				}
-			}
-		}
-
-		return pos;
-	}
-
 	FileWatcherInotify::FileWatcherInotify() :
 		mFD(-1),
 		mThread(NULL)
@@ -61,7 +39,7 @@ namespace efsw
 
 		for(; iter != end; ++iter)
 		{
-			delete iter->second;
+			efSAFE_DELETE( iter->second );
 		}
 
 		mWatches.clear();
@@ -140,7 +118,7 @@ namespace efsw
 
 					for(; it != mWatches.end(); ++it)
 					{
-						if ( watch->ID != it->second->ID && -1 != strStartsWith( watch->Directory, it->second->Directory ) )
+						if ( watch->ID != it->second->ID && -1 != String::strStartsWith( watch->Directory, it->second->Directory ) )
 						{
 							removeWatch( it->second->ID );
 						}
@@ -177,7 +155,7 @@ namespace efsw
 
 			for(; it != mWatches.end(); ++it)
 			{
-				if ( watch->ID != it->second->ID && -1 != strStartsWith( watch->Directory, it->second->Directory ) )
+				if ( watch->ID != it->second->ID && -1 != String::strStartsWith( watch->Directory, it->second->Directory ) )
 				{
 					removeWatch( it->second->ID );
 				}

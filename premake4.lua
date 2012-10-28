@@ -38,7 +38,7 @@ solution "efsw"
 		if not os.is("windows") and not os.is("haiku") then
 			links { "pthread" }
 		end
-		
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }

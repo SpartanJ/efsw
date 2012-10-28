@@ -54,7 +54,6 @@ namespace efsw
 	class DirectoryWatch
 	{
 		public:
-			typedef std::map<std::string, FileInfo> FileInfoMap;
 			typedef std::map<std::string, DirectoryWatch*> DirWatchMap;
 
 			WatcherGeneric *	Watch;
