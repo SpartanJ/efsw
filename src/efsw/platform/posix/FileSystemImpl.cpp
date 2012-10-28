@@ -8,9 +8,9 @@
 
 namespace efsw { namespace Platform {
 
-std::map<std::string, FileInfo> FileSystem::filesInfoFromPath( const std::string& path )
+FileInfoMap FileSystem::filesInfoFromPath( const std::string& path )
 {
-	std::map<std::string, FileInfo> files;
+	FileInfoMap files;
 
 	DIR *dp;
 	struct dirent *dirp;

@@ -10,7 +10,7 @@ bool FileSystem::isDirectory( const std::string& path )
 	return Platform::FileSystem::isDirectory( path );
 }
 
-std::map<std::string, FileInfo> FileSystem::filesInfoFromPath( std::string path ) {
+FileInfoMap FileSystem::filesInfoFromPath( std::string path ) {
 	dirAddSlashAtEnd( path );
 
 	return Platform::FileSystem::filesInfoFromPath( path );

@@ -13,9 +13,9 @@
 
 namespace efsw { namespace Platform {
 
-std::map<std::string, FileInfo> FileSystem::filesInfoFromPath( const std::string& path )
+FileInfoMap FileSystem::filesInfoFromPath( const std::string& path )
 {
-	std::map<std::string, FileInfo> files;
+	FileInfoMap files;
 
 #ifdef EFSW_COMPILER_MSVC
 	#ifdef UNICODE

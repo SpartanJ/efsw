@@ -11,7 +11,7 @@ namespace efsw { namespace Platform {
 
 class FileSystem {
 	public:
-		static std::map<std::string, FileInfo> filesInfoFromPath( const std::string& path );
+		static FileInfoMap filesInfoFromPath( const std::string& path );
 
 		static char getOSSlash();
 

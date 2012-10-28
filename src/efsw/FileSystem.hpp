@@ -12,7 +12,7 @@ class FileSystem
 	public:
 		static bool isDirectory( const std::string& path );
 
-		static std::map<std::string, FileInfo> filesInfoFromPath( std::string path );
+		static FileInfoMap filesInfoFromPath( std::string path );
 
 		static char getOSSlash();
 

@@ -12,12 +12,16 @@
 
 namespace efsw
 {
+	class FileWatcherKqueue;
+
 	#define MAX_CHANGE_EVENT_SIZE 2000
 	typedef struct kevent KEvent;
 
 	class WatcherKqueue : public Watcher
 	{
 		public:
+			typedef std::map<WatchID,std::string> ChildMap;
+
 			// index 0 is always the directory
 			KEvent mChangeList[MAX_CHANGE_EVENT_SIZE];
 			size_t mChangeListCount;
@@ -25,13 +29,19 @@ namespace efsw
 			/// The descriptor for the kqueue
 			int mDescriptor;
 
-			WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive );
+			FileWatcherKqueue * mWatcher;
+
+			bool mChild;
+
+			ChildMap mChilds;
+
+			WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher );
 
 			~WatcherKqueue();
 
-			void addFile(const std::string& name, bool imitEvents = true);
+			void addFile(  const std::string& name, bool imitEvents = true );
 
-			void removeFile(const std::string& name, bool imitEvents = true);
+			void removeFile( const std::string& name, bool imitEvents = true );
 
 			// called when the directory is actually changed
 			// means a file has been added or removed
@@ -41,17 +51,19 @@ namespace efsw
 			void handleAction(const std::string& filename, efsw::Action action);
 
 			void addAll();
+
+			WatchID watchingDirectory( std::string dir );
 	};
 
 	/// Implementation for OSX based on kqueue.
 	/// @class FileWatcherKqueue
 	class FileWatcherKqueue : public FileWatcherImpl
 	{
+		friend class WatcherKqueue;
 	public:
 		/// type for a map from WatchID to WatchStruct pointer
 		typedef std::map<WatchID, WatcherKqueue*> WatchMap;
 
-	public:
 		FileWatcherKqueue();
 
 		virtual ~FileWatcherKqueue();
@@ -86,6 +98,8 @@ namespace efsw
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+
+		std::list<WatchID> mRemoveList;
 
 		void run();
 	};

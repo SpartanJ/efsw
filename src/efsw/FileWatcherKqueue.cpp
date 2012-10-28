@@ -31,20 +31,27 @@ namespace efsw
 		return 1;
 	}
 	
-	WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive ) :
-		Watcher( watchid, dirname, listener, recursive )
+	WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher ) :
+		Watcher( watchid, dirname, listener, recursive ),
+		mChangeListCount( 0 ),
+		mDescriptor( kqueue() ),
+		mWatcher( watcher ),
+		mChild( false )
 	{
-		mDescriptor			= kqueue();
-
 		memset( mChangeList, 0, MAX_CHANGE_EVENT_SIZE );
-
-		mChangeListCount = 0;
 
 		addAll();
 	}
 
 	WatcherKqueue::~WatcherKqueue()
 	{
+		for ( ChildMap::iterator it = mChilds.begin(); it != mChilds.end(); it++ )
+		{
+			fprintf( stderr, "~WatcherKqueue::Removed child %s", it->second.c_str() );
+
+			mWatcher->removeWatch( it->first );
+		}
+
 		close( mDescriptor );
 	}
 
@@ -138,22 +145,63 @@ namespace efsw
 		// if missing file, call removeFile
 		// if timestamp modified, call handleAction(filename, ACTION_MODIFIED);
 
-		DIR* dir = opendir(Directory.c_str());
-		if(!dir)
+		DIR* dir = opendir( Directory.c_str() );
+
+		if( !dir )
+		{
+			if ( mChild )
+			{
+				fprintf( stderr, "Directory %s removed\n", Directory.c_str() );
+				mWatcher->mRemoveList.push_back( ID );
+			}
+
 			return;
+		}
 
 		struct dirent* dentry;
 		KEvent* ke = &mChangeList[1];
 		FileInfo * entry = NULL;
+		ChildMap childf = mChilds;
 
 		//struct stat attrib;
 		while( (dentry = readdir( dir ) ) != NULL)
 		{
-			std::string fname( Directory + FileSystem::getOSSlash() + std::string( dentry->d_name ) );
+			std::string dname( dentry->d_name );
+			std::string fname( Directory + dname );
+
+			if (  "." == dname || ".." == dname )
+			{
+				continue;
+			}
 
 			FileInfo fi( fname );
 
-			if ( !fi.isRegularFile() )
+			if ( Recursive && fi.isDirectory() )
+			{
+				WatchID id;
+
+				// create another watcher if the watcher doesn't exists
+				if ( ( id = watchingDirectory( fi.Filepath ) ) < 0 )
+				{
+					id = mWatcher->addWatch( fi.Filepath, Listener, Recursive );
+
+					if ( id > 0 )
+					{
+						mWatcher->mWatches[ id ]->mChild = true;
+
+						mChilds[ id ] = mWatcher->mWatches[ id ]->Directory;
+
+						fprintf( stderr, "Directory %s added\n", fi.Filepath.c_str() );
+					}
+				}
+				else
+				{
+					childf.erase( id );
+				}
+
+				continue;
+			}
+			else if ( !fi.isRegularFile() )
 			{
 				continue;
 			}
@@ -191,7 +239,30 @@ namespace efsw
 			ke++;
 		}
 
+		// remove the child folders that were erased
+		for ( ChildMap::iterator it = childf.begin(); it != childf.end(); it++ )
+		{
+			fprintf( stderr, "Removed erased child %s\n", it->second.c_str() );
+
+			mWatcher->removeWatch( it->first );
+
+			mChilds.erase( mChilds.find( it->first ) );
+		}
+
 		closedir(dir);
+	}
+
+	WatchID WatcherKqueue::watchingDirectory( std::string dir )
+	{
+		for ( ChildMap::iterator it = mChilds.begin(); it != mChilds.end(); it++ )
+		{
+			if ( it->second == dir )
+			{
+				return it->first;
+			}
+		}
+
+		return Errors::FileNotFound;
 	}
 
 	void WatcherKqueue::handleAction(const std::string& filename, efsw::Action action)
@@ -232,6 +303,12 @@ namespace efsw
 			else if ( Recursive && fi.isDirectory() )
 			{
 				// create another watcher
+				WatchID id = mWatcher->addWatch( fi.Filepath, Listener, Recursive );
+
+				if ( id > 0 )
+				{
+					mWatcher->mWatches[ id ]->mChild = true;
+				}
 			}
 		}
 	}
@@ -263,7 +340,7 @@ namespace efsw
 			return Errors::Log::createLastError( Errors::FileNotFound, directory );
 		}
 
-		WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, directory, watcher, recursive );
+		WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, directory, watcher, recursive, this );
 		mWatchesLock.lock();
 		mWatches.insert(std::make_pair(mLastWatchID, watch));
 		mWatchesLock.unlock();
@@ -298,6 +375,7 @@ namespace efsw
 					if( nev == -1 )
 					{
 						perror("kevent");
+						System::sleep( 500 );
 					}
 					else
 					{
@@ -332,6 +410,19 @@ namespace efsw
 							watch->rescan();
 						}
 					}
+				}
+
+				if ( !mRemoveList.empty() )
+				{
+					std::list<WatchID>::iterator rit = mRemoveList.begin();
+
+					for ( ; rit != mRemoveList.end(); rit++ )
+					{
+						fprintf( stderr, "Removed watch %s\n", mWatches[ (*rit) ]->Directory.c_str() );
+						removeWatch( (*rit) );
+					}
+
+					mRemoveList.clear();
 				}
 
 				System::sleep( 500 );
