@@ -153,12 +153,14 @@ namespace efsw
 
 	FileWatcherWin32::~FileWatcherWin32()
 	{
-		WatchMap::iterator iter = mWatches.begin();
-		WatchMap::iterator end = mWatches.end();
-		for(; iter != end; ++iter)
+		WatchVector::iterator iter = mWatches.begin();
+
+		for(; iter != mWatches.end(); ++iter)
 		{
-			DestroyWatch(iter->second);
+			DestroyWatch((*iter));
 		}
+
+		mHandles.clear();
 		mWatches.clear();
 
 		mInitOK = false;
@@ -179,8 +181,6 @@ namespace efsw
 			return Errors::Log::createLastError( Errors::FileNotFound, directory );
 
 		// Add the handle to the handles vector
-		mHandles.push_back( watch->Watch->DirHandle );
-
 		watch->Watch->ID = watchid;
 		watch->Watch->Watch = this;
 		watch->Watch->Listener = watcher;
@@ -188,7 +188,8 @@ namespace efsw
 		strcpy(watch->Watch->DirName, directory.c_str());
 
 		mWatchesLock.lock();
-		mWatches.insert(std::make_pair(watchid, watch));
+		mHandles.push_back( watch->Watch->DirHandle );
+		mWatches.push_back( watch );
 		mWatchesLock.unlock();
 
 		return watchid;
@@ -198,13 +199,13 @@ namespace efsw
 	{
 		mWatchesLock.lock();
 
-		WatchMap::iterator iter = mWatches.begin();
-		WatchMap::iterator end = mWatches.end();
-		for(; iter != end; ++iter)
+		WatchVector::iterator iter = mWatches.begin();
+
+		for(; iter != mWatches.end(); ++iter)
 		{
-			if(directory == iter->second->Watch->DirName)
+			if(directory == (*iter)->Watch->DirName)
 			{
-				removeWatch(iter->first);
+				removeWatch((*iter)->Watch->ID);
 				return;
 			}
 		}
@@ -216,27 +217,36 @@ namespace efsw
 	{
 		mWatchesLock.lock();
 
-		WatchMap::iterator iter = mWatches.find(watchid);
+		WatchVector::iterator iter = mWatches.begin();
 
-		if(iter == mWatches.end())
-			return;
+		WatcherStructWin32* watch = NULL;
 
-		WatcherStructWin32* watch = iter->second;
-		mWatches.erase(iter);
-
-		// Remove handle from the handle vector
-		HandleVector::iterator it = mHandles.begin();
-
-		for ( ; it != mHandles.end(); it++ )
+		for(; iter != mWatches.end(); ++iter)
 		{
-			if ( watch->Watch->DirHandle == (*it) )
+			// Find the watch ID
+			if ( (*iter)->Watch->ID == watchid )
 			{
-				mHandles.erase( it );
+				watch	= (*iter);
+
+				mWatches.erase( iter );
+
+				// Remove handle from the handle vector
+				HandleVector::iterator it = mHandles.begin();
+
+				for ( ; it != mHandles.end(); it++ )
+				{
+					if ( watch->Watch->DirHandle == (*it) )
+					{
+						mHandles.erase( it );
+						break;
+					}
+				}
+
+				DestroyWatch(watch);
+
 				break;
 			}
 		}
-
-		DestroyWatch(watch);
 
 		mWatchesLock.unlock();
 	}
@@ -252,8 +262,6 @@ namespace efsw
 
 	void FileWatcherWin32::run()
 	{
-		WatchMap::iterator it;
-
 		do
 		{
 			DWORD wait_result = WaitForMultipleObjectsEx( mHandles.size(), &mHandles[0], FALSE, 1000, FALSE );
@@ -271,39 +279,36 @@ namespace efsw
 					break;
 				default:
 				{
+					mWatchesLock.lock();
+
 					// Don't trust the result - multiple objects may be signalled during a single call.
-					// Search for the overlapped folder
 					if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mHandles.size() )
 					{
-						mWatchesLock.lock();
+						WatcherStructWin32 * watch = mWatches[ wait_result ];
 
-						for ( it = mWatches.begin(); it != mWatches.end(); it++ )
+						// First ensure that the handle is the same, this means that the watch was not removed.
+						if ( mHandles[ wait_result ] == watch->Watch->DirHandle && HasOverlappedIoCompleted( &watch->Overlapped ) )
 						{
-							WatcherStructWin32 * watch = (WatcherStructWin32 *)it->second;
+							DWORD bytes;
 
-							if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
+							if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
 							{
-								DWORD bytes;
-
-								if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
-								{
-									WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
-								}
-								else
-								{
-									//"GetOverlappedResult failed."
-								}
-
-								break;
+								WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
 							}
-						}
+							else
+							{
+								//"GetOverlappedResult failed."
+							}
 
-						mWatchesLock.unlock();
+							break;
+						}
 					}
 					else
 					{
 						//"Unknown return value from WaitForMultipleObjectsEx."
 					}
+
+					mWatchesLock.unlock();
 				}
 			}
 		} while ( mInitOK );
@@ -337,11 +342,9 @@ namespace efsw
 
 		mWatchesLock.lock();
 
-		WatchMap::iterator it = mWatches.begin();
-
-		for ( ; it != mWatches.end(); it++ )
+		for ( WatchVector::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 		{
-			dirs.push_back( std::string( it->second->Watch->DirName ) );
+			dirs.push_back( std::string( (*it)->Watch->DirName ) );
 		}
 
 		mWatchesLock.unlock();

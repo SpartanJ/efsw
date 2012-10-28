@@ -46,7 +46,7 @@ namespace efsw
 	{
 	public:
 		/// type for a map from WatchID to WatcherWin32 pointer
-		typedef std::map<WatchID, WatcherStructWin32*> WatchMap;
+		typedef std::vector<WatcherStructWin32*> WatchVector;
 		typedef std::vector<HANDLE>	HandleVector;
 	public:
 		FileWatcherWin32();
@@ -72,8 +72,8 @@ namespace efsw
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	private:
-		/// Map of WatchID to WatcherWin32 pointers
-		WatchMap mWatches;
+		/// Vector of WatcherWin32 pointers
+		WatchVector mWatches;
 
 		/// Keeps an updated handles vector
 		HandleVector mHandles;
