@@ -39,7 +39,6 @@ namespace efsw
 		mDescriptor( kqueue() ),
 		mWatcher( watcher ),
 		mParent( NULL )
-
 	{
 		memset( mChangeList, 0, MAX_CHANGE_EVENT_SIZE );
 
@@ -56,10 +55,10 @@ namespace efsw
 
 	void WatcherKqueue::addAll()
 	{
-		fprintf(stderr, "addAll(): Added folder: %s\n", Directory.c_str());
-
 		// scan directory and call addFile(name, false) on each file
 		FileSystem::dirAddSlashAtEnd( Directory );
+
+		fprintf(stderr, "addAll(): Added folder: %s\n", Directory.c_str());
 
 		// add base dir
 		int fd = open( Directory.c_str(), O_RDONLY );
@@ -221,10 +220,9 @@ namespace efsw
 			// If the directory is a sub-folder of a user added watcher
 			// remove it
 			if ( NULL != mParent )
-			{
-				fprintf( stderr, "Directory %s removed\n", Directory.c_str() );
-
-				mParent->removeWatch( ID );
+			{	// Flag for deletion
+				fprintf( stderr, "Directory %s flaged for deletion.\n", Directory.c_str() );
+				mParent->mErased.push_back( ID );
 			}
 
 			return;
@@ -233,7 +231,7 @@ namespace efsw
 		struct dirent * dentry;
 		KEvent * ke			= &mChangeList[1]; // first file kevent pointer
 		FileInfo * entry	= NULL;
-		WatchMap watches	= mWatches;
+		//WatchMap watches	= mWatches;
 
 		// struct stat attrib
 		// update the directory
@@ -253,6 +251,8 @@ namespace efsw
 			{
 				WatchID id;
 
+				FileSystem::dirAddSlashAtEnd( fi.Filepath );
+
 				// Create another watcher if the watcher doesn't exists
 				if ( ( id = watchingDirectory( fi.Filepath ) ) < 0 )
 				{
@@ -268,7 +268,7 @@ namespace efsw
 				else
 				{
 					// Remove from watches folders check list
-					watches.erase( id );
+					//watches.erase( id );
 				}
 			}
 			else if ( fi.isRegularFile() ) // Skip non-regular files
@@ -312,12 +312,14 @@ namespace efsw
 		}
 
 		// remove the child watchers ( sub-folders of the directory ) that were erased
-		for ( WatchMap::iterator it = watches.begin(); it != watches.end(); it++ )
+		// i think this is not needed, since every folder marks a flag for deletion after it last rescan
+		/*for ( WatchMap::iterator it = watches.begin(); it != watches.end(); it++ )
 		{
 			fprintf( stderr, "Removing erased child watcher %s\n", it->second->Directory.c_str() );
 
-			removeWatch( it->second->ID );
-		}
+			//removeWatch( it->second->ID );
+			mErased.push_back( it->second->ID );
+		}*/
 
 		closedir(dir);
 	}
@@ -357,7 +359,9 @@ namespace efsw
 			// An error ocurred?
 			if( nev == -1 )
 			{
+				fprintf( stderr, "Error on directory %s\n", Directory.c_str() );
 				perror("kevent");
+				break;
 			}
 			else
 			{
@@ -394,6 +398,28 @@ namespace efsw
 					rescan();
 				}
 			}
+		}
+
+		// Erase all watchers marked for deletion
+		if ( !mErased.empty() )
+		{
+			fprintf( stderr, "Directory %s is erasing childs. %ld deletions pending.\n", Directory.c_str(), mErased.size() );
+
+			for ( std::vector<WatchID>::iterator eit = mErased.begin(); eit != mErased.end(); eit++ )
+			{
+				if ( mWatches.find( (*eit) ) != mWatches.end() )
+				{
+					fprintf( stderr, "Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
+
+					removeWatch( (*eit) );
+				}
+				else
+				{
+					fprintf( stderr, "Tryed to remove watcher ID: %ld, but it wasn't present.", (*eit) );
+				}
+			}
+
+			mErased.clear();
 		}
 	}
 

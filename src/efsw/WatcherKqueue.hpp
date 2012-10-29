@@ -7,6 +7,7 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 
 #include <map>
+#include <vector>
 #include <sys/event.h>
 #include <sys/types.h>
 
@@ -66,6 +67,7 @@ namespace efsw
 
 			WatcherKqueue *		mParent;
 
+			std::vector<WatchID>	mErased;
 	};
 }
 
