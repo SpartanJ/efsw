@@ -47,6 +47,17 @@ DirectoryWatch::DirectoryWatch( WatcherGeneric * ws, const std::string& director
 
 	GetFiles( Directory, Files );
 
+	FileInfoMap::iterator it = Files.begin();
+
+	/// Remove all non regular files and non directories
+	for ( ; it != Files.end(); it++ )
+	{
+		if ( !it->second.isRegularFile() && !it->second.isDirectory() )
+		{
+			Files.erase( it );
+		}
+	}
+
 	if ( Recursive )
 	{
 		/// Create the subdirectories watchers
@@ -54,6 +65,7 @@ DirectoryWatch::DirectoryWatch( WatcherGeneric * ws, const std::string& director
 
 		for ( ; it != Files.end(); it++ )
 		{
+			/// @TODO: Check for recursive symbolic link directories ( implement isRecursive() )
 			if ( it->second.isDirectory() )
 			{
 				Directories[ it->first ] = new DirectoryWatch( ws, it->first, recursive );
@@ -166,7 +178,7 @@ void DirectoryWatch::watch()
 					Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Modified );
 				}
 			}
-			else
+			else if ( fi.isRegularFile() ) /// Only add regular files
 			{
 				/// New file found
 				Files[ it->first ] = fi;
@@ -245,7 +257,6 @@ void DirectoryWatch::watch()
 				/// Remove the directory from the map
 				Directories.erase( (*dit).first );
 			}
-
 		}
 
 		/// File or Directory deleted

@@ -252,8 +252,6 @@ namespace efsw
 			/// If the file erased is a directory and recursive is enabled, removes the directory erased
 			if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
 			{
-				bool found = false;
-
 				for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 				{
 					if ( it->second->Directory == fpath )
