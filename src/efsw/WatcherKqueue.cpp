@@ -14,8 +14,10 @@
 #include <efsw/System.hpp>
 #include <efsw/FileWatcherKqueue.hpp>
 
+#define KEVENT_RESERVE_VALUE (10)
+
 namespace efsw
-{	
+{
 	int comparator(const void* ke1, const void* ke2)
 	{
 		const KEvent * kev1	= reinterpret_cast<const KEvent*>( ke1 );
@@ -40,8 +42,6 @@ namespace efsw
 		mWatcher( watcher ),
 		mParent( NULL )
 	{
-		memset( mChangeList, 0, MAX_CHANGE_EVENT_SIZE );
-
 		addAll();
 	}
 
@@ -62,6 +62,8 @@ namespace efsw
 
 		// add base dir
 		int fd = open( Directory.c_str(), O_RDONLY );
+
+		mChangeList.resize( KEVENT_RESERVE_VALUE );
 
 		// Creates the kevent for the folder
 		EV_SET(
@@ -126,7 +128,15 @@ namespace efsw
 		}
 
 		// increase the file kevent file count
-		++mChangeListCount;
+		mChangeListCount++;
+
+		if ( mChangeListCount + KEVENT_RESERVE_VALUE > mChangeList.size() &&
+			 mChangeListCount % KEVENT_RESERVE_VALUE == 0 )
+		{
+			size_t reserve_size = mChangeList.size() + KEVENT_RESERVE_VALUE;
+			mChangeList.resize( reserve_size );
+			fprintf( stderr, "Reserverd more KEvents space for %s, space reserved %ld, list actual size %ld.\n", Directory.c_str(), reserve_size, mChangeListCount );
+		}
 
 		// create entry
 		FileInfo * entry = new FileInfo( name );
@@ -165,7 +175,7 @@ namespace efsw
 		target.udata = &tempEntry;
 
 		// Search the kevent
-		KEvent * ke = (KEvent*)bsearch(&target, &mChangeList, mChangeListCount + 1, sizeof(KEvent), comparator);
+		KEvent * ke = (KEvent*)bsearch(&target, &mChangeList[0], mChangeListCount + 1, sizeof(KEvent), comparator);
 
 		// Trying to remove a non-existing file?
 		if( !ke )
@@ -229,7 +239,8 @@ namespace efsw
 		}
 
 		struct dirent * dentry;
-		KEvent * ke			= &mChangeList[1]; // first file kevent pointer
+		size_t kec			= 1;
+		KEvent * ke			= &mChangeList[ kec ]; // first file kevent pointer
 		FileInfo * entry	= NULL;
 		//WatchMap watches	= mWatches;
 
@@ -307,7 +318,8 @@ namespace efsw
 				}
 
 				// Move to the next kvent
-				ke++;
+				kec++;
+				ke = &mChangeList[kec];
 			}
 		}
 
@@ -354,7 +366,7 @@ namespace efsw
 		}
 
 		// Then we get the the events of the current folder
-		while( ( nev = kevent( mDescriptor, (KEvent*)&(mChangeList), mChangeListCount + 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
+		while( ( nev = kevent( mDescriptor, &mChangeList[0], mChangeListCount + 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
 		{
 			// An error ocurred?
 			if( nev == -1 )

@@ -21,8 +21,6 @@ namespace efsw
 
 	typedef struct kevent KEvent;
 
-	#define MAX_CHANGE_EVENT_SIZE 50
-
 	class WatcherKqueue : public Watcher
 	{
 		public:
@@ -57,7 +55,7 @@ namespace efsw
 			int					mLastWatchID;
 
 			// index 0 is always the directory
-			KEvent				mChangeList[MAX_CHANGE_EVENT_SIZE];
+			std::vector<KEvent>	mChangeList;
 			size_t				mChangeListCount;
 
 			/// The descriptor for the kqueue

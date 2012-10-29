@@ -5,6 +5,7 @@
 #include <efsw/efsw.hpp>
 
 namespace efsw {
+
 typedef SOPHIST_int8		Int8;
 typedef SOPHIST_uint8		Uint8;
 typedef SOPHIST_int16		Int16;
@@ -12,7 +13,6 @@ typedef SOPHIST_uint16		Uint16;
 typedef SOPHIST_int32		Int32;
 typedef SOPHIST_uint32		Uint32;
 typedef SOPHIST_uint64		Uint64;
-}
 
 #define EFSW_PLATFORM_WIN32		1
 #define EFSW_PLATFORM_INOTIFY	2
@@ -45,5 +45,7 @@ typedef SOPHIST_uint64		Uint64;
 
 #define efSAFE_DELETE(p)		{ if(p) { delete (p);			(p)=NULL; } }
 #define efSAFE_DELETE_ARRAY(p)  { if(p) { delete [] (p);		(p)=NULL; } }
+
+}
 
 #endif
