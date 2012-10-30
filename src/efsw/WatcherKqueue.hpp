@@ -1,6 +1,5 @@
-#ifndef _FW_WATCHEROSX_H_
-#define _FW_WATCHEROSX_H_
-#pragma once
+#ifndef EFSW_WATCHEROSX_HPP
+#define EFSW_WATCHEROSX_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
 
@@ -13,60 +12,62 @@
 
 namespace efsw
 {
-	class FileWatcherKqueue;
-	class WatcherKqueue;
 
-	/// type for a map from WatchID to WatcherKqueue pointer
-	typedef std::map<WatchID, WatcherKqueue*> WatchMap;
+class FileWatcherKqueue;
+class WatcherKqueue;
 
-	typedef struct kevent KEvent;
+/// type for a map from WatchID to WatcherKqueue pointer
+typedef std::map<WatchID, WatcherKqueue*> WatchMap;
 
-	class WatcherKqueue : public Watcher
-	{
-		public:
-			WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher );
+typedef struct kevent KEvent;
 
-			~WatcherKqueue();
+class WatcherKqueue : public Watcher
+{
+	public:
+		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher );
 
-			void addFile(  const std::string& name, bool emitEvents = true );
+		~WatcherKqueue();
 
-			void removeFile( const std::string& name, bool emitEvents = true );
+		void addFile(  const std::string& name, bool emitEvents = true );
 
-			// called when the directory is actually changed
-			// means a file has been added or removed
-			// rescans the watched directory adding/removing files and sending notices
-			void rescan();
+		void removeFile( const std::string& name, bool emitEvents = true );
 
-			void handleAction(const std::string& filename, efsw::Action action);
+		// called when the directory is actually changed
+		// means a file has been added or removed
+		// rescans the watched directory adding/removing files and sending notices
+		void rescan();
 
-			void addAll();
+		void handleAction(const std::string& filename, efsw::Action action);
 
-			void removeAll();
+		void addAll();
 
-			WatchID watchingDirectory( std::string dir );
+		void removeAll();
 
-			void watch();
+		WatchID watchingDirectory( std::string dir );
 
-			WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive);
+		void watch();
 
-			void removeWatch (WatchID watchid );
-		protected:
-			WatchMap			mWatches;
-			int					mLastWatchID;
+		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive);
 
-			// index 0 is always the directory
-			std::vector<KEvent>	mChangeList;
-			size_t				mChangeListCount;
+		void removeWatch (WatchID watchid );
+	protected:
+		WatchMap			mWatches;
+		int					mLastWatchID;
 
-			/// The descriptor for the kqueue
-			int					mDescriptor;
+		// index 0 is always the directory
+		std::vector<KEvent>	mChangeList;
+		size_t				mChangeListCount;
 
-			FileWatcherKqueue *	mWatcher;
+		/// The descriptor for the kqueue
+		int					mDescriptor;
 
-			WatcherKqueue *		mParent;
+		FileWatcherKqueue *	mWatcher;
 
-			std::vector<WatchID>	mErased;
-	};
+		WatcherKqueue *		mParent;
+
+		std::vector<WatchID>	mErased;
+};
+
 }
 
 #endif

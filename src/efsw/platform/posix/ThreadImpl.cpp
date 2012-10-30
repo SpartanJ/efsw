@@ -19,7 +19,8 @@ ThreadImpl::ThreadImpl( Thread * owner ) :
 	}
 }
 
-void ThreadImpl::wait() {
+void ThreadImpl::wait()
+{
 	// Wait for the thread to finish, no timeout
 	if ( mIsActive )
 	{
@@ -31,7 +32,8 @@ void ThreadImpl::wait() {
 	}
 }
 
-void ThreadImpl::terminate() {
+void ThreadImpl::terminate()
+{
 	if ( mIsActive ) {
 		#if !defined( __ANDROID__ ) && !defined( ANDROID )
 			pthread_cancel( mThread );
@@ -43,7 +45,8 @@ void ThreadImpl::terminate() {
 	}
 }
 
-void * ThreadImpl::entryPoint( void * userData ) {
+void * ThreadImpl::entryPoint( void * userData )
+{
 	// The Thread instance is stored in the user data
 	Thread * owner = static_cast<Thread*>( userData );
 

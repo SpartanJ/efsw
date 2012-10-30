@@ -24,16 +24,12 @@ class UpdateListener : public efsw::FileWatchListener
 		}
 };
 
-std::string FileRemoveFileName( const std::string& filepath ) {
-	return filepath.substr( 0, filepath.find_last_of("/\\") + 1 );
-}
-
 int main(int argc, char **argv)
 {
 	std::cout << "Press ^C to exit demo" << std::endl;
 
 	bool commonTest = true;
-	bool useGeneric = false;
+	bool useGeneric = true;
 	std::string path;
 
 	if ( argc >= 2 )
@@ -61,7 +57,7 @@ int main(int argc, char **argv)
 
 	if ( commonTest )
 	{
-		std::string CurPath( FileRemoveFileName( std::string( argv[0] ) ) );
+		std::string CurPath( efsw::FileSystem::pathRemoveFileName( std::string( argv[0] ) ) );
 
 		/// add a watch to the system
 		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test", ul, true );

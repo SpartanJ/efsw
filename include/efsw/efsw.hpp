@@ -33,71 +33,58 @@
 #include <iostream>
 
 namespace efsw {
-	/// Type for a watch id
-	typedef long WatchID;
 
-	// forward declarations
-	class FileWatcherImpl;
-	class FileWatchListener;
+/// Type for a watch id
+typedef long WatchID;
 
-	/// Actions to listen for. Rename will send two events, one for
-	/// the deletion of the old file, and one for the creation of the
-	/// new file.
-	namespace Actions
+// forward declarations
+class FileWatcherImpl;
+class FileWatchListener;
+
+/// Actions to listen for. Rename will send two events, one for
+/// the deletion of the old file, and one for the creation of the
+/// new file.
+namespace Actions {
+	enum Action
 	{
-		enum Action
-		{
-			/// Sent when a file is created or renamed
-			Add = 1,
-			/// Sent when a file is deleted or renamed
-			Delete = 2,
-			/// Sent when a file is modified
-			Modified = 4
-		};
-	}
-	typedef Actions::Action Action;
+		/// Sent when a file is created or renamed
+		Add = 1,
+		/// Sent when a file is deleted or renamed
+		Delete = 2,
+		/// Sent when a file is modified
+		Modified = 4
+	};
+}
+typedef Actions::Action Action;
 
-	/// Errors log namespace
-	namespace Errors
-	{
-		static std::string LastError;
+/// Errors log namespace
+namespace Errors {
 
-		enum Error
-		{
-			FileNotFound = -1,
-			Unspecified = -2
-		};
+enum Error
+{
+	FileNotFound	= -1,
+	Unspecified		= -2
+};
 
-		class Log
-		{
-		public:
-			/// @return The last error logged
-			static std::string getLastErrorLog()
-			{
-				return LastError;
-			}
+class Log
+{
+	public:
+		/// @return The last error logged
+		static std::string getLastErrorLog();
 
-			/// Creates an error of the type specified
-			static long createLastError( Errors::Error err, std::string log )
-			{
-				switch ( err )
-				{
-					case FileNotFound:	LastError = "File not found (" + log + ")";
-					case Unspecified:
-					default:			LastError = log;
-				}
+		/// Creates an error of the type specified
+		static Error createLastError( Error err, std::string log );
+};
 
-				return err;
-			}
-		};
-	}
-	typedef Errors::Error Error;
+}
 
-	/// Listens to files and directories and dispatches events
-	/// to notify the parent program of the changes.
-	/// @class FileWatcher
-	class FileWatcher
-	{
+typedef Errors::Error Error;
+
+/// Listens to files and directories and dispatches events
+/// to notify the parent program of the changes.
+/// @class FileWatcher
+class FileWatcher
+{
 	public:
 		/// Default constructor, will use the default platform file watcher
 		FileWatcher();
@@ -130,14 +117,15 @@ namespace efsw {
 	private:
 		/// The implementation
 		FileWatcherImpl* mImpl;
-	};
+};
 
-	/// Basic interface for listening for file events.
-	/// @class FileWatchListener
-	class FileWatchListener
-	{
+/// Basic interface for listening for file events.
+/// @class FileWatchListener
+class FileWatchListener
+{
 	public:
 		FileWatchListener() {}
+
 		virtual ~FileWatchListener() {}
 
 		/// Handles the action file action
@@ -147,7 +135,7 @@ namespace efsw {
 		/// @param action Action that was performed
 		virtual void handleFileAction(WatchID watchid, const std::string& dir, const std::string& filename, Action action) = 0;
 
-	};
+};
 
 }
 

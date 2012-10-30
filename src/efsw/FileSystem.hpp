@@ -22,6 +22,7 @@ class FileSystem
 
 		static std::string fileNameFromPath( const std::string& filepath );
 
+		static std::string pathRemoveFileName( const std::string& filepath );
 };
 
 }

@@ -1,6 +1,5 @@
-#ifndef _FW_FILEWATCHEROSX_H_
-#define _FW_FILEWATCHEROSX_H_
-#pragma once
+#ifndef EFSW_FILEWATCHEROSX_HPP
+#define EFSW_FILEWATCHEROSX_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
 
@@ -10,11 +9,12 @@
 
 namespace efsw
 {
-	/// Implementation for OSX based on kqueue.
-	/// @class FileWatcherKqueue
-	class FileWatcherKqueue : public FileWatcherImpl
-	{
-		friend class WatcherKqueue;
+
+/// Implementation for OSX based on kqueue.
+/// @class FileWatcherKqueue
+class FileWatcherKqueue : public FileWatcherImpl
+{
+	friend class WatcherKqueue;
 	public:
 		FileWatcherKqueue();
 
@@ -55,7 +55,8 @@ namespace efsw
 		std::list<WatchID> mRemoveList;
 
 		void run();
-	};
+};
+
 }
 
 #endif

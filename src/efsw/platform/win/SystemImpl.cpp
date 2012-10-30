@@ -9,7 +9,8 @@
 
 namespace efsw { namespace Platform {
 
-void System::sleep( const unsigned long& ms ) {
+void System::sleep( const unsigned long& ms )
+{
 	::Sleep( ms );
 }
 

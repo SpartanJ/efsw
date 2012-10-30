@@ -12,7 +12,8 @@
 
 namespace efsw { namespace Platform {
 
-class MutexImpl {
+class MutexImpl
+{
 	public:
 		MutexImpl();
 

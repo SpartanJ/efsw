@@ -89,3 +89,8 @@
 ../../src/efsw/WatcherKqueue.cpp
 ../../src/efsw/Debug.hpp
 ../../src/efsw/Debug.cpp
+../../src/efsw/WatcherGeneric.hpp
+../../src/efsw/WatcherGeneric.cpp
+../../src/efsw/DirWatcherGeneric.hpp
+../../src/efsw/DirWatcherGeneric.cpp
+../../src/efsw/Log.cpp

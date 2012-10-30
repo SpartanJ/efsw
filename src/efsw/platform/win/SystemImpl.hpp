@@ -7,7 +7,8 @@
 
 namespace efsw { namespace Platform {
 
-class System {
+class System
+{
 	public:
 		static void sleep( const unsigned long& ms );
 };

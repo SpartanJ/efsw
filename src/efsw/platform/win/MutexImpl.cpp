@@ -4,19 +4,23 @@
 
 namespace efsw { namespace Platform {
 
-MutexImpl::MutexImpl() {
+MutexImpl::MutexImpl()
+{
 	InitializeCriticalSection(&mMutex);
 }
 
-MutexImpl::~MutexImpl() {
+MutexImpl::~MutexImpl()
+{
 	DeleteCriticalSection(&mMutex);
 }
 
-void MutexImpl::lock() {
+void MutexImpl::lock()
+{
 	EnterCriticalSection(&mMutex);
 }
 
-void MutexImpl::unlock() {
+void MutexImpl::unlock()
+{
 	LeaveCriticalSection(&mMutex);
 }
 

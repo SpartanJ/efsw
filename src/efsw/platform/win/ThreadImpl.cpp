@@ -6,7 +6,8 @@
 
 namespace efsw { namespace Platform {
 
-ThreadImpl::ThreadImpl( Thread *owner ) {
+ThreadImpl::ThreadImpl( Thread *owner )
+{
 	mThread = reinterpret_cast<HANDLE>( _beginthreadex( NULL, 0, &ThreadImpl::entryPoint, owner, 0, &mThreadId ) );
 
 	if ( !mThread )
@@ -15,7 +16,8 @@ ThreadImpl::ThreadImpl( Thread *owner ) {
 	}
 }
 
-void ThreadImpl::wait() {
+void ThreadImpl::wait()
+{
 	// Wait for the thread to finish, no timeout
 	if ( mThread )
 	{
@@ -25,7 +27,8 @@ void ThreadImpl::wait() {
 	}
 }
 
-void ThreadImpl::terminate() {
+void ThreadImpl::terminate()
+{
 	if ( mThread )
 	{
 		TerminateThread( mThread, 0 );

@@ -1,25 +1,23 @@
-#ifndef _FW_FILEWATCHERLINUX_H_
-#define _FW_FILEWATCHERLINUX_H_
-#pragma once
+#ifndef EFSW_FILEWATCHERLINUX_HPP
+#define EFSW_FILEWATCHERLINUX_HPP
 
-#include "FileWatcherImpl.hpp"
+#include <efsw/FileWatcherImpl.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
 #include <map>
-#include <sys/types.h>
 
 namespace efsw
 {
-	/// Implementation for Linux based on inotify.
-	/// @class FileWatcherInotify
-	class FileWatcherInotify : public FileWatcherImpl
-	{
+
+/// Implementation for Linux based on inotify.
+/// @class FileWatcherInotify
+class FileWatcherInotify : public FileWatcherImpl
+{
 	public:
 		/// type for a map from WatchID to WatchStruct pointer
 		typedef std::map<WatchID, Watcher*> WatchMap;
 
-	public:
 		FileWatcherInotify();
 
 		virtual ~FileWatcherInotify();
@@ -54,8 +52,8 @@ namespace efsw
 		Mutex mWatchesLock;
 
 		void run();
+};
 
-	};
 }
 
 #endif

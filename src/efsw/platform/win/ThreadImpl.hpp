@@ -17,7 +17,8 @@ class Thread;
 
 namespace Platform {
 
-class ThreadImpl {
+class ThreadImpl
+{
 	public:
 		ThreadImpl( Thread * owner );
 		

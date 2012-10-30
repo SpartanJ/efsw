@@ -13,7 +13,8 @@ namespace efsw {
 
 #ifdef DEBUG
 
-void efREPORT_ASSERT( const char * File, int Line, const char * Exp ) {
+void efREPORT_ASSERT( const char * File, int Line, const char * Exp )
+{
 	#ifdef EFSW_COMPILER_MSVC
 		_CrtDbgReport( _CRT_ASSERT, File, Line, "", Exp);
 

@@ -16,7 +16,26 @@
 #endif
 
 namespace efsw {
-	FileWatcher::FileWatcher()
+
+FileWatcher::FileWatcher()
+{
+	mImpl = new FILEWATCHER_IMPL();
+
+	if ( !mImpl->initOK() )
+	{
+		efSAFE_DELETE( mImpl );
+
+		mImpl = new FileWatcherGeneric();
+	}
+}
+
+FileWatcher::FileWatcher( bool useGenericFileWatcher )
+{
+	if ( useGenericFileWatcher )
+	{
+		mImpl = new FileWatcherGeneric();
+	}
+	else
 	{
 		mImpl = new FILEWATCHER_IMPL();
 
@@ -27,53 +46,36 @@ namespace efsw {
 			mImpl = new FileWatcherGeneric();
 		}
 	}
+}
 
-	FileWatcher::FileWatcher( bool useGenericFileWatcher )
-	{
-		if ( useGenericFileWatcher )
-		{
-			mImpl = new FileWatcherGeneric();
-		}
-		else
-		{
-			mImpl = new FILEWATCHER_IMPL();
+FileWatcher::~FileWatcher()
+{
+	efSAFE_DELETE( mImpl );
+}
 
-			if ( !mImpl->initOK() )
-			{
-				efSAFE_DELETE( mImpl );
+WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher)
+{
+	return mImpl->addWatch(directory, watcher, false);
+}
 
-				mImpl = new FileWatcherGeneric();
-			}
-		}
-	}
+WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
+{
+	return mImpl->addWatch(directory, watcher, recursive);
+}
 
-	FileWatcher::~FileWatcher()
-	{
-		efSAFE_DELETE( mImpl );
-	}
+void FileWatcher::removeWatch(const std::string& directory)
+{
+	mImpl->removeWatch(directory);
+}
 
-	WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher)
-	{
-		return mImpl->addWatch(directory, watcher, false);
-	}
+void FileWatcher::removeWatch(WatchID watchid)
+{
+	mImpl->removeWatch(watchid);
+}
 
-	WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
-	{
-		return mImpl->addWatch(directory, watcher, recursive);
-	}
+void FileWatcher::watch()
+{
+	mImpl->watch();
+}
 
-	void FileWatcher::removeWatch(const std::string& directory)
-	{
-		mImpl->removeWatch(directory);
-	}
-
-	void FileWatcher::removeWatch(WatchID watchid)
-	{
-		mImpl->removeWatch(watchid);
-	}
-
-	void FileWatcher::watch()
-	{
-		mImpl->watch();
-	}
 }

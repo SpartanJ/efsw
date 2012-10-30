@@ -1,6 +1,5 @@
-#ifndef _FW_FILEWATCHERWIN32_H_
-#define _FW_FILEWATCHERWIN32_H_
-#pragma once
+#ifndef EFSW_FILEWATCHERWIN32_HPP
+#define EFSW_FILEWATCHERWIN32_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
 
@@ -24,31 +23,32 @@
 
 namespace efsw
 {
-	/// Internal watch data
-	struct WatcherStructWin32;
 
-	class WatcherWin32 : public Watcher
-	{
-		public:
-			WatcherStructWin32 * Struct;
-			HANDLE DirHandle;
-			BYTE mBuffer[32 * 1024];
-			LPARAM lParam;
-			DWORD NotifyFilter;
-			bool StopNow;
-			FileWatcherImpl* Watch;
-			char* DirName;
-	};
+/// Internal watch data
+struct WatcherStructWin32;
 
-	/// Implementation for Win32 based on ReadDirectoryChangesW.
-	/// @class FileWatcherWin32
-	class FileWatcherWin32 : public FileWatcherImpl
-	{
+class WatcherWin32 : public Watcher
+{
+	public:
+		WatcherStructWin32 * Struct;
+		HANDLE DirHandle;
+		BYTE mBuffer[32 * 1024];
+		LPARAM lParam;
+		DWORD NotifyFilter;
+		bool StopNow;
+		FileWatcherImpl* Watch;
+		char* DirName;
+};
+
+/// Implementation for Win32 based on ReadDirectoryChangesW.
+/// @class FileWatcherWin32
+class FileWatcherWin32 : public FileWatcherImpl
+{
 	public:
 		/// type for a map from WatchID to WatcherWin32 pointer
 		typedef std::vector<WatcherStructWin32*> WatchVector;
 		typedef std::vector<HANDLE>	HandleVector;
-	public:
+
 		FileWatcherWin32();
 
 		virtual ~FileWatcherWin32();
@@ -81,12 +81,13 @@ namespace efsw
 		/// The last watchid
 		WatchID mLastWatchID;
 
-        Thread * mThread;
+		Thread * mThread;
 
-        Mutex mWatchesLock;
-    private:
-        void run();
-	};
+		Mutex mWatchesLock;
+	private:
+		void run();
+};
+
 }
 
 #endif

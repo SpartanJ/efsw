@@ -44,7 +44,7 @@ class Thread {
 		Private::ThreadFunc *		mEntryPoint; ///< Abstraction of the function to run
 };
 
-//! Taken from SFML threads
+//! NOTE: Taken from SFML2 threads
 namespace Private {
 
 // Base class for abstract thread functions

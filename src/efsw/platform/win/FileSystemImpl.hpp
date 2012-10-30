@@ -9,7 +9,8 @@
 
 namespace efsw { namespace Platform {
 
-class FileSystem {
+class FileSystem
+{
 	public:
 		static FileInfoMap filesInfoFromPath( const std::string& path );
 

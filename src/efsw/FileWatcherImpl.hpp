@@ -1,5 +1,5 @@
-#ifndef _FW_FILEWATCHERIMPL_H_
-#define _FW_FILEWATCHERIMPL_H_
+#ifndef EFSW_FILEWATCHERIMPL_HPP
+#define EFSW_FILEWATCHERIMPL_HPP
 
 #include <efsw/base.hpp>
 #include <efsw/Thread.hpp>

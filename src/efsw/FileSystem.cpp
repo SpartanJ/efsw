@@ -42,4 +42,9 @@ std::string FileSystem::fileNameFromPath( const std::string& filepath )
 	return filepath.substr( filepath.find_last_of( getOSSlash() ) + 1 );
 }
 
+std::string FileSystem::pathRemoveFileName( const std::string& filepath )
+{
+	return filepath.substr( 0, filepath.find_last_of( getOSSlash() ) + 1 );
+}
+
 }
