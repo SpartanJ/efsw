@@ -15,8 +15,7 @@
 
 #define KEVENT_RESERVE_VALUE (10)
 
-namespace efsw
-{
+namespace efsw {
 
 int comparator(const void* ke1, const void* ke2)
 {
@@ -34,13 +33,13 @@ int comparator(const void* ke1, const void* ke2)
 	return 1;
 }
 
-WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher ) :
+WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent ) :
 	Watcher( watchid, dirname, listener, recursive ),
 	mLastWatchID(0),
 	mChangeListCount( 0 ),
 	mDescriptor( kqueue() ),
 	mWatcher( watcher ),
-	mParent( NULL )
+	mParent( parent )
 {
 	addAll();
 }
@@ -91,12 +90,12 @@ void WatcherKqueue::addAll()
 		else if ( Recursive && fi.isDirectory() )
 		{
 			// Create another watcher for the subfolders ( if recursive )
-			WatchID id = addWatch( fi.Filepath, Listener, Recursive );
+			addWatch( fi.Filepath, Listener, Recursive, this );
 
-			// On success set the watch parent
-			if ( id > 0 )
+			// If the watcher is not adding the watcher means that the directory was created
+			if ( !mWatcher->isAddingWatcher() )
 			{
-				mWatches[ id ]->mParent = this;
+				handleFolderAction( fi.Filepath, Actions::Add );
 			}
 		}
 	}
@@ -267,11 +266,11 @@ void WatcherKqueue::rescan()
 			// Create another watcher if the watcher doesn't exists
 			if ( ( id = watchingDirectory( fi.Filepath ) ) < 0 )
 			{
-				id = addWatch( fi.Filepath, Listener, Recursive );
+				id = addWatch( fi.Filepath, Listener, Recursive, this );
 
 				if ( id > 0 )
 				{
-					mWatches[ id ]->mParent = this;
+					handleFolderAction( fi.Filepath, Actions::Add );
 
 					efDEBUG( "rescan(): Directory %s added\n", fi.Filepath.c_str() );
 				}
@@ -323,16 +322,6 @@ void WatcherKqueue::rescan()
 		}
 	}
 
-	// remove the child watchers ( sub-folders of the directory ) that were erased
-	// i think this is not needed, since every folder marks a flag for deletion after it last rescan
-	/*for ( WatchMap::iterator it = watches.begin(); it != watches.end(); it++ )
-	{
-		efDEBUG( "Removing erased child watcher %s\n", it->second->Directory.c_str() );
-
-		//removeWatch( it->second->ID );
-		mErased.push_back( it->second->ID );
-	}*/
-
 	closedir(dir);
 }
 
@@ -352,6 +341,13 @@ WatchID WatcherKqueue::watchingDirectory( std::string dir )
 void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action )
 {
 	Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action );
+}
+
+void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action action )
+{
+	FileSystem::dirRemoveSlashAtEnd( filename );
+
+	handleAction( filename, action );
 }
 
 void WatcherKqueue::watch()
@@ -423,6 +419,8 @@ void WatcherKqueue::watch()
 			{
 				efDEBUG( "watch(): Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
 
+				handleFolderAction( mWatches[ (*eit) ]->Directory, Actions::Delete );
+
 				removeWatch( (*eit) );
 			}
 			else
@@ -435,7 +433,7 @@ void WatcherKqueue::watch()
 	}
 }
 
-WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive )
+WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive , WatcherKqueue *parent)
 {
 	// This should never happen here
 	if( !FileSystem::isDirectory( directory ) )
@@ -443,7 +441,7 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 		return Errors::Log::createLastError( Errors::FileNotFound, directory );
 	}
 
-	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, directory, watcher, recursive, mWatcher );
+	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, directory, watcher, recursive, mWatcher, parent );
 
 	mWatches.insert(std::make_pair(mLastWatchID, watch));
 

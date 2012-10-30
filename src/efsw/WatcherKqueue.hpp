@@ -24,7 +24,7 @@ typedef struct kevent KEvent;
 class WatcherKqueue : public Watcher
 {
 	public:
-		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher );
+		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent = NULL );
 
 		~WatcherKqueue();
 
@@ -39,6 +39,8 @@ class WatcherKqueue : public Watcher
 
 		void handleAction(const std::string& filename, efsw::Action action);
 
+		void handleFolderAction( std::string filename, efsw::Action action );
+
 		void addAll();
 
 		void removeAll();
@@ -47,7 +49,7 @@ class WatcherKqueue : public Watcher
 
 		void watch();
 
-		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive);
+		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherKqueue * parent);
 
 		void removeWatch (WatchID watchid );
 	protected:

@@ -54,7 +54,11 @@ class FileWatcherKqueue : public FileWatcherImpl
 
 		std::list<WatchID> mRemoveList;
 
+		bool mAddingWatcher;
+
 		void run();
+
+		bool isAddingWatcher() const;
 };
 
 }

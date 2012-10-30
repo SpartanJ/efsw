@@ -17,7 +17,8 @@ namespace efsw
 {
 
 FileWatcherKqueue::FileWatcherKqueue() :
-	mThread( NULL )
+	mThread( NULL ),
+	mAddingWatcher( false )
 {
 	mTimeOut.tv_sec		= 0;
 	mTimeOut.tv_nsec	= 0;
@@ -43,7 +44,9 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 		return Errors::Log::createLastError( Errors::FileNotFound, directory );
 	}
 
+	mAddingWatcher = true;
 	WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, directory, watcher, recursive, this );
+	mAddingWatcher = false;
 
 	mWatchesLock.lock();
 	mWatches.insert(std::make_pair(mLastWatchID, watch));
@@ -86,6 +89,11 @@ void FileWatcherKqueue::removeWatch(WatchID watchid)
 	efSAFE_DELETE( watch );
 
 	mWatchesLock.unlock();
+}
+
+bool FileWatcherKqueue::isAddingWatcher() const
+{
+	return mAddingWatcher;
 }
 
 void FileWatcherKqueue::watch()
