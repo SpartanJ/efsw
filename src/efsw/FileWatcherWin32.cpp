@@ -279,7 +279,7 @@ void FileWatcherWin32::run()
 				mWatchesLock.lock();
 
 				// Don't trust the result - multiple objects may be signalled during a single call.
-				if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mHandles.size() )
+				if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mWatches.size() )
 				{
 					WatcherStructWin32 * watch = mWatches[ wait_result ];
 
