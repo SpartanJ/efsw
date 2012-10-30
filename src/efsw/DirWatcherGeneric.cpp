@@ -72,7 +72,7 @@ DirWatcherGeneric::~DirWatcherGeneric()
 		{
 			fi = it->second;
 
-			if ( !fi.isDirectory() )
+			//if ( !fi.isDirectory() ) // Report also directorie deletion
 			{
 				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Delete );
 			}
@@ -158,7 +158,7 @@ void DirWatcherGeneric::watch()
 					Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Modified );
 				}
 			}
-			else if ( fi.isRegularFile() ) /// Only add regular files
+			else if ( fi.isRegularFile() || fi.isDirectory() ) /// Only add regular files or directories
 			{
 				/// New file found
 				Files[ it->first ] = fi;

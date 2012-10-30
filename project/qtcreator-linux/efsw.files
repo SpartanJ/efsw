@@ -94,3 +94,5 @@
 ../../src/efsw/DirWatcherGeneric.hpp
 ../../src/efsw/DirWatcherGeneric.cpp
 ../../src/efsw/Log.cpp
+../../src/efsw/WatcherInotify.hpp
+../../src/efsw/WatcherInotify.cpp

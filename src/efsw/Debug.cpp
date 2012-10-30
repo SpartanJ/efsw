@@ -20,7 +20,7 @@ void efREPORT_ASSERT( const char * File, int Line, const char * Exp )
 
 		DebugBreak();
 	#else
-		printf( "ASSERT: %s file:%s line:%d", Exp, File, Line );
+		std::cout << "ASSERT: " << Exp << " file: " << File << " line: " << Line << std::endl;
 
 		#if defined(EFSW_COMPILER_GCC) && defined(EFSW_32BIT) && !defined(EFSW_ARM)
 			asm("int3");
@@ -48,7 +48,7 @@ void efPRINT( const char * format, ... )
 	#ifdef EFSW_COMPILER_MSVC
 		OutputDebugStringA( buf );
 	#else
-		printf("%s", buf );
+		std::cout << buf;
 	#endif
 }
 
@@ -73,7 +73,7 @@ void efPRINTC( unsigned int cond, const char * format, ...)
 	#ifdef EFSW_COMPILER_MSVC
 		OutputDebugStringA( buf );
 	#else
-		printf("%s", buf );
+		std::cout << buf;
 	#endif
 }
 

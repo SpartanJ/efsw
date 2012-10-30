@@ -5,6 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
+#include <efsw/WatcherInotify.hpp>
 #include <map>
 
 namespace efsw
@@ -16,7 +17,7 @@ class FileWatcherInotify : public FileWatcherImpl
 {
 	public:
 		/// type for a map from WatchID to WatchStruct pointer
-		typedef std::map<WatchID, Watcher*> WatchMap;
+		typedef std::map<WatchID, WatcherInotify*> WatchMap;
 
 		FileWatcherInotify();
 
@@ -40,9 +41,12 @@ class FileWatcherInotify : public FileWatcherImpl
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
-	private:
+	protected:
 		/// Map of WatchID to WatchStruct pointers
 		WatchMap mWatches;
+
+		/// User added watches
+		WatchMap mRealWatches;
 
 		/// inotify file descriptor
 		int mFD;
@@ -50,6 +54,8 @@ class FileWatcherInotify : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+
+		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherInotify * parent = NULL );
 
 		void run();
 };
