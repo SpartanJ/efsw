@@ -118,7 +118,7 @@ void FileWatcherKqueue::run()
 
 		mWatchesLock.unlock();
 
-		System::sleep( 250 );
+		System::sleep( 500 );
 	} while( mInitOK );
 }
 
