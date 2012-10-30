@@ -1,3 +1,12 @@
+function args_contains( element )
+  for _, value in pairs(_ARGS) do
+    if value == element then
+      return true
+    end
+  end
+  return false
+end
+
 solution "efsw"
 	location("./make/" .. os.get() .. "/")
 	targetdir("./bin")
@@ -7,6 +16,17 @@ solution "efsw"
 		osfiles = "src/efsw/platform/win/*.cpp"
 	else
 		osfiles = "src/efsw/platform/posix/*.cpp"
+	end
+			
+	-- This is for testing in other platforms that don't support kqueue
+	if args_contains( "kqueue" ) then
+		links { "kqueue" }
+		defines { "EFSW_KQUEUE" }
+	end
+	
+	-- Activates verbose mode
+	if args_contains( "verbose" ) then
+		defines { "EFSW_VERBOSE" }
 	end
 	
 	objdir("obj/" .. os.get() .. "/")

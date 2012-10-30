@@ -2,17 +2,16 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 
-#include <sys/time.h>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <dirent.h>
-#include <string.h>
+#include <fcntl.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileWatcherKqueue.hpp>
+#include <efsw/Debug.hpp>
 
 #define KEVENT_RESERVE_VALUE (10)
 
@@ -58,7 +57,7 @@ namespace efsw
 		// scan directory and call addFile(name, false) on each file
 		FileSystem::dirAddSlashAtEnd( Directory );
 
-		fprintf(stderr, "addAll(): Added folder: %s\n", Directory.c_str());
+		efDEBUG( "addAll(): Added folder: %s\n", Directory.c_str());
 
 		// add base dir
 		int fd = open( Directory.c_str(), O_RDONLY );
@@ -104,11 +103,11 @@ namespace efsw
 
 	void WatcherKqueue::removeAll()
 	{
-		fprintf( stderr, "Removing all child watchers\n" );
+		efDEBUG( "removeAll(): Removing all child watchers\n" );
 
 		for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 		{
-			fprintf( stderr, "Removed child watcher %s\n", it->second->Directory.c_str() );
+			efDEBUG( "removeAll(): Removed child watcher %s\n", it->second->Directory.c_str() );
 
 			removeWatch( it->second->ID );
 		}
@@ -116,7 +115,7 @@ namespace efsw
 
 	void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 	{
-		fprintf(stderr, "addFile(): Added: %s\n", name.c_str() );
+		efDEBUG( "addFile(): Added: %s\n", name.c_str() );
 
 		// Open the file to get the file descriptor
 		int fd = open( name.c_str(), O_RDONLY );
@@ -135,7 +134,7 @@ namespace efsw
 		{
 			size_t reserve_size = mChangeList.size() + KEVENT_RESERVE_VALUE;
 			mChangeList.resize( reserve_size );
-			fprintf( stderr, "Reserverd more KEvents space for %s, space reserved %ld, list actual size %ld.\n", Directory.c_str(), reserve_size, mChangeListCount );
+			efDEBUG( "addFile(): Reserverd more KEvents space for %s, space reserved %ld, list actual size %ld.\n", Directory.c_str(), reserve_size, mChangeListCount );
 		}
 
 		// create entry
@@ -164,7 +163,7 @@ namespace efsw
 
 	void WatcherKqueue::removeFile( const std::string& name, bool emitEvents )
 	{
-		fprintf(stderr, "removeFile(): Trying to remove file: %s\n", name.c_str() );
+		efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
 
 		// bsearch
 		KEvent target;
@@ -217,7 +216,7 @@ namespace efsw
 	// rescans the watched directory adding/removing files and sending notices
 	void WatcherKqueue::rescan()
 	{
-		fprintf( stderr, "Rescanning: %s\n", Directory.c_str() );
+		efDEBUG( "rescan(): Rescanning: %s\n", Directory.c_str() );
 
 		// if new file, call addFile
 		// if missing file, call removeFile
@@ -231,7 +230,7 @@ namespace efsw
 			// remove it
 			if ( NULL != mParent )
 			{	// Flag for deletion
-				fprintf( stderr, "Directory %s flaged for deletion.\n", Directory.c_str() );
+				efDEBUG( "rescan(): Directory %s flaged for deletion.\n", Directory.c_str() );
 				mParent->mErased.push_back( ID );
 			}
 
@@ -273,7 +272,7 @@ namespace efsw
 					{
 						mWatches[ id ]->mParent = this;
 
-						fprintf( stderr, "Directory %s added\n", fi.Filepath.c_str() );
+						efDEBUG( "rescan(): Directory %s added\n", fi.Filepath.c_str() );
 					}
 				}
 				else
@@ -327,7 +326,7 @@ namespace efsw
 		// i think this is not needed, since every folder marks a flag for deletion after it last rescan
 		/*for ( WatchMap::iterator it = watches.begin(); it != watches.end(); it++ )
 		{
-			fprintf( stderr, "Removing erased child watcher %s\n", it->second->Directory.c_str() );
+			efDEBUG( "Removing erased child watcher %s\n", it->second->Directory.c_str() );
 
 			//removeWatch( it->second->ID );
 			mErased.push_back( it->second->ID );
@@ -371,7 +370,7 @@ namespace efsw
 			// An error ocurred?
 			if( nev == -1 )
 			{
-				fprintf( stderr, "Error on directory %s\n", Directory.c_str() );
+				efDEBUG( "watch(): Error on directory %s\n", Directory.c_str() );
 				perror("kevent");
 				break;
 			}
@@ -383,12 +382,12 @@ namespace efsw
 				// otherwise it is an event of some file inside the folder
 				if( ( entry = reinterpret_cast<FileInfo*> ( event.udata ) ) != NULL )
 				{
-					fprintf( stderr, "File: %s -- ", entry->Filepath.c_str() );
+					efDEBUG( "watch(): File: %s ", entry->Filepath.c_str() );
 
 					// If the event flag is delete... the file was deleted
 					if ( event.fflags & NOTE_DELETE )
 					{
-						fprintf( stderr, "File deleted\n" );
+						efDEBUG( "deleted\n" );
 
 						removeFile( entry->Filepath );
 					}
@@ -398,7 +397,7 @@ namespace efsw
 					)
 					{
 						// The file was modified
-						fprintf( stderr, "File modified\n" );
+						efDEBUG( "modified\n" );
 
 						*entry = FileInfo( entry->Filepath );
 
@@ -415,19 +414,19 @@ namespace efsw
 		// Erase all watchers marked for deletion
 		if ( !mErased.empty() )
 		{
-			fprintf( stderr, "Directory %s is erasing childs. %ld deletions pending.\n", Directory.c_str(), mErased.size() );
+			efDEBUG( "watch(): Directory %s is erasing childs. %ld deletions pending.\n", Directory.c_str(), mErased.size() );
 
 			for ( std::vector<WatchID>::iterator eit = mErased.begin(); eit != mErased.end(); eit++ )
 			{
 				if ( mWatches.find( (*eit) ) != mWatches.end() )
 				{
-					fprintf( stderr, "Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
+					efDEBUG( "watch(): Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
 
 					removeWatch( (*eit) );
 				}
 				else
 				{
-					fprintf( stderr, "Tryed to remove watcher ID: %ld, but it wasn't present.", (*eit) );
+					efDEBUG( "watch(): Tryed to remove watcher ID: %ld, but it wasn't present.", (*eit) );
 				}
 			}
 

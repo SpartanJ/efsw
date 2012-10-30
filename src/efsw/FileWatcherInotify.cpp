@@ -11,6 +11,7 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/String.hpp>
+#include <efsw/Debug.hpp>
 
 #define BUFF_SIZE ((sizeof(struct inotify_event)+FILENAME_MAX)*1024)
 
@@ -24,7 +25,7 @@ namespace efsw
 
 		if (mFD < 0)
 		{
-			fprintf (stderr, "Error: %s\n", strerror(errno));
+			efDEBUG( "Error: %s\n", strerror(errno) );
 		}
 		else
 		{

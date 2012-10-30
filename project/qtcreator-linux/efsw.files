@@ -87,3 +87,5 @@
 ../../premake4.lua
 ../../src/efsw/WatcherKqueue.hpp
 ../../src/efsw/WatcherKqueue.cpp
+../../src/efsw/Debug.hpp
+../../src/efsw/Debug.cpp

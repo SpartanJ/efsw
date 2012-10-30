@@ -7,9 +7,6 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 
 #include <efsw/WatcherKqueue.hpp>
-#include <map>
-#include <sys/event.h>
-#include <sys/types.h>
 
 namespace efsw
 {

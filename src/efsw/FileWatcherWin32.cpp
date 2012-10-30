@@ -11,8 +11,6 @@ namespace efsw
 		WatcherWin32 *	Watch;
 	};
 
-#pragma region Internal Functions
-
 	// forward decl
 	bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear = false);
 
@@ -141,8 +139,6 @@ namespace efsw
 		HeapFree(GetProcessHeap(), 0, tWatch);
 		return NULL;
 	}
-
-#pragma endregion
 
 	FileWatcherWin32::FileWatcherWin32() :
 		mLastWatchID(0),

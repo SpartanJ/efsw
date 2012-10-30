@@ -31,7 +31,12 @@ typedef SOPHIST_uint64		Uint64;
 #	define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
 #elif defined(__linux__)
 ///	This includes Linux and Android
-#	define EFSW_PLATFORM EFSW_PLATFORM_INOTIFY
+	#ifndef EFSW_KQUEUE
+	#	define EFSW_PLATFORM EFSW_PLATFORM_INOTIFY
+	#else
+	/// This is for testing libkqueue, sadly it doesnt work
+	#	define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
+	#endif
 #else
 ///	Everything else
 #	define EFSW_PLATFORM EFSW_PLATFORM_GENERIC
@@ -39,6 +44,16 @@ typedef SOPHIST_uint64		Uint64;
 
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	#define EFSW_PLATFORM_POSIX
+#endif
+
+#if 1 == SOPHIST_pointer64
+	#define EFSW_64BIT
+#else
+	#define EFSW_32BIT
+#endif
+
+#if defined(arm) || defined(__arm__)
+	#define	EFSW_ARM
 #endif
 
 #define efCOMMA ,
