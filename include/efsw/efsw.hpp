@@ -25,12 +25,39 @@
 	http://code.google.com/p/simplefilewatcher/ also MIT licensed.
 */
 
-#ifndef ESFW_HPP
-#define ESFW_HPP
-
 #include <string>
 #include <list>
 #include <iostream>
+
+#ifndef ESFW_HPP
+#define ESFW_HPP
+
+#if defined(_WIN32)
+	#ifdef EFSW_DYNAMIC
+		// Windows platforms
+		#ifdef EFSW_EXPORTS
+			// From DLL side, we must export
+			#define EFSW_API __declspec(dllexport)
+		#else
+			// From client application side, we must import
+			#define EFSW_API __declspec(dllimport)
+		#endif
+	#else
+		// No specific directive needed for static build
+		#ifndef EFSW_API
+		#define EFSW_API
+		#endif
+	#endif
+#else
+	#if ( __GNUC__ >= 4 ) && defined( EFSW_EXPORTS )
+		#define EFSW_API __attribute__ ((visibility("default")))
+	#endif
+
+	// Other platforms don't need to define anything
+	#ifndef EFSW_API
+	#define EFSW_API
+	#endif
+#endif
 
 namespace efsw {
 
@@ -66,7 +93,7 @@ enum Error
 	Unspecified		= -2
 };
 
-class Log
+class EFSW_API Log
 {
 	public:
 		/// @return The last error logged
@@ -83,7 +110,7 @@ typedef Errors::Error Error;
 /// Listens to files and directories and dispatches events
 /// to notify the parent program of the changes.
 /// @class FileWatcher
-class FileWatcher
+class EFSW_API FileWatcher
 {
 	public:
 		/// Default constructor, will use the default platform file watcher

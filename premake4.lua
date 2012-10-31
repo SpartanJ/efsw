@@ -75,6 +75,7 @@ solution "efsw"
 		targetdir("./lib")
 		includedirs { "include", "src" }
 		files { "src/efsw/*.cpp", osfiles }
+		defines { "EFSW_DYNAMIC", "EFSW_EXPORTS" }
 		
 		configuration "debug"
 			defines { "DEBUG" }

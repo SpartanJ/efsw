@@ -121,3 +121,4 @@
 ../../src/efsw/FileInfo.cpp
 ../../src/efsw/DirWatcherGeneric.cpp
 ../../src/efsw/Debug.cpp
+../../premake4.lua
