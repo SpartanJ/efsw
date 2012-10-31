@@ -28,14 +28,20 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	GetFiles( Directory, Files );
 
 	FileInfoMap::iterator it = Files.begin();
+	std::list<std::string> eraseFiles;
 
 	/// Remove all non regular files and non directories
 	for ( ; it != Files.end(); it++ )
 	{
 		if ( !it->second.isRegularFile() && !it->second.isDirectory() )
 		{
-			Files.erase( it );
+			eraseFiles.push_back( it->first );
 		}
+	}
+
+	for ( std::list<std::string>::iterator eit = eraseFiles.begin(); eit != eraseFiles.end(); eit++ )
+	{
+		Files.erase( *eit );
 	}
 
 	if ( Recursive )
@@ -72,10 +78,7 @@ DirWatcherGeneric::~DirWatcherGeneric()
 		{
 			fi = it->second;
 
-			//if ( !fi.isDirectory() ) // Report also directorie deletion
-			{
-				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Delete );
-			}
+			Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Delete );
 		}
 
 		Watch->CurDirWatch = oldWatch;

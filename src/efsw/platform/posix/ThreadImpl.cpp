@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <efsw/Debug.hpp>
 
 namespace efsw { namespace Platform {
 
@@ -15,7 +16,7 @@ ThreadImpl::ThreadImpl( Thread * owner ) :
 
 	if ( !mIsActive )
 	{
-		std::cerr << "Failed to create thread" << std::endl;
+		efDEBUG( "Failed to create thread\n" );
 	}
 }
 
@@ -34,7 +35,8 @@ void ThreadImpl::wait()
 
 void ThreadImpl::terminate()
 {
-	if ( mIsActive ) {
+	if ( mIsActive )
+	{
 		#if !defined( __ANDROID__ ) && !defined( ANDROID )
 			pthread_cancel( mThread );
 		#else

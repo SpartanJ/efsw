@@ -53,7 +53,9 @@ FileWatcherInotify::~FileWatcherInotify()
 	}
 
 	if ( mThread )
+	{
 		mThread->terminate();
+	}
 
 	efSAFE_DELETE( mThread );
 }
@@ -128,13 +130,19 @@ void FileWatcherInotify::removeWatch(const std::string& directory)
 			if ( watch->Recursive )
 			{
 				WatchMap::iterator it = mWatches.begin();
+				std::list<WatchID> eraseWatches;
 
 				for(; it != mWatches.end(); ++it)
 				{
 					if ( it->second->inParentTree( watch ) )
 					{
-						removeWatch( it->second->ID );
+						eraseWatches.push_back( it->second->ID );
 					}
+				}
+
+				for ( std::list<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end(); eit++ )
+				{
+					removeWatch( *eit );
 				}
 			}
 
@@ -175,6 +183,7 @@ void FileWatcherInotify::removeWatch( WatchID watchid )
 	if ( watch->Recursive )
 	{
 		WatchMap::iterator it = mWatches.begin();
+		std::list<WatchID> eraseWatches;
 
 		for(; it != mWatches.end(); ++it)
 		{
@@ -182,8 +191,13 @@ void FileWatcherInotify::removeWatch( WatchID watchid )
 				 it->second->inParentTree( watch )
 			)
 			{
-				removeWatch( it->second->ID );
+				eraseWatches.push_back( it->second->ID );
 			}
+		}
+
+		for ( std::list<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end(); eit++ )
+		{
+			removeWatch( *eit );
 		}
 	}
 

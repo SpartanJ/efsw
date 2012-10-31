@@ -49,6 +49,16 @@ WatcherKqueue::~WatcherKqueue()
 	// Remove the childs watchers ( sub-folders watches )
 	removeAll();
 
+	for ( size_t i = 0; i < mChangeListCount; i++ )
+	{
+		if ( NULL != mChangeList[i].udata )
+		{
+			FileInfo * fi		= reinterpret_cast<FileInfo*>( mChangeList[i].udata );
+
+			efSAFE_DELETE( fi );
+		}
+	}
+
 	close( mDescriptor );
 }
 
@@ -105,11 +115,18 @@ void WatcherKqueue::removeAll()
 {
 	efDEBUG( "removeAll(): Removing all child watchers\n" );
 
+	std::list<WatchID> erase;
+
 	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 	{
 		efDEBUG( "removeAll(): Removed child watcher %s\n", it->second->Directory.c_str() );
 
-		removeWatch( it->second->ID );
+		erase.push_back( it->second->ID );
+	}
+
+	for ( std::list<WatchID>::iterator eit = erase.begin(); eit != erase.end(); eit++ )
+	{
+		removeWatch( *eit );
 	}
 }
 
@@ -274,11 +291,6 @@ void WatcherKqueue::rescan()
 
 					efDEBUG( "rescan(): Directory %s added\n", fi.Filepath.c_str() );
 				}
-			}
-			else
-			{
-				// Remove from watches folders check list
-				//watches.erase( id );
 			}
 		}
 		else if ( fi.isRegularFile() ) // Skip non-regular files
@@ -456,6 +468,7 @@ void WatcherKqueue::removeWatch( WatchID watchid )
 		return;
 
 	WatcherKqueue* watch = iter->second;
+
 	mWatches.erase(iter);
 
 	efSAFE_DELETE( watch );

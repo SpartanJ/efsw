@@ -1,6 +1,15 @@
 #include <efsw/efsw.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileSystem.hpp>
+#include <signal.h>
+
+bool STOP = false;
+
+void sigend(int signal)
+{
+	std::cout << std::endl << "Bye bye" << std::endl;
+	STOP = true;
+}
 
 /// Processes a file action
 class UpdateListener : public efsw::FileWatchListener
@@ -26,6 +35,10 @@ class UpdateListener : public efsw::FileWatchListener
 
 int main(int argc, char **argv)
 {
+	signal( SIGABRT	,	sigend );
+	signal( SIGINT	,	sigend );
+	signal( SIGTERM	,	sigend );
+
 	std::cout << "Press ^C to exit demo" << std::endl;
 
 	bool commonTest = true;
@@ -72,8 +85,9 @@ int main(int argc, char **argv)
 
 		//efsw::System::sleep( 1000 );
 		//fileWatcher.removeWatch( watchID );
-		//efsw::System::sleep( 1000 );
-		//fileWatcher.removeWatch( watchID2 );
+		efsw::System::sleep( 1000 );
+
+		fileWatcher.removeWatch( watchID2 );
 	}
 	else
 	{
@@ -97,10 +111,12 @@ int main(int argc, char **argv)
 		}
 	}
 
-	while( true )
+	while( !STOP )
 	{
 		efsw::System::sleep( 1000 );
 	}
+
+	pthread_exit(0);
 
 	return 0;
 }

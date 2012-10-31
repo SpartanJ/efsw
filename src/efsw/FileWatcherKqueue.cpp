@@ -18,7 +18,8 @@ namespace efsw
 
 FileWatcherKqueue::FileWatcherKqueue() :
 	mThread( NULL ),
-	mAddingWatcher( false )
+	mAddingWatcher( false ),
+	mLastWatchID(0)
 {
 	mTimeOut.tv_sec		= 0;
 	mTimeOut.tv_nsec	= 0;
@@ -35,6 +36,12 @@ FileWatcherKqueue::~FileWatcherKqueue()
 	}
 
 	mWatches.clear();
+
+	mInitOK = false;
+
+	mThread->wait();
+
+	efSAFE_DELETE( mThread );
 }
 
 WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)

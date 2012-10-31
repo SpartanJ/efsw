@@ -4,6 +4,8 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
+#include <efsw/Debug.hpp>
+
 namespace efsw { namespace Platform {
 
 ThreadImpl::ThreadImpl( Thread *owner )
@@ -12,7 +14,7 @@ ThreadImpl::ThreadImpl( Thread *owner )
 
 	if ( !mThread )
 	{
-		std::cerr << "Failed to create thread" << std::endl;
+		efDEBUG( "Failed to create thread\n" );
 	}
 }
 

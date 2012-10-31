@@ -59,9 +59,16 @@ void FileWatcherGeneric::removeWatch( const std::string& directory )
 	{
 		if ( (*it)->Directory == directory )
 		{
+			WatcherGeneric * watch = (*it);
+
 			mWatchesLock.lock();
+
 			mWatches.erase( it );
+
+			efSAFE_DELETE( watch ) ;
+
 			mWatchesLock.unlock();
+
 			return;
 		}
 	}
@@ -75,9 +82,16 @@ void FileWatcherGeneric::removeWatch(WatchID watchid)
 	{
 		if ( (*it)->ID == watchid )
 		{
+			WatcherGeneric * watch = (*it);
+
 			mWatchesLock.lock();
+
 			mWatches.erase( it );
+
+			efSAFE_DELETE( watch ) ;
+
 			mWatchesLock.unlock();
+
 			return;
 		}
 	}
