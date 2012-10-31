@@ -25,12 +25,12 @@
 	http://code.google.com/p/simplefilewatcher/ also MIT licensed.
 */
 
+#ifndef ESFW_HPP
+#define ESFW_HPP
+
 #include <string>
 #include <list>
 #include <iostream>
-
-#ifndef ESFW_HPP
-#define ESFW_HPP
 
 #if defined(_WIN32)
 	#ifdef EFSW_DYNAMIC
