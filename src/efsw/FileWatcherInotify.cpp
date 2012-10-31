@@ -219,6 +219,8 @@ void FileWatcherInotify::watch()
 
 void FileWatcherInotify::run()
 {
+	WatchMap::iterator wit;
+
 	do
 	{
 		ssize_t len, i = 0;
@@ -233,10 +235,16 @@ void FileWatcherInotify::run()
 				struct inotify_event *pevent = (struct inotify_event *)&buff[i];
 
 				mWatchesLock.lock();
-				Watcher * watch = mWatches[pevent->wd];
+
+				wit = mWatches.find( pevent->wd );
+
+				if ( wit != mWatches.end() )
+				{
+					handleAction(wit->second, pevent->name, pevent->mask);
+				}
+
 				mWatchesLock.unlock();
 
-				handleAction(watch, pevent->name, pevent->mask);
 				i += sizeof(struct inotify_event) + pevent->len;
 			}
 		}
