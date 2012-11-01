@@ -63,6 +63,8 @@ class FileWatcherImpl
 		virtual bool initOK() { return mInitOK; }
 	protected:
 		bool	mInitOK;
+
+		virtual bool pathInWatches( const std::string& path ) = 0;
 };
 
 }

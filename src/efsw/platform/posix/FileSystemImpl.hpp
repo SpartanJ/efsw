@@ -3,7 +3,6 @@
 
 #include <efsw/base.hpp>
 #include <efsw/FileInfo.hpp>
-#include <map>
 
 #if defined( EFSW_PLATFORM_POSIX )
 

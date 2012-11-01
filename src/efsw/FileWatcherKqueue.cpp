@@ -46,13 +46,22 @@ FileWatcherKqueue::~FileWatcherKqueue()
 
 WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
 {
-	if( !FileSystem::isDirectory( directory ) )
+	std::string dir( directory );
+
+	FileSystem::dirAddSlashAtEnd( dir );
+
+	if( !FileSystem::isDirectory( dir ) )
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, directory );
 	}
 
+	if ( pathInWatches( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRepeated, directory );
+	}
+
 	mAddingWatcher = true;
-	WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, directory, watcher, recursive, this );
+	WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, dir, watcher, recursive, this );
 	mAddingWatcher = false;
 
 	mWatchesLock.lock();
@@ -149,6 +158,21 @@ std::list<std::string> FileWatcherKqueue::directories()
 	mWatchesLock.unlock();
 
 	return dirs;
+}
+
+bool FileWatcherKqueue::pathInWatches( const std::string& path )
+{
+	WatchMap::iterator it = mWatches.begin();
+
+	for ( ; it != mWatches.end(); it++ )
+	{
+		if ( it->second->Directory == path )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 }

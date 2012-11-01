@@ -1,6 +1,7 @@
 #include <efsw/FileWatcherGeneric.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
+#include <efsw/String.hpp>
 
 namespace efsw
 {
@@ -37,7 +38,27 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	if ( !FileSystem::isDirectory( dir ) )
 	{
-		return Errors::Log::createLastError( Errors::FileNotFound, directory );
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+
+	if ( pathInWatches( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRepeated, dir );
+	}
+
+	std::string curPath;
+	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+
+	if ( "" != link )
+	{
+		if ( pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else
+		{
+			dir = link;
+		}
 	}
 
 	mLastWatchID++;
@@ -146,6 +167,21 @@ std::list<std::string> FileWatcherGeneric::directories()
 	mWatchesLock.unlock();
 
 	return dirs;
+}
+
+bool FileWatcherGeneric::pathInWatches( const std::string& path )
+{
+	WatchList::iterator it = mWatches.begin();
+
+	for ( ; it != mWatches.end(); it++ )
+	{
+		if ( (*it)->Directory == path )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 }

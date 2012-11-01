@@ -48,6 +48,8 @@ class FileWatcherGeneric : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+
+		bool pathInWatches( const std::string& path );
 	private:
 		void run();
 };

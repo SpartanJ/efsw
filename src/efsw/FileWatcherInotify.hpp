@@ -57,6 +57,8 @@ class FileWatcherInotify : public FileWatcherImpl
 
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherInotify * parent = NULL );
 
+		bool pathInWatches( const std::string& path );
+	private:
 		void run();
 };
 

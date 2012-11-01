@@ -1,6 +1,7 @@
 #ifndef EFSW_FILEINFO_HPP
 #define EFSW_FILEINFO_HPP
 
+#include <efsw/base.hpp>
 #include <string>
 #include <map>
 
@@ -13,6 +14,8 @@ class FileInfo
 
 		FileInfo( const std::string& filepath );
 
+		FileInfo( const std::string& filepath, bool linkInfo );
+
 		bool operator==( const FileInfo& Other ) const;
 
 		bool operator!=( const FileInfo& Other ) const;
@@ -23,13 +26,22 @@ class FileInfo
 
 		bool isRegularFile();
 
+		bool isLink();
+
+		std::string linksTo();
+
 		bool exists();
 
-		std::string Filepath;
-		unsigned long long ModificationTime;
-		unsigned long OwnerId;
-		unsigned long GroupId;
-		unsigned long Permissions;
+		void getInfo();
+
+		void getRealInfo();
+
+		std::string		Filepath;
+		Uint64			ModificationTime;
+		Uint32			OwnerId;
+		Uint32			GroupId;
+		Uint32			Permissions;
+		Uint64			Size;
 };
 
 typedef std::map<std::string, FileInfo> FileInfoMap;

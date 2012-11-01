@@ -38,7 +38,7 @@ class FileWatcherKqueue : public FileWatcherImpl
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
-	private:
+	protected:
 		/// Map of WatchID to WatchStruct pointers
 		WatchMap mWatches;
 
@@ -56,9 +56,11 @@ class FileWatcherKqueue : public FileWatcherImpl
 
 		bool mAddingWatcher;
 
-		void run();
-
 		bool isAddingWatcher() const;
+
+		bool pathInWatches( const std::string& path );
+	private:
+		void run();
 };
 
 }

@@ -11,8 +11,8 @@ class DirWatcherGeneric;
 class WatcherGeneric : public Watcher
 {
 	public:
-		DirWatcherGeneric *		DirWatch;
 		FileWatcherImpl *		WatcherImpl;
+		DirWatcherGeneric *		DirWatch;
 		DirWatcherGeneric *		CurDirWatch;
 
 		WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive );
@@ -20,6 +20,8 @@ class WatcherGeneric : public Watcher
 		~WatcherGeneric();
 
 		void watch();
+
+		bool isPath( std::string path );
 };
 
 }

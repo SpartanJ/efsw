@@ -169,20 +169,34 @@ FileWatcherWin32::~FileWatcherWin32()
 
 WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
 {
+	std::string dir( directory );
+
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	WatchID watchid = ++mLastWatchID;
 
-	WatcherStructWin32* watch = CreateWatch(directory.c_str(), recursive,
-		FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME);
+	WatcherStructWin32 * watch = CreateWatch( dir.c_str(), recursive,	FILE_NOTIFY_CHANGE_CREATION |
+																			FILE_NOTIFY_CHANGE_SIZE |
+																			FILE_NOTIFY_CHANGE_FILE_NAME |
+																			FILE_NOTIFY_CHANGE_DIR_NAME
+	);
 
-	if(!watch)
-		return Errors::Log::createLastError( Errors::FileNotFound, directory );
+	if( NULL == watch )
+	{
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+
+	if ( pathInWatches( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRepeated, dir );
+	}
 
 	// Add the handle to the handles vector
 	watch->Watch->ID = watchid;
 	watch->Watch->Watch = this;
 	watch->Watch->Listener = watcher;
-	watch->Watch->DirName = new char[directory.length()+1];
-	strcpy(watch->Watch->DirName, directory.c_str());
+	watch->Watch->DirName = new char[dir.length()+1];
+	strcpy(watch->Watch->DirName, dir.c_str());
 
 	mWatchesLock.lock();
 	mHandles.push_back( watch->Watch->DirHandle );
@@ -347,6 +361,19 @@ std::list<std::string> FileWatcherWin32::directories()
 	mWatchesLock.unlock();
 
 	return dirs;
+}
+
+bool FileWatcherWin32::pathInWatches( const std::string& path )
+{
+	for ( WatchVector::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
+	{
+		if ( (*it)->Watch->DirName == path )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 }

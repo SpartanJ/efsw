@@ -2,9 +2,12 @@
 
 #if defined( EFSW_PLATFORM_POSIX )
 
+#include <efsw/FileInfo.hpp>
+#include <efsw/FileSystem.hpp>
 #include <dirent.h>
 #include <cstring>
 #include <sys/stat.h>
+#include <cstdlib>
 
 namespace efsw { namespace Platform {
 

@@ -90,7 +90,8 @@ namespace Errors {
 enum Error
 {
 	FileNotFound	= -1,
-	Unspecified		= -2
+	FileRepeated	= -2,
+	Unspecified		= -3
 };
 
 class EFSW_API Log

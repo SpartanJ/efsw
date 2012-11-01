@@ -71,13 +71,37 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	int wd = inotify_add_watch (mFD, dir.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MOVED_FROM | IN_DELETE);
-	if (wd < 0)
+	if ( pathInWatches( dir ) )
 	{
-		if(errno == ENOENT)
-			return Errors::Log::createLastError( Errors::FileNotFound, directory );
+		return Errors::Log::createLastError( Errors::FileRepeated, directory );
+	}
+
+	/// Check if the directory is a symbolic link
+	std::string curPath;
+	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+
+	if ( "" != link )
+	{
+		/// If it's a symlink check if the realpath exists as a watcher, or
+		/// if the path is outside the current dir
+		if ( pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+	}
+
+	int wd = inotify_add_watch (mFD, dir.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MOVED_FROM | IN_DELETE);
+
+	if ( wd < 0 )
+	{
+		if( errno == ENOENT )
+		{
+			return Errors::Log::createLastError( Errors::FileNotFound, dir );
+		}
 		else
+		{
 			return Errors::Log::createLastError( Errors::Unspecified, std::string(strerror(errno)) );
+		}
 	}
 
 	WatcherInotify * pWatch	= new WatcherInotify();
@@ -340,6 +364,21 @@ std::list<std::string> FileWatcherInotify::directories()
 	mWatchesLock.unlock();
 
 	return dirs;
+}
+
+bool FileWatcherInotify::pathInWatches( const std::string& path )
+{
+	WatchMap::iterator it = mWatches.begin();
+
+	for ( ; it != mWatches.end(); it++ )
+	{
+		if ( it->second->Directory == path )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 }

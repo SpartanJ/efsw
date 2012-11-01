@@ -1,5 +1,6 @@
 #include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileSystem.hpp>
+#include <efsw/String.hpp>
 
 namespace efsw {
 
@@ -10,13 +11,18 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	Deleted( false )
 {
 	/// Is this a recursive watch?
-	if ( ws->Directory != directory )
+	if ( Watch->Directory != directory )
 	{
 		/// Get the real directory
-		Directory = ws->CurDirWatch->Directory + directory;
+		Directory = Watch->CurDirWatch->Directory + directory;
 	}
 
-	ws->CurDirWatch = this;
+	if ( NULL == Watch->DirWatch )
+	{
+		Watch->DirWatch = this;
+	}
+
+	Watch->CurDirWatch = this;
 
 	FileSystem::dirAddSlashAtEnd( Directory );
 
@@ -51,12 +57,25 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 
 		for ( ; it != Files.end(); it++ )
 		{
-			/// @TODO: Check for recursive symbolic link directories ( implement isRecursive() )
 			if ( it->second.isDirectory() )
 			{
+				/// Check if the directory is a symbolic link
+				std::string curPath;
+				std::string link( FileSystem::getLinkRealPath( it->second.Filepath, curPath ) );
+
+				if ( "" != link )
+				{
+					/// If it's a symlink check if the realpath exists as a watcher, or
+					/// if the path is outside the current dir
+					if ( Watch->isPath( link ) || -1 == String::strStartsWith( curPath, link ) )
+					{
+						continue;
+					}
+				}
+
 				Directories[ it->first ] = new DirWatcherGeneric( ws, it->first, recursive );
 
-				ws->CurDirWatch = this;
+				Watch->CurDirWatch = this;
 			}
 		}
 	}
@@ -258,6 +277,24 @@ void DirWatcherGeneric::watch()
 void DirWatcherGeneric::GetFiles( const std::string& directory, FileInfoMap& files )
 {
 	files = FileSystem::filesInfoFromPath( directory );
+}
+
+bool DirWatcherGeneric::isPath( std::string path )
+{
+	if ( Directory == path )
+	{
+		return true;
+	}
+
+	for ( DirWatchMap::iterator it = Directories.begin(); it != Directories.end(); it++ )
+	{
+		 if ( it->second->isPath( path ) )
+		 {
+			 return true;
+		 }
+	}
+
+	return false;
 }
 
 } 

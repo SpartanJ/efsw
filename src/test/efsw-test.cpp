@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 	std::cout << "Press ^C to exit demo" << std::endl;
 
 	bool commonTest = true;
-	bool useGeneric = false;
+	bool useGeneric = true;
 	std::string path;
 
 	if ( argc >= 2 )
@@ -75,19 +75,22 @@ int main(int argc, char **argv)
 		/// add a watch to the system
 		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test", ul, true );
 
+		fileWatcher.addWatch( CurPath + "test/1", ul, true );
+		fileWatcher.addWatch( CurPath + "test/imposibru", ul, true );
+
 		/// starts watching
 		fileWatcher.watch();
 
 		/// adds another watch after started watching...
-		efsw::System::sleep( 1000 );
+		efsw::System::sleep( 100 );
 
 		efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
 
 		//efsw::System::sleep( 1000 );
 		//fileWatcher.removeWatch( watchID );
-		efsw::System::sleep( 1000 );
+		//efsw::System::sleep( 100 );
 
-		fileWatcher.removeWatch( watchID2 );
+		//fileWatcher.removeWatch( watchID2 );
 	}
 	else
 	{
@@ -113,7 +116,7 @@ int main(int argc, char **argv)
 
 	while( !STOP )
 	{
-		efsw::System::sleep( 1000 );
+		efsw::System::sleep( 100 );
 	}
 
 	pthread_exit(0);

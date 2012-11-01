@@ -71,7 +71,7 @@ class FileWatcherWin32 : public FileWatcherImpl
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
-	private:
+	protected:
 		/// Vector of WatcherWin32 pointers
 		WatchVector mWatches;
 
@@ -84,6 +84,8 @@ class FileWatcherWin32 : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+
+		bool pathInWatches( const std::string& path );
 	private:
 		void run();
 };
