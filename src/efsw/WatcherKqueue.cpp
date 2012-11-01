@@ -12,6 +12,7 @@
 #include <efsw/System.hpp>
 #include <efsw/FileWatcherKqueue.hpp>
 #include <efsw/Debug.hpp>
+#include <efsw/String.hpp>
 
 #define KEVENT_RESERVE_VALUE (10)
 
@@ -447,13 +448,30 @@ void WatcherKqueue::watch()
 
 WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive , WatcherKqueue *parent)
 {
+	std::string dir( directory );
+
 	// This should never happen here
-	if( !FileSystem::isDirectory( directory ) )
+	if( !FileSystem::isDirectory( dir ) )
 	{
-		return Errors::Log::createLastError( Errors::FileNotFound, directory );
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	}
 
-	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, directory, watcher, recursive, mWatcher, parent );
+	std::string curPath;
+	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+
+	if ( "" != link )
+	{
+		if ( pathInWatches( link ) || link == Directory || mWatcher->pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else
+		{
+			dir = link;
+		}
+	}
+
+	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher, parent );
 
 	mWatches.insert(std::make_pair(mLastWatchID, watch));
 
@@ -472,6 +490,21 @@ void WatcherKqueue::removeWatch( WatchID watchid )
 	mWatches.erase(iter);
 
 	efSAFE_DELETE( watch );
+}
+
+bool WatcherKqueue::pathInWatches( const std::string& path )
+{
+	WatchMap::iterator it = mWatches.begin();
+
+	for ( ; it != mWatches.end(); it++ )
+	{
+		if ( it->second->Directory == path )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 }

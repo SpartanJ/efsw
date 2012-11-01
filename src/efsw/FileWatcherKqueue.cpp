@@ -12,6 +12,7 @@
 #include <string.h>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
+#include <efsw/String.hpp>
 
 namespace efsw
 {
@@ -60,8 +61,23 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
 
+	std::string curPath;
+	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+
+	if ( "" != link )
+	{
+		if ( pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else
+		{
+			dir = link;
+		}
+	}
+
 	mAddingWatcher = true;
-	WatcherKqueue* watch = new WatcherKqueue(  ++mLastWatchID, dir, watcher, recursive, this );
+	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
 	mAddingWatcher = false;
 
 	mWatchesLock.lock();

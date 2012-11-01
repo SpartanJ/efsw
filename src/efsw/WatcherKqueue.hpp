@@ -68,6 +68,8 @@ class WatcherKqueue : public Watcher
 		WatcherKqueue *		mParent;
 
 		std::vector<WatchID>	mErased;
+
+		bool pathInWatches( const std::string& path );
 };
 
 }
