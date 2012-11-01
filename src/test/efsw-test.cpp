@@ -75,21 +75,22 @@ int main(int argc, char **argv)
 		/// add a watch to the system
 		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test", ul, true );
 
-		fileWatcher.addWatch( CurPath + "test/1", ul, true );
-		fileWatcher.addWatch( CurPath + "test/imposibru", ul, true );
+		/// some recursive paths for testing
+		//fileWatcher.addWatch( CurPath + "test/1", ul, true );
+		//fileWatcher.addWatch( CurPath + "test/imposibru", ul, true );
 
 		/// starts watching
 		fileWatcher.watch();
 
 		/// adds another watch after started watching...
-		efsw::System::sleep( 100 );
+		efsw::System::sleep( 1000 );
 
 		efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
 
+		/// delete the watch
 		//efsw::System::sleep( 1000 );
 		//fileWatcher.removeWatch( watchID );
-		//efsw::System::sleep( 100 );
-
+		//efsw::System::sleep( 1000 );
 		//fileWatcher.removeWatch( watchID2 );
 	}
 	else
