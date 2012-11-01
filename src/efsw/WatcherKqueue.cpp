@@ -18,6 +18,8 @@
 
 namespace efsw {
 
+static long fdc = 0;
+
 int comparator(const void* ke1, const void* ke2)
 {
 	const KEvent * kev1	= reinterpret_cast<const KEvent*>( ke1 );
@@ -42,7 +44,19 @@ WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWa
 	mWatcher( watcher ),
 	mParent( parent )
 {
-	addAll();
+	if ( -1 == mDescriptor )
+	{
+		mDescriptor = kqueue();
+
+		if ( -1 == mDescriptor )
+		{
+			efDEBUG( "kqueue() returned invalid descriptor for directory %s\nFile descriptors count: %ld\n", Directory.c_str(), fdc );
+		}
+	}
+	else
+	{
+		fdc++;
+	}
 }
 
 WatcherKqueue::~WatcherKqueue()
@@ -65,6 +79,11 @@ WatcherKqueue::~WatcherKqueue()
 
 void WatcherKqueue::addAll()
 {
+	if ( -1 == mDescriptor )
+	{
+		return;
+	}
+
 	// scan directory and call addFile(name, false) on each file
 	FileSystem::dirAddSlashAtEnd( Directory );
 
@@ -101,10 +120,10 @@ void WatcherKqueue::addAll()
 		else if ( Recursive && fi.isDirectory() )
 		{
 			// Create another watcher for the subfolders ( if recursive )
-			addWatch( fi.Filepath, Listener, Recursive, this );
+			WatchID id = addWatch( fi.Filepath, Listener, Recursive, this );
 
 			// If the watcher is not adding the watcher means that the directory was created
-			if ( !mWatcher->isAddingWatcher() )
+			if ( id > 0 && !mWatcher->isAddingWatcher() )
 			{
 				handleFolderAction( fi.Filepath, Actions::Add );
 			}
@@ -140,9 +159,12 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 
 	if( fd == -1 )
 	{
+		efDEBUG( "addFile(): Could open file descriptor for %s\nFile descriptor count: %ld\n", name.c_str(), fdc );
 		Errors::Log::createLastError( Errors::FileNotFound, name );
 		return;
 	}
+
+	fdc++;
 
 	// increase the file kevent file count
 	mChangeListCount++;
@@ -202,7 +224,7 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents )
 	}
 
 	/// @TODO: Why was this?
-	tempEntry.Filepath = "";
+	//tempEntry.Filepath = "";
 
 	// handle action
 	if ( emitEvents )
@@ -365,6 +387,11 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 
 void WatcherKqueue::watch()
 {
+	if ( -1 == mDescriptor )
+	{
+		return;
+	}
+
 	int nev = 0;
 	KEvent event;
 
@@ -382,6 +409,7 @@ void WatcherKqueue::watch()
 		{
 			efDEBUG( "watch(): Error on directory %s\n", Directory.c_str() );
 			perror("kevent");
+			System::sleep( 1000000 );
 			break;
 		}
 		else
@@ -478,6 +506,8 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher, parent );
 
 	mWatches.insert(std::make_pair(mLastWatchID, watch));
+
+	watch->addAll();
 
 	return mLastWatchID;
 }

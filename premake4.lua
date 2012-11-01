@@ -59,6 +59,10 @@ solution "efsw"
 			links { "pthread" }
 		end
 
+		if os.is("macosx") then
+			links { "CoreFoundation.framework" }
+		end
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }

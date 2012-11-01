@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by Qt Creator 2.5.0, 2012-10-30T14:19:45. -->
+<!-- Written by Qt Creator 2.5.2, 2012-11-01T18:07:13. -->
 <qtcreator>
  <data>
   <variable>GenericProjectManager.GenericProject.Toolchain</variable>
-  <value type="QString">ProjectExplorer.ToolChain.Gcc:{d53b06a9-318e-44d3-b6cc-0458c47acc78}</value>
+  <value type="QString">ProjectExplorer.ToolChain.Gcc:{b04c500a-da8f-4670-8510-bc83d388eba5}</value>
  </data>
  <data>
   <variable>ProjectExplorer.Project.ActiveTarget</variable>
@@ -63,7 +63,7 @@
    <value type="int" key="ProjectExplorer.Target.ActiveRunConfiguration">0</value>
    <valuemap type="QVariantMap" key="ProjectExplorer.Target.BuildConfiguration.0">
     <value type="QString" key="GenericProjectManager.GenericBuildConfiguration.BuildDirectory">/Users/programming/efsw/make/macosx/</value>
-    <value type="QString" key="ProjectExplorer.BuildCOnfiguration.ToolChain">ProjectExplorer.ToolChain.Gcc:{d53b06a9-318e-44d3-b6cc-0458c47acc78}</value>
+    <value type="QString" key="ProjectExplorer.BuildCOnfiguration.ToolChain">ProjectExplorer.ToolChain.Gcc:{b04c500a-da8f-4670-8510-bc83d388eba5}</value>
     <valuemap type="QVariantMap" key="ProjectExplorer.BuildConfiguration.BuildStepList.0">
      <valuemap type="QVariantMap" key="ProjectExplorer.BuildStepList.Step.0">
       <valuelist type="QVariantList" key="GenericProjectManager.GenericMakeStep.BuildTargets"/>
@@ -107,7 +107,7 @@
    </valuemap>
    <valuemap type="QVariantMap" key="ProjectExplorer.Target.BuildConfiguration.1">
     <value type="QString" key="GenericProjectManager.GenericBuildConfiguration.BuildDirectory">/Users/programming/efsw/make/macosx/</value>
-    <value type="QString" key="ProjectExplorer.BuildCOnfiguration.ToolChain">ProjectExplorer.ToolChain.Gcc:{d53b06a9-318e-44d3-b6cc-0458c47acc78}</value>
+    <value type="QString" key="ProjectExplorer.BuildCOnfiguration.ToolChain">ProjectExplorer.ToolChain.Gcc:{b04c500a-da8f-4670-8510-bc83d388eba5}</value>
     <valuemap type="QVariantMap" key="ProjectExplorer.BuildConfiguration.BuildStepList.0">
      <valuemap type="QVariantMap" key="ProjectExplorer.BuildStepList.Step.0">
       <valuelist type="QVariantList" key="GenericProjectManager.GenericMakeStep.BuildTargets"/>

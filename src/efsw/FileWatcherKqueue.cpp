@@ -81,12 +81,19 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 	}
 
 	mAddingWatcher = true;
+
+	/// @TODO: It seems that there is a limit of file descriptors opened
+	/// for a process, so it should fallback to the generic watcher.
 	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
-	mAddingWatcher = false;
+
 
 	mWatchesLock.lock();
 	mWatches.insert(std::make_pair(mLastWatchID, watch));
 	mWatchesLock.unlock();
+
+	watch->addAll();
+
+	mAddingWatcher = false;
 
 	return mLastWatchID;
 }
