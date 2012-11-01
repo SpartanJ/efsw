@@ -17,7 +17,8 @@
 
 namespace efsw {
 
-FileWatcher::FileWatcher()
+FileWatcher::FileWatcher() :
+	mOutOfScopeLinks(false)
 {
 	mImpl = new FILEWATCHER_IMPL( this );
 
@@ -29,7 +30,8 @@ FileWatcher::FileWatcher()
 	}
 }
 
-FileWatcher::FileWatcher( bool useGenericFileWatcher )
+FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
+	mOutOfScopeLinks(false)
 {
 	if ( useGenericFileWatcher )
 	{

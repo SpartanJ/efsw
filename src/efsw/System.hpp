@@ -9,6 +9,8 @@ class System
 {
 	public:
 		static void sleep( const unsigned long& ms );
+
+		static std::string getProcessPath();
 };
 	
 }

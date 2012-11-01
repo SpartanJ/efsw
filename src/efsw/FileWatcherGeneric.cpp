@@ -51,9 +51,13 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	if ( "" != link )
 	{
-		if ( pathInWatches( link ) || linkAllowed( curPath, link ) )
+		if ( pathInWatches( link ) )
 		{
-			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+			return Errors::Log::createLastError( Errors::FileRepeated, dir );
+		}
+		else if ( !linkAllowed( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
 		}
 		else
 		{

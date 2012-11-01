@@ -461,9 +461,13 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 
 	if ( "" != link )
 	{
-		if ( pathInWatches( link ) || link == Directory || mWatcher->pathInWatches( link ) || mWatcher->linkAllowed( curPath, link ) )
+		if ( pathInWatches( link ) || link == Directory || mWatcher->pathInWatches( link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else if ( !mWatcher->linkAllowed( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
 		}
 		else
 		{

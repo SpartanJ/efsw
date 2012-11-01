@@ -19,7 +19,9 @@ Watcher::Watcher( WatchID id, std::string directory, FileWatchListener * listene
 {
 }
 
-FileWatcherImpl::FileWatcherImpl( FileWatcher * parent ) : mFileWatcher( parent ), mInitOK( false )
+FileWatcherImpl::FileWatcherImpl( FileWatcher * parent ) :
+	mFileWatcher( parent ),
+	mInitOK( false )
 {
 }
 
@@ -34,7 +36,7 @@ bool FileWatcherImpl::initOK()
 
 bool FileWatcherImpl::linkAllowed( const std::string& curPath, const std::string& link )
 {
-	return mFileWatcher->allowOutOfScopeLinks() || -1 == String::strStartsWith( curPath, link );
+	return mFileWatcher->allowOutOfScopeLinks() || -1 != String::strStartsWith( curPath, link );
 }
 
 }

@@ -91,7 +91,8 @@ enum Error
 {
 	FileNotFound	= -1,
 	FileRepeated	= -2,
-	Unspecified		= -3
+	FileOutOfScope	= -3,
+	Unspecified		= -4
 };
 
 class EFSW_API Log
@@ -105,7 +106,6 @@ class EFSW_API Log
 };
 
 }
-
 typedef Errors::Error Error;
 
 /// Listens to files and directories and dispatches events
@@ -146,6 +146,7 @@ class EFSW_API FileWatcher
 		/** When enable this it will allow symlinks to recurse out of the pointed directory
 		* For example, added symlink to /home/folder, and the symlink points to /, this by default is not allowed,
 		* it's only allowed to symlink anything from /home/ and deeper. This is to avoid great levels of recursion.
+		* Enabling this could lead in infinite recursion, and crash the watcher.
 		* Buy enabling out of scope links, it will allow this behavior.
 		* allowOutOfScopeLinks are disabled by default.
 		*/

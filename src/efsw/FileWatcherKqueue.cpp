@@ -66,9 +66,13 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 
 	if ( "" != link )
 	{
-		if ( pathInWatches( link ) || linkAllowed( curPath, link ) )
+		if ( pathInWatches( link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else if ( !linkAllowed( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
 		}
 		else
 		{

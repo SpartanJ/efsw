@@ -49,20 +49,23 @@ std::string FileSystem::pathRemoveFileName( const std::string& filepath )
 
 static void removeLastDir( std::string& path )
 {
-	bool ignoreFirst = ( path[ path.size() - 1 ] == FileSystem::getOSSlash() ) ? true : false;
-
-	for ( size_t i = path.size() - 1; i >= 0; i-- )
+	if ( path.size() > 1 )
 	{
-		if ( path.at(i) == FileSystem::getOSSlash() )
+		bool ignoreFirst = ( path[ path.size() - 1 ] == FileSystem::getOSSlash() ) ? true : false;
+
+		for ( long int i = (long int)path.size() - 1; i >= 0; i-- )
 		{
-			if ( ignoreFirst )
+			if ( path.at(i) == FileSystem::getOSSlash() )
 			{
-				ignoreFirst = false;
-			}
-			else
-			{
-				path = path.substr( 0, i );
-				break;
+				if ( ignoreFirst )
+				{
+					ignoreFirst = false;
+				}
+				else
+				{
+					path = path.substr( 0, i );
+					break;
+				}
 			}
 		}
 	}
@@ -103,7 +106,13 @@ static bool linksToCurrent( std::string& path )
 
 void FileSystem::realPath( std::string curdir, std::string& path )
 {
-	if ( path.size() == 1 )
+	size_t s = path.size();
+
+	if ( 0 == s )
+	{
+		return;
+	}
+	else if ( s == 1 )
 	{
 		if ( path.at(0) == getOSSlash() )
 		{
@@ -116,15 +125,13 @@ void FileSystem::realPath( std::string curdir, std::string& path )
 		}
 	}
 
-	if ( path[0] == '.' )
+	if ( path.at(0) == '.' )
 	{
-
-
 		std::string npath( path );
 
-		for ( size_t i = 0; i < path.size(); i++ )
+		for ( size_t i = 0; i < s; i++ )
 		{
-			if ( i + 1 < path.size() )
+			if ( i + 1 < s )
 			{
 				if ( path[i] == '.' && path[i+1] == '.' )
 				{

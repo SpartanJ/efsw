@@ -84,9 +84,13 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	{
 		/// If it's a symlink check if the realpath exists as a watcher, or
 		/// if the path is outside the current dir
-		if ( pathInWatches( link ) || linkAllowed( curPath, link ) )
+		if ( pathInWatches( link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+		}
+		else if ( !linkAllowed( curPath, link ) )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
 		}
 	}
 

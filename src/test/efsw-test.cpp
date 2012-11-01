@@ -33,6 +33,27 @@ class UpdateListener : public efsw::FileWatchListener
 		}
 };
 
+efsw::WatchID handleWathID( efsw::WatchID watchid )
+{
+	switch ( watchid )
+	{
+		case efsw::Errors::FileNotFound:
+		case efsw::Errors::FileRepeated:
+		case efsw::Errors::FileOutOfScope:
+		case efsw::Errors::Unspecified:
+		{
+			std::cout << efsw::Errors::Log::getLastErrorLog().c_str() << std::endl;
+			break;
+		}
+		default:
+		{
+			std::cout << "Added WatchID: " << watchid << std::endl;
+		}
+	}
+
+	return watchid;
+}
+
 int main(int argc, char **argv)
 {
 	signal( SIGABRT	,	sigend );
@@ -70,14 +91,16 @@ int main(int argc, char **argv)
 
 	if ( commonTest )
 	{
-		std::string CurPath( efsw::FileSystem::pathRemoveFileName( std::string( argv[0] ) ) );
+		std::string CurPath( efsw::System::getProcessPath() );
+
+		std::cout << "CurPath: " << CurPath.c_str() << std::endl;
 
 		/// add a watch to the system
-		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true );
+		efsw::WatchID watchID = handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
 
 		/// some recursive paths for testing
-		//fileWatcher.addWatch( CurPath + "test/1", ul, true );
-		//fileWatcher.addWatch( CurPath + "test/imposibru", ul, true );
+		handleWathID( fileWatcher.addWatch( CurPath + "test/1", ul, true ) );
+		handleWathID( fileWatcher.addWatch( CurPath + "test/imposibru", ul, true ) );
 
 		/// starts watching
 		fileWatcher.watch();
