@@ -1,4 +1,5 @@
 #include <efsw/FileWatcherWin32.hpp>
+#include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32

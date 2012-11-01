@@ -73,7 +73,7 @@ int main(int argc, char **argv)
 		std::string CurPath( efsw::FileSystem::pathRemoveFileName( std::string( argv[0] ) ) );
 
 		/// add a watch to the system
-		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test", ul, true );
+		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true );
 
 		/// some recursive paths for testing
 		//fileWatcher.addWatch( CurPath + "test/1", ul, true );
@@ -119,8 +119,6 @@ int main(int argc, char **argv)
 	{
 		efsw::System::sleep( 100 );
 	}
-
-	pthread_exit(0);
 
 	return 0;
 }
