@@ -16,7 +16,7 @@ class FileWatcherGeneric : public FileWatcherImpl
 	public:
 		typedef std::list<WatcherGeneric*> WatchList;
 
-		FileWatcherGeneric();
+		FileWatcherGeneric( FileWatcher * parent );
 
 		virtual ~FileWatcherGeneric();
 
@@ -39,6 +39,8 @@ class FileWatcherGeneric : public FileWatcherImpl
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	protected:
+		FileWatcher * mParent;
+
 		/// Map of WatchID to WatchStruct pointers
 		WatchList mWatches;
 

@@ -96,3 +96,4 @@
 ../../src/efsw/Log.cpp
 ../../src/efsw/WatcherInotify.hpp
 ../../src/efsw/WatcherInotify.cpp
+../../src/efsw/FileWatcherImpl.cpp

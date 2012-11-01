@@ -142,7 +142,8 @@ WatcherStructWin32* CreateWatch(LPCTSTR szDirectory, bool recursive, DWORD Notif
 	return NULL;
 }
 
-FileWatcherWin32::FileWatcherWin32() :
+FileWatcherWin32::FileWatcherWin32( FileWatcher * parent ) :
+	FileWatcherImpl( parent ),
 	mLastWatchID(0),
 	mThread( NULL )
 {

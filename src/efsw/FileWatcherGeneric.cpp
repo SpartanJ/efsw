@@ -1,12 +1,12 @@
 #include <efsw/FileWatcherGeneric.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
-#include <efsw/String.hpp>
 
 namespace efsw
 {
 
-FileWatcherGeneric::FileWatcherGeneric() :
+FileWatcherGeneric::FileWatcherGeneric( FileWatcher * parent ) :
+	FileWatcherImpl( parent ),
 	mThread( NULL ),
 	mLastWatchID( 0 )
 {
@@ -51,7 +51,7 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	if ( "" != link )
 	{
-		if ( pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		if ( pathInWatches( link ) || linkAllowed( curPath, link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, directory );
 		}

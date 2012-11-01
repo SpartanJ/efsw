@@ -19,13 +19,13 @@ namespace efsw {
 
 FileWatcher::FileWatcher()
 {
-	mImpl = new FILEWATCHER_IMPL();
+	mImpl = new FILEWATCHER_IMPL( this );
 
 	if ( !mImpl->initOK() )
 	{
 		efSAFE_DELETE( mImpl );
 
-		mImpl = new FileWatcherGeneric();
+		mImpl = new FileWatcherGeneric( this );
 	}
 }
 
@@ -33,17 +33,17 @@ FileWatcher::FileWatcher( bool useGenericFileWatcher )
 {
 	if ( useGenericFileWatcher )
 	{
-		mImpl = new FileWatcherGeneric();
+		mImpl = new FileWatcherGeneric( this );
 	}
 	else
 	{
-		mImpl = new FILEWATCHER_IMPL();
+		mImpl = new FILEWATCHER_IMPL( this );
 
 		if ( !mImpl->initOK() )
 		{
 			efSAFE_DELETE( mImpl );
 
-			mImpl = new FileWatcherGeneric();
+			mImpl = new FileWatcherGeneric( this );
 		}
 	}
 }
@@ -76,6 +76,16 @@ void FileWatcher::removeWatch(WatchID watchid)
 void FileWatcher::watch()
 {
 	mImpl->watch();
+}
+
+void FileWatcher::allowOutOfScopeLinks( bool allow )
+{
+	mOutOfScopeLinks = allow;
+}
+
+const bool& FileWatcher::allowOutOfScopeLinks() const
+{
+	return mOutOfScopeLinks;
 }
 
 }

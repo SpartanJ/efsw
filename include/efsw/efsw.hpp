@@ -142,9 +142,21 @@ class EFSW_API FileWatcher
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
+
+		/** When enable this it will allow symlinks to recurse out of the pointed directory
+		* For example, added symlink to /home/folder, and the symlink points to /, this by default is not allowed,
+		* it's only allowed to symlink anything from /home/ and deeper. This is to avoid great levels of recursion.
+		* Buy enabling out of scope links, it will allow this behavior.
+		* allowOutOfScopeLinks are disabled by default.
+		*/
+		void allowOutOfScopeLinks( bool allow );
+
+		/// @return Returns if out of scope links are allowed
+		const bool& allowOutOfScopeLinks() const;
 	private:
 		/// The implementation
-		FileWatcherImpl* mImpl;
+		FileWatcherImpl	*	mImpl;
+		bool				mOutOfScopeLinks;
 };
 
 /// Basic interface for listening for file events.

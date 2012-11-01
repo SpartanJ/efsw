@@ -10,7 +10,6 @@
 #include <sys/inotify.h>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
-#include <efsw/String.hpp>
 #include <efsw/Debug.hpp>
 
 #define BUFF_SIZE ((sizeof(struct inotify_event)+FILENAME_MAX)*1024)
@@ -18,7 +17,8 @@
 namespace efsw
 {
 
-FileWatcherInotify::FileWatcherInotify() :
+FileWatcherInotify::FileWatcherInotify( FileWatcher * parent ) :
+	FileWatcherImpl( parent ),
 	mFD(-1),
 	mThread(NULL)
 {
@@ -84,7 +84,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	{
 		/// If it's a symlink check if the realpath exists as a watcher, or
 		/// if the path is outside the current dir
-		if ( pathInWatches( link ) || -1 == String::strStartsWith( curPath, link ) )
+		if ( pathInWatches( link ) || linkAllowed( curPath, link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, directory );
 		}

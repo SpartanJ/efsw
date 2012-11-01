@@ -2,6 +2,7 @@
 #define EFSW_FILEWATCHERIMPL_HPP
 
 #include <efsw/base.hpp>
+#include <efsw/efsw.hpp>
 #include <efsw/Thread.hpp>
 #include <efsw/Mutex.hpp>
 
@@ -11,21 +12,9 @@ namespace efsw {
 class Watcher
 {
 	public:
-		Watcher() :
-			ID(0),
-			Directory(""),
-			Listener(NULL),
-			Recursive(false)
-		{
-		}
+		Watcher();
 
-		Watcher( WatchID id, std::string directory, FileWatchListener * listener, bool recursive ) :
-			ID( id ),
-			Directory( directory ),
-			Listener( listener ),
-			Recursive( recursive )
-		{
-		}
+		Watcher( WatchID id, std::string directory, FileWatchListener * listener, bool recursive );
 
 		WatchID					ID;
 		std::string				Directory;
@@ -36,9 +25,9 @@ class Watcher
 class FileWatcherImpl
 {
 	public:
-		FileWatcherImpl() : mInitOK( false ) {}
+		FileWatcherImpl( FileWatcher * parent );
 
-		virtual ~FileWatcherImpl() {}
+		virtual ~FileWatcherImpl();
 
 		/// Add a directory watch
 		/// On error returns WatchID with Error type.
@@ -60,11 +49,16 @@ class FileWatcherImpl
 		virtual std::list<std::string> directories() = 0;
 
 		/// @return true if the backend init successfully
-		virtual bool initOK() { return mInitOK; }
-	protected:
-		bool	mInitOK;
+		virtual bool initOK();
 
+		/// @return If the link is allowed according to the current path and the state of out scope links
+		virtual bool linkAllowed( const std::string& curPath, const std::string& link );
+
+		/// Search if a directory already exists in the watches
 		virtual bool pathInWatches( const std::string& path ) = 0;
+	protected:
+		FileWatcher *	mFileWatcher;
+		bool			mInitOK;
 };
 
 }

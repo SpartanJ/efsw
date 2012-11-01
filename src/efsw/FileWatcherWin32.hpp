@@ -49,12 +49,12 @@ class FileWatcherWin32 : public FileWatcherImpl
 		typedef std::vector<WatcherStructWin32*> WatchVector;
 		typedef std::vector<HANDLE>	HandleVector;
 
-		FileWatcherWin32();
+		FileWatcherWin32( FileWatcher * parent );
 
 		virtual ~FileWatcherWin32();
 
 		/// Add a directory watch
-		/// @exception FileNotFoundException Thrown when the requested directory does not exist
+		/// On error returns WatchID with Error type.
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive);
 
 		/// Remove a directory watch. This is a brute force lazy search O(nlogn).

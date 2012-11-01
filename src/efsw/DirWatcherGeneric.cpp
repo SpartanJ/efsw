@@ -1,6 +1,5 @@
 #include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileSystem.hpp>
-#include <efsw/String.hpp>
 
 namespace efsw {
 
@@ -67,7 +66,7 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 				{
 					/// If it's a symlink check if the realpath exists as a watcher, or
 					/// if the path is outside the current dir
-					if ( Watch->isPath( link ) || -1 == String::strStartsWith( curPath, link ) )
+					if ( Watch->isPath( link ) || Watch->WatcherImpl->linkAllowed( curPath, link ) )
 					{
 						continue;
 					}
