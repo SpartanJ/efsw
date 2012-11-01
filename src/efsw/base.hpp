@@ -71,7 +71,7 @@ typedef SOPHIST_uint64		Uint64;
 	#if defined( __SVR4 )
 		#define EFSW_OS EFSW_OS_SOLARIS
 	#elif defined( __HAIKU__ ) || defined( __BEOS__ )
-		#define EFSW_OS EE_OS_HAIKU
+		#define EFSW_OS EFSW_OS_HAIKU
 	#endif
 
 	///	Everything else

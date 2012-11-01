@@ -89,6 +89,8 @@ int main(int argc, char **argv)
 	/// create the file watcher object
 	efsw::FileWatcher fileWatcher( useGeneric );
 
+	fileWatcher.allowOutOfScopeLinks( true );
+
 	if ( commonTest )
 	{
 		std::string CurPath( efsw::System::getProcessPath() );

@@ -14,6 +14,8 @@ WatcherGeneric::WatcherGeneric( WatchID id, const std::string& directory, FileWa
 	FileSystem::dirAddSlashAtEnd( Directory );
 
 	DirWatch = CurDirWatch	= new DirWatcherGeneric( this, directory, recursive );
+
+	DirWatch->addChilds();
 }
 
 WatcherGeneric::~WatcherGeneric()

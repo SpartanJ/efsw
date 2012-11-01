@@ -48,11 +48,16 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	{
 		Files.erase( *eit );
 	}
+}
 
+void DirWatcherGeneric::addChilds()
+{
 	if ( Recursive )
 	{
 		/// Create the subdirectories watchers
 		FileInfoMap::iterator it = Files.begin();
+
+		std::string dir;
 
 		for ( ; it != Files.end(); it++ )
 		{
@@ -62,6 +67,8 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 				std::string curPath;
 				std::string link( FileSystem::getLinkRealPath( it->second.Filepath, curPath ) );
 
+				dir = it->first;
+
 				if ( "" != link )
 				{
 					/// If it's a symlink check if the realpath exists as a watcher, or
@@ -70,9 +77,15 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 					{
 						continue;
 					}
+					else
+					{
+						dir = link;
+					}
 				}
 
-				Directories[ it->first ] = new DirWatcherGeneric( ws, it->first, recursive );
+				Directories[ dir ] = new DirWatcherGeneric( Watch, dir, Recursive );
+
+				Directories[ dir ]->addChilds();
 
 				Watch->CurDirWatch = this;
 			}

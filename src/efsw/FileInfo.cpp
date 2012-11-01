@@ -3,6 +3,8 @@
 
 #include <sys/stat.h>
 #include <unistd.h>
+#include <limits.h>
+#include <stdlib.h>
 
 namespace efsw {
 
@@ -108,20 +110,13 @@ std::string FileInfo::linksTo()
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	if ( isLink() )
 	{
-		char * ch = new char[ Size + 1 ];
-
-		ssize_t r = readlink( Filepath.c_str(), ch, Size + 1 );
-
-		ch[ Size ] = '\0';
+		char * ch = realpath( Filepath.c_str(), NULL);
 
 		std::string tstr( ch );
 
-		efSAFE_DELETE_ARRAY( ch );
+		free( ch );
 
-		if ( !( r < 0 || r > Size ) )
-		{
-			return tstr;
-		}
+		return tstr;
 	}
 #endif
 	return std::string("");

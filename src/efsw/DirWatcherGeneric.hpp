@@ -30,6 +30,8 @@ class DirWatcherGeneric
 		void GetFiles( const std::string& directory, FileInfoMap& files );
 
 		bool isPath( std::string path );
+
+		void addChilds();
 	protected:
 		bool			Deleted;
 };

@@ -92,6 +92,10 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		{
 			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
 		}
+		else
+		{
+			dir = link;
+		}
 	}
 
 	int wd = inotify_add_watch (mFD, dir.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MOVED_FROM | IN_DELETE);

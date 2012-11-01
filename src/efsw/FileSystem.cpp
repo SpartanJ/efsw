@@ -195,7 +195,7 @@ std::string FileSystem::getLinkRealPath( std::string dir, std::string& curPath )
 		curPath = FileSystem::pathRemoveFileName( dir );
 
 		/// convert the link path to the real path
-		FileSystem::realPath( curPath, link );
+		/// FileSystem::realPath( curPath, link );
 
 		/// ensure that ends with the os directory slash
 		FileSystem::dirAddSlashAtEnd( link );
