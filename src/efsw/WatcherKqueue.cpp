@@ -413,7 +413,6 @@ void WatcherKqueue::watch()
 		{
 			efDEBUG( "watch(): Error on directory %s\n", Directory.c_str() );
 			perror("kevent");
-			System::sleep( 1000000 );
 			break;
 		}
 		else
