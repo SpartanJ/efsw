@@ -50,7 +50,7 @@ WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWa
 
 		if ( -1 == mDescriptor )
 		{
-			efDEBUG( "kqueue() returned invalid descriptor for directory %s\nFile descriptors count: %ld\n", Directory.c_str(), fdc );
+			efDEBUG( "kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n", Directory.c_str(), fdc );
 		}
 	}
 	else
@@ -104,6 +104,8 @@ void WatcherKqueue::addAll()
 			0,
 			0
 	);
+
+	fdc++;
 
 	// Get the files and directories from the directory
 	FileInfoMap files = FileSystem::filesInfoFromPath( Directory );
@@ -159,7 +161,7 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 
 	if( fd == -1 )
 	{
-		efDEBUG( "addFile(): Could open file descriptor for %s\nFile descriptor count: %ld\n", name.c_str(), fdc );
+		efDEBUG( "addFile(): Could open file descriptor for %s. File descriptor count: %ld\n", name.c_str(), fdc );
 		Errors::Log::createLastError( Errors::FileNotFound, name );
 		return;
 	}
@@ -239,6 +241,8 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents )
 
 	// close the file descriptor from the kevent
 	close( ke->ident );
+
+	fdc--;
 
 	memset(ke, 0, sizeof(KEvent));
 

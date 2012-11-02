@@ -3,6 +3,7 @@
 
 #ifdef EFSW_PLATFORM_POSIX
 #include <sys/resource.h>
+#include <efsw/Debug.hpp>
 #endif
 
 namespace efsw {
@@ -19,6 +20,10 @@ static void maxFileDescriptors()
 		limit.rlim_cur = limit.rlim_max;
 		setrlimit( RLIMIT_NOFILE, &limit );
 
+		getrlimit( RLIMIT_NOFILE, &limit );
+
+		efDEBUG( "File descriptor limit %ld", limit.rlim_cur );
+
 		maxed = true;
 	}
 #endif
@@ -30,7 +35,6 @@ Watcher::Watcher() :
 	Listener(NULL),
 	Recursive(false)
 {
-	maxFileDescriptors();
 }
 
 Watcher::Watcher( WatchID id, std::string directory, FileWatchListener * listener, bool recursive ) :
@@ -39,13 +43,13 @@ Watcher::Watcher( WatchID id, std::string directory, FileWatchListener * listene
 	Listener( listener ),
 	Recursive( recursive )
 {
-	maxFileDescriptors();
 }
 
 FileWatcherImpl::FileWatcherImpl( FileWatcher * parent ) :
 	mFileWatcher( parent ),
 	mInitOK( false )
 {
+	maxFileDescriptors();
 }
 
 FileWatcherImpl::~FileWatcherImpl()
