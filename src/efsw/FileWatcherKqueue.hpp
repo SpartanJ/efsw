@@ -39,9 +39,6 @@ class FileWatcherKqueue : public FileWatcherImpl
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	protected:
-		/// The descriptor for the kqueue
-		int	mDescriptor;
-
 		/// Map of WatchID to WatchStruct pointers
 		WatchMap mWatches;
 

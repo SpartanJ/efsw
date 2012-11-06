@@ -151,7 +151,7 @@ void System::maxFD()
 
 		getrlimit( RLIMIT_NOFILE, &limit );
 
-		efDEBUG( "File descriptor limit %ld", limit.rlim_cur );
+		efDEBUG( "File descriptor limit %ld\n", limit.rlim_cur );
 
 		maxed = true;
 	}

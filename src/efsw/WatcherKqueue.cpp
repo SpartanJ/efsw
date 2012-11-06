@@ -18,11 +18,20 @@ namespace efsw {
 
 WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent ) :
 	Watcher( watchid, dirname, listener, recursive ),
+	mKqueue( kqueue() ),
 	mDescriptor( -1 ),
 	mLastWatchID(0),
 	mWatcher( watcher ),
 	mParent( parent )
 {
+	if ( -1 == mKqueue )
+	{
+		efDEBUG( "kqueue() returned invalid descriptor.\n" );
+	}
+	else
+	{
+		mWatcher->addFD();
+	}
 }
 
 WatcherKqueue::~WatcherKqueue()
@@ -31,6 +40,10 @@ WatcherKqueue::~WatcherKqueue()
 	removeAll();
 
 	close( mDescriptor );
+
+	mWatcher->removeFD();
+
+	close( mKqueue );
 
 	mWatcher->removeFD();
 }
@@ -112,8 +125,6 @@ void WatcherKqueue::removeAll()
 
 void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 {
-	efDEBUG( "addFile(): Added: %s\n", name.c_str() );
-
 	// create entry
 	mFiles[ name ] = FileInfo( name );
 
@@ -126,8 +137,6 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 
 void WatcherKqueue::removeFile( const std::string& name, bool emitEvents )
 {
-	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
-
 	mFiles.erase( name );
 
 	// handle action
@@ -299,7 +308,7 @@ void WatcherKqueue::watch()
 	}
 
 	// Then we get the the events of the current folder
-	while( ( nev = kevent( mWatcher->mDescriptor, &mKevent, 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
+	while( ( nev = kevent( mKqueue, &mKevent, 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
 	{
 		// An error ocurred?
 		if( nev == -1 )
@@ -343,10 +352,16 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 {
 	std::string dir( directory );
 
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	// This should never happen here
 	if( !FileSystem::isDirectory( dir ) )
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+	else if ( pathInWatches( dir ) || pathInParent( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
 
 	std::string curPath;
@@ -354,13 +369,13 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 
 	if ( "" != link )
 	{
-		if ( pathInWatches( link ) || link == Directory || mWatcher->pathInWatches( link ) )
+		if ( pathInWatches( link ) || pathInParent( link ) )
 		{
-			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+			return Errors::Log::createLastError( Errors::FileRepeated, link );
 		}
 		else if ( !mWatcher->linkAllowed( curPath, link ) )
 		{
-			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
+			return Errors::Log::createLastError( Errors::FileOutOfScope, link );
 		}
 		else
 		{
@@ -401,6 +416,33 @@ bool WatcherKqueue::pathInWatches( const std::string& path )
 		{
 			return true;
 		}
+	}
+
+	return false;
+}
+
+bool WatcherKqueue::pathInParent( const std::string &path )
+{
+	WatcherKqueue * pNext = mParent;
+
+	while ( NULL != pNext )
+	{
+		if ( pNext->pathInWatches( path ) )
+		{
+			return true;
+		}
+
+		pNext = pNext->mParent;
+	}
+
+	if ( mWatcher->pathInWatches( path ) )
+	{
+		return true;
+	}
+
+	if ( path == Directory )
+	{
+		return true;
 	}
 
 	return false;

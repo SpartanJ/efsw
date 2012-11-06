@@ -20,17 +20,11 @@ namespace efsw
 
 FileWatcherKqueue::FileWatcherKqueue( FileWatcher * parent ) :
 	FileWatcherImpl( parent ),
-	mDescriptor( kqueue() ),
 	mLastWatchID(0),
 	mThread( NULL ),
 	mFileDescriptorCount( 1 ),
 	mAddingWatcher( false )
 {
-	if ( -1 == mDescriptor )
-	{
-		efDEBUG( "kqueue() returned invalid descriptor.\n" );
-	}
-
 	mTimeOut.tv_sec		= 0;
 	mTimeOut.tv_nsec	= 0;
 	mInitOK				= true;
@@ -95,7 +89,6 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 		mAddingWatcher = true;
 
 		WatcherKqueue * watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
-
 
 		mWatchesLock.lock();
 		mWatches.insert(std::make_pair(mLastWatchID, watch));

@@ -54,6 +54,8 @@ class WatcherKqueue : public Watcher
 
 		void removeWatch (WatchID watchid );
 	protected:
+		/// The descriptor for the kqueue
+		int					mKqueue;
 		int					mDescriptor;
 		WatchMap			mWatches;
 		int					mLastWatchID;
@@ -69,6 +71,8 @@ class WatcherKqueue : public Watcher
 		std::vector<WatchID>	mErased;
 
 		bool pathInWatches( const std::string& path );
+
+		bool pathInParent( const std::string& path );
 };
 
 }
