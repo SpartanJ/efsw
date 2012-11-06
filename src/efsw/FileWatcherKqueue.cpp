@@ -50,6 +50,8 @@ FileWatcherKqueue::~FileWatcherKqueue()
 
 WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
 {
+	static bool s_ug = false;
+
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -100,6 +102,12 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 	}
 	else
 	{
+		if ( !s_ug )
+		{
+			efDEBUG( "Started using generic watcher, file descriptor limit reached: %ld\n", mFileDescriptorCount );
+			s_ug = true;
+		}
+
 		WatcherGeneric * watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive );
 
 		mWatchesLock.lock();
@@ -226,7 +234,7 @@ void FileWatcherKqueue::removeFD()
 
 bool FileWatcherKqueue::availablesFD()
 {
-	return mFileDescriptorCount <= System::getMaxFD() - 100;
+	return mFileDescriptorCount <= System::getMaxFD() - 200;
 }
 
 }

@@ -83,6 +83,7 @@ void DirWatcherGeneric::addChilds()
 					}
 				}
 
+				/** @TODO: Check if the watch directory was added succesfully */
 				Directories[ dir ] = new DirWatcherGeneric( Watch, dir, Recursive );
 
 				Directories[ dir ]->addChilds();
@@ -217,6 +218,7 @@ void DirWatcherGeneric::watch()
 				}
 				else
 				{
+					/** @TODO: Check if the watch directory was added succesfully */
 					/// Creates the new directory watcher of the subfolder and check for new files
 					dw = new DirWatcherGeneric( Watch, it->first, Recursive );
 					dw->watch();

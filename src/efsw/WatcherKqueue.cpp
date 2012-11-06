@@ -11,6 +11,7 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileWatcherKqueue.hpp>
+#include <efsw/WatcherGeneric.hpp>
 #include <efsw/Debug.hpp>
 #include <efsw/String.hpp>
 
@@ -350,6 +351,9 @@ void WatcherKqueue::watch()
 
 WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive , WatcherKqueue *parent)
 {
+	static long s_fc = 0;
+	static bool s_ug = false;
+
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -383,13 +387,47 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 		}
 	}
 
-	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher, parent );
+	if ( mWatcher->availablesFD() )
+	{
+		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher, parent );
 
-	mWatches.insert(std::make_pair(mLastWatchID, watch));
+		mWatches.insert(std::make_pair(mLastWatchID, watch));
 
-	watch->addAll();
+		watch->addAll();
+
+		s_fc++;
+
+		// if failed to open the directory... ( permissions problem ), erase the watcher
+		if ( !watch->initOK() )
+		{
+			mWatches.erase( watch->ID );
+
+			efSAFE_DELETE( watch );
+
+			mLastWatchID--;
+
+			return Errors::Log::createLastError( Errors::Unspecified, link );
+		}
+	}
+	else
+	{
+		if ( !s_ug )
+		{
+			efDEBUG( "Started using WatcherGeneric, reached file descriptors limit: %ld. Folders added: %ld\n", mWatcher->mFileDescriptorCount, s_fc );
+			s_ug = true;
+		}
+
+		WatcherGeneric * watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+
+		mWatches.insert(std::make_pair(mLastWatchID, watch));
+	}
 
 	return mLastWatchID;
+}
+
+bool WatcherKqueue::initOK()
+{
+	return -1 != mKqueue && -1 != mDescriptor;
 }
 
 void WatcherKqueue::removeWatch( WatchID watchid )

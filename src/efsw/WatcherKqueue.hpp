@@ -53,6 +53,8 @@ class WatcherKqueue : public Watcher
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherKqueue * parent);
 
 		void removeWatch (WatchID watchid );
+
+		bool initOK();
 	protected:
 		/// The descriptor for the kqueue
 		int					mKqueue;

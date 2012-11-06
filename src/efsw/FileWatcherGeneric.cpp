@@ -67,6 +67,7 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	mLastWatchID++;
 
+	/** @TODO: Check if the watch directory was added succesfully */
 	WatcherGeneric * pWatch		= new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive );
 
 	mWatchesLock.lock();
