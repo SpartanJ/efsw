@@ -12,8 +12,11 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	/// Is this a recursive watch?
 	if ( Watch->Directory != directory )
 	{
-		/// Get the real directory
-		Directory = Watch->CurDirWatch->Directory + directory;
+		if ( !( directory.size() && ( directory.at(0) == FileSystem::getOSSlash() || directory.at( directory.size() - 1 ) == FileSystem::getOSSlash() ) ) )
+		{
+			/// Get the real directory
+			Directory = Watch->CurDirWatch->Directory + directory;
+		}
 	}
 
 	if ( NULL == Watch->DirWatch )
@@ -62,7 +65,7 @@ void DirWatcherGeneric::addChilds()
 		for ( ; it != Files.end(); it++ )
 		{
 			if ( it->second.isDirectory() )
-			{
+			{	
 				/// Check if the directory is a symbolic link
 				std::string curPath;
 				std::string link( FileSystem::getLinkRealPath( it->second.Filepath, curPath ) );
@@ -73,13 +76,20 @@ void DirWatcherGeneric::addChilds()
 				{
 					/// If it's a symlink check if the realpath exists as a watcher, or
 					/// if the path is outside the current dir
-					if ( Watch->isPath( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
+					if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
 					{
 						continue;
 					}
 					else
 					{
 						dir = link;
+					}
+				}
+				else
+				{
+					if ( Watch->pathInWatches( dir ) || Watch->WatcherImpl->pathInWatches( dir ) )
+					{
+						continue;
 					}
 				}
 
@@ -153,9 +163,6 @@ void DirWatcherGeneric::watch()
 
 	FileInfoMap FilesCpy;
 
-	/// If the directory not changed means that no file changed
-	/// But a subdirectory could have changed
-
 	if ( dirchanged )
 	{
 		FilesCpy = Files;
@@ -166,10 +173,11 @@ void DirWatcherGeneric::watch()
 	DirWatcherGeneric * dw;
 	FileInfo fi;
 
-	if ( dirchanged )
-	{
-		FileInfoMap::iterator fif;
+	FileInfoMap::iterator fif;
 
+	/// @TODO: Add a method to enable monotiring files change only on directory change
+	//if ( dirchanged )
+	{
 		for ( it = files.begin(); it != files.end(); it++ )
 		{
 			fi	= it->second;
@@ -180,7 +188,10 @@ void DirWatcherGeneric::watch()
 			if ( fif != Files.end() )
 			{
 				/// Erase from the file list copy
-				FilesCpy.erase( it->first );
+				if ( dirchanged )
+				{
+					FilesCpy.erase( it->first );
+				}
 
 				/// File changed?
 				if ( (*fif).second != fi )
@@ -218,18 +229,50 @@ void DirWatcherGeneric::watch()
 				}
 				else
 				{
-					/** @TODO: Check if the watch directory was added succesfully */
-					/// Creates the new directory watcher of the subfolder and check for new files
-					dw = new DirWatcherGeneric( Watch, it->first, Recursive );
-					dw->watch();
+					/// Check if the directory is a symbolic link
+					std::string dir( Directory + it->first );
 
-					/// Add it to the list of directories
-					Directories[ it->first ] = dw;
+					FileSystem::dirAddSlashAtEnd( dir );
+
+					std::string curPath;
+					std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+					bool skip = false;
+
+					if ( "" != link )
+					{
+						/// If it's a symlink check if the realpath exists as a watcher, or
+						/// if the path is outside the current dir
+						if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
+						{
+							skip = true;
+						}
+						else
+						{
+							dir = link;
+						}
+					}
+					else
+					{
+						if ( Watch->pathInWatches( link ) || Watch->WatcherImpl->pathInWatches( it->second.Filepath ) )
+						{
+							skip = true;
+						}
+					}
+
+					/** @TODO: Check if the watch directory was added succesfully */
+					if ( !skip )
+					{
+						/// Creates the new directory watcher of the subfolder and check for new files
+						dw = new DirWatcherGeneric( Watch, dir, Recursive );
+						dw->watch();
+
+						/// Add it to the list of directories
+						Directories[ dir ] = dw;
+					}
 				}
 			}
 		}
 	}
-
 	/// Process the subdirectories looking for changes
 	for ( dit = Directories.begin(); dit != Directories.end(); dit++ )
 	{
@@ -291,7 +334,7 @@ void DirWatcherGeneric::GetFiles( const std::string& directory, FileInfoMap& fil
 	files = FileSystem::filesInfoFromPath( directory );
 }
 
-bool DirWatcherGeneric::isPath( std::string path )
+bool DirWatcherGeneric::pathInWatches( std::string path )
 {
 	if ( Directory == path )
 	{
@@ -300,7 +343,7 @@ bool DirWatcherGeneric::isPath( std::string path )
 
 	for ( DirWatchMap::iterator it = Directories.begin(); it != Directories.end(); it++ )
 	{
-		 if ( it->second->isPath( path ) )
+		 if ( it->second->pathInWatches( path ) )
 		 {
 			 return true;
 		 }

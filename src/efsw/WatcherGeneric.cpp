@@ -28,9 +28,9 @@ void WatcherGeneric::watch()
 	DirWatch->watch();
 }
 
-bool WatcherGeneric::isPath( std::string path )
+bool WatcherGeneric::pathInWatches( std::string path )
 {
-	return DirWatch->isPath( path );
+	return DirWatch->pathInWatches( path );
 }
 
 }

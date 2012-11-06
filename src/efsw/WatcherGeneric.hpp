@@ -21,7 +21,7 @@ class WatcherGeneric : public Watcher
 
 		void watch();
 
-		bool isPath( std::string path );
+		bool pathInWatches( std::string path );
 };
 
 }

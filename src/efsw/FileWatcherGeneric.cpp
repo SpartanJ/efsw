@@ -40,8 +40,7 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	}
-
-	if ( pathInWatches( dir ) )
+	else if ( pathInWatches( dir ) )
 	{
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
@@ -180,7 +179,7 @@ bool FileWatcherGeneric::pathInWatches( const std::string& path )
 
 	for ( ; it != mWatches.end(); it++ )
 	{
-		if ( (*it)->Directory == path )
+		if ( (*it)->Directory == path || (*it)->pathInWatches( path ) )
 		{
 			return true;
 		}

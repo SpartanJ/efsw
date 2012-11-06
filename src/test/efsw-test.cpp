@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 	std::cout << "Press ^C to exit demo" << std::endl;
 
 	bool commonTest = true;
-	bool useGeneric = false;
+	bool useGeneric = true;
 	std::string path;
 
 	if ( argc >= 2 )
@@ -101,8 +101,8 @@ int main(int argc, char **argv)
 		efsw::WatchID watchID = handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
 
 		/// some recursive paths for testing
-		handleWathID( fileWatcher.addWatch( CurPath + "test/1", ul, true ) );
-		handleWathID( fileWatcher.addWatch( CurPath + "test/imposibru", ul, true ) );
+		//handleWathID( fileWatcher.addWatch( CurPath + "test/1", ul, true ) );
+		//handleWathID( fileWatcher.addWatch( CurPath + "test/imposibru", ul, true ) );
 
 		/// starts watching
 		fileWatcher.watch();
