@@ -12,16 +12,25 @@
 #include <string.h>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
+#include <efsw/Debug.hpp>
+#include <efsw/WatcherGeneric.hpp>
 
 namespace efsw
 {
 
 FileWatcherKqueue::FileWatcherKqueue( FileWatcher * parent ) :
 	FileWatcherImpl( parent ),
+	mDescriptor( kqueue() ),
+	mLastWatchID(0),
 	mThread( NULL ),
-	mAddingWatcher( false ),
-	mLastWatchID(0)
+	mFileDescriptorCount( 1 ),
+	mAddingWatcher( false )
 {
+	if ( -1 == mDescriptor )
+	{
+		efDEBUG( "kqueue() returned invalid descriptor.\n" );
+	}
+
 	mTimeOut.tv_sec		= 0;
 	mTimeOut.tv_nsec	= 0;
 	mInitOK				= true;
@@ -80,20 +89,30 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 		}
 	}
 
-	mAddingWatcher = true;
+	/// Check first if are enough file descriptors available to create another kqueue watcher, otherwise it creates a generic watcher
+	if ( availablesFD() )
+	{
+		mAddingWatcher = true;
 
-	/// @TODO: It seems that there is a limit of file descriptors opened
-	/// for a process, so it should fallback to the generic watcher.
-	WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
+		WatcherKqueue * watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
 
 
-	mWatchesLock.lock();
-	mWatches.insert(std::make_pair(mLastWatchID, watch));
-	mWatchesLock.unlock();
+		mWatchesLock.lock();
+		mWatches.insert(std::make_pair(mLastWatchID, watch));
+		mWatchesLock.unlock();
 
-	watch->addAll();
+		watch->addAll();
 
-	mAddingWatcher = false;
+		mAddingWatcher = false;
+	}
+	else
+	{
+		WatcherGeneric * watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive );
+
+		mWatchesLock.lock();
+		mWatches.insert(std::make_pair(mLastWatchID, watch));
+		mWatchesLock.unlock();
+	}
 
 	return mLastWatchID;
 }
@@ -125,7 +144,7 @@ void FileWatcherKqueue::removeWatch(WatchID watchid)
 	if(iter == mWatches.end())
 		return;
 
-	WatcherKqueue* watch = iter->second;
+	Watcher* watch = iter->second;
 
 	mWatches.erase(iter);
 
@@ -200,6 +219,21 @@ bool FileWatcherKqueue::pathInWatches( const std::string& path )
 	}
 
 	return false;
+}
+
+void FileWatcherKqueue::addFD()
+{
+	mFileDescriptorCount++;
+}
+
+void FileWatcherKqueue::removeFD()
+{
+	mFileDescriptorCount--;
+}
+
+bool FileWatcherKqueue::availablesFD()
+{
+	return mFileDescriptorCount <= System::getMaxFD() - 100;
 }
 
 }

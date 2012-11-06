@@ -227,16 +227,14 @@ void DirWatcherGeneric::watch()
 			}
 		}
 	}
-	else
-	{
-		/// If the dir didn't change, process the subdirectories looking for changes
-		for ( dit = Directories.begin(); dit != Directories.end(); dit++ )
-		{
-			dw = dit->second;
 
-			/// Just watch
-			dw->watch();
-		}
+	/// Process the subdirectories looking for changes
+	for ( dit = Directories.begin(); dit != Directories.end(); dit++ )
+	{
+		dw = dit->second;
+
+		/// Just watch
+		dw->watch();
 	}
 
 	Watch->CurDirWatch = oldWatch;

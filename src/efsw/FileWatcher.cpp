@@ -5,26 +5,36 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 #	include <efsw/FileWatcherWin32.hpp>
 #	define FILEWATCHER_IMPL FileWatcherWin32
+#	define BACKEND_NAME "Win32"
 #elif EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 #	include <efsw/FileWatcherKqueue.hpp>
 #	define FILEWATCHER_IMPL FileWatcherKqueue
+#	define BACKEND_NAME "Kqueue"
 #elif EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 #	include <efsw/FileWatcherInotify.hpp>
 #	define FILEWATCHER_IMPL FileWatcherInotify
+#	define BACKEND_NAME "Inotify"
 #else
 #	define FILEWATCHER_IMPL FileWatcherGeneric
+#	define BACKEND_NAME "Generic"
 #endif
+
+#include <efsw/Debug.hpp>
 
 namespace efsw {
 
 FileWatcher::FileWatcher() :
 	mOutOfScopeLinks(false)
 {
+	efDEBUG( "Using backend: %s\n", BACKEND_NAME );
+
 	mImpl = new FILEWATCHER_IMPL( this );
 
 	if ( !mImpl->initOK() )
 	{
 		efSAFE_DELETE( mImpl );
+
+		efDEBUG( "Falled back to backend: %s\n", BACKEND_NAME );
 
 		mImpl = new FileWatcherGeneric( this );
 	}

@@ -53,6 +53,15 @@ std::string System::getProcessPath() {
 #endif
 }
 
+void System::maxFD()
+{
+}
+
+Uint64 System::getMaxFD()
+{	// Number of ReadDirectory per thread
+	return 60;
+}
+
 }}
 
 #endif

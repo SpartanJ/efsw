@@ -9,6 +9,7 @@
 #include <vector>
 #include <sys/event.h>
 #include <sys/types.h>
+#include <efsw/FileInfo.hpp>
 
 namespace efsw
 {
@@ -17,7 +18,7 @@ class FileWatcherKqueue;
 class WatcherKqueue;
 
 /// type for a map from WatchID to WatcherKqueue pointer
-typedef std::map<WatchID, WatcherKqueue*> WatchMap;
+typedef std::map<WatchID, Watcher*> WatchMap;
 
 typedef struct kevent KEvent;
 
@@ -53,15 +54,13 @@ class WatcherKqueue : public Watcher
 
 		void removeWatch (WatchID watchid );
 	protected:
+		int					mDescriptor;
 		WatchMap			mWatches;
 		int					mLastWatchID;
+		FileInfoMap			mFiles;
 
 		// index 0 is always the directory
-		std::vector<KEvent>	mChangeList;
-		size_t				mChangeListCount;
-
-		/// The descriptor for the kqueue
-		int					mDescriptor;
+		KEvent				mKevent;
 
 		FileWatcherKqueue *	mWatcher;
 

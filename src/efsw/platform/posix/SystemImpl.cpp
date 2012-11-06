@@ -5,7 +5,10 @@
 #include <pthread.h>
 #include <sys/time.h>
 #include <limits.h>
+#include <sys/resource.h>
+
 #include <efsw/FileSystem.hpp>
+#include <efsw/Debug.hpp>
 
 #if EFSW_OS == EFSW_OS_MACOSX
 	#include <CoreFoundation/CoreFoundation.h>
@@ -133,6 +136,39 @@ std::string System::getProcessPath()
 	return "./";
 
 #endif
+}
+
+void System::maxFD()
+{
+	static bool maxed = false;
+
+	if ( !maxed )
+	{
+		struct rlimit limit;
+		getrlimit( RLIMIT_NOFILE, &limit );
+		limit.rlim_cur = limit.rlim_max;
+		setrlimit( RLIMIT_NOFILE, &limit );
+
+		getrlimit( RLIMIT_NOFILE, &limit );
+
+		efDEBUG( "File descriptor limit %ld", limit.rlim_cur );
+
+		maxed = true;
+	}
+}
+
+Uint64 System::getMaxFD()
+{
+	static rlim_t max_fd = 0;
+
+	if ( max_fd == 0 )
+	{
+		struct rlimit limit;
+		getrlimit( RLIMIT_NOFILE, &limit );
+		max_fd = limit.rlim_cur;
+	}
+
+	return max_fd;
 }
 
 }}

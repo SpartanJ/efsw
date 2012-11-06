@@ -13,4 +13,14 @@ std::string System::getProcessPath()
 	return Platform::System::getProcessPath();
 }
 
+void System::maxFD()
+{
+	Platform::System::maxFD();
+}
+
+Uint64 System::getMaxFD()
+{
+	return Platform::System::getMaxFD();
+}
+
 } 
