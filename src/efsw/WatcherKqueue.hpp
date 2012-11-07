@@ -9,7 +9,6 @@
 #include <vector>
 #include <sys/event.h>
 #include <sys/types.h>
-#include <efsw/FileInfo.hpp>
 
 namespace efsw
 {
@@ -53,28 +52,35 @@ class WatcherKqueue : public Watcher
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherKqueue * parent);
 
 		void removeWatch (WatchID watchid );
-
+		
 		bool initOK();
+
+		int lastErrno();
 	protected:
-		/// The descriptor for the kqueue
-		int					mKqueue;
-		int					mDescriptor;
 		WatchMap			mWatches;
 		int					mLastWatchID;
-		FileInfoMap			mFiles;
 
 		// index 0 is always the directory
-		KEvent				mKevent;
+		std::vector<KEvent>	mChangeList;
+		size_t				mChangeListCount;
+
+		/// The descriptor for the kqueue
+		int					mKqueue;
 
 		FileWatcherKqueue *	mWatcher;
 
 		WatcherKqueue *		mParent;
+		
+		bool				mInitOK;
+		int					mErrno;
 
 		std::vector<WatchID>	mErased;
 
 		bool pathInWatches( const std::string& path );
-
+		
 		bool pathInParent( const std::string& path );
+
+		void eraseQueue();
 };
 
 }

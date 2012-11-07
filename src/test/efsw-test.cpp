@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 	std::cout << "Press ^C to exit demo" << std::endl;
 
 	bool commonTest = true;
-	bool useGeneric = true;
+	bool useGeneric = false;
 	std::string path;
 
 	if ( argc >= 2 )

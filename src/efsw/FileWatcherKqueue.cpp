@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -97,6 +98,32 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 		mWatchesLock.unlock();
 
 		watch->addAll();
+
+		// if failed to open the directory... erase the watcher
+		if ( !watch->initOK() )
+		{
+			int le = watch->lastErrno();
+
+			mWatches.erase( watch->ID );
+
+			efSAFE_DELETE( watch );
+
+			mLastWatchID--;
+
+			// Probably the folder has too many files, create a generic watcher
+			if ( EACCES != le )
+			{
+				WatcherGeneric * watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive );
+
+				mWatchesLock.lock();
+				mWatches.insert(std::make_pair(mLastWatchID, watch));
+				mWatchesLock.unlock();
+			}
+			else
+			{
+				return Errors::Log::createLastError( Errors::Unspecified, link );
+			}
+		}
 
 		mAddingWatcher = false;
 	}
@@ -234,7 +261,7 @@ void FileWatcherKqueue::removeFD()
 
 bool FileWatcherKqueue::availablesFD()
 {
-	return mFileDescriptorCount <= System::getMaxFD() - 200;
+	return mFileDescriptorCount <= System::getMaxFD() - 500;
 }
 
 }

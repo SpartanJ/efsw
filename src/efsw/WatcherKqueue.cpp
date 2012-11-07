@@ -5,29 +5,53 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <efsw/FileSystem.hpp>
-#include <efsw/System.hpp>
-#include <efsw/FileWatcherKqueue.hpp>
-#include <efsw/WatcherGeneric.hpp>
 #include <efsw/Debug.hpp>
 #include <efsw/String.hpp>
+#include <efsw/System.hpp>
+#include <efsw/FileSystem.hpp>
+#include <efsw/WatcherGeneric.hpp>
+#include <efsw/FileWatcherKqueue.hpp>
+
+#define KEVENT_RESERVE_VALUE (10)
 
 namespace efsw {
 
+int comparator(const void* ke1, const void* ke2)
+{
+	const KEvent * kev1	= reinterpret_cast<const KEvent*>( ke1 );
+	const KEvent * kev2	= reinterpret_cast<const KEvent*>( ke2 );
+
+	if ( NULL != kev2->udata )
+	{
+		FileInfo * fi1		= reinterpret_cast<FileInfo*>( kev1->udata );
+		FileInfo * fi2		= reinterpret_cast<FileInfo*>( kev2->udata );
+
+		return strcmp( fi1->Filepath.c_str(), fi2->Filepath.c_str() );
+	}
+
+	return 1;
+}
+
 WatcherKqueue::WatcherKqueue(WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent ) :
 	Watcher( watchid, dirname, listener, recursive ),
-	mKqueue( kqueue() ),
-	mDescriptor( -1 ),
 	mLastWatchID(0),
+	mChangeListCount( 0 ),
+	mKqueue( kqueue() ),
 	mWatcher( watcher ),
-	mParent( parent )
+	mParent( parent ),
+	mInitOK( true ),
+	mErrno(0)
 {
 	if ( -1 == mKqueue )
 	{
-		efDEBUG( "kqueue() returned invalid descriptor.\n" );
+		efDEBUG( "kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n", Directory.c_str(), mWatcher->mFileDescriptorCount );
+		
+		mInitOK = false;
+		mErrno = errno;
 	}
 	else
 	{
@@ -40,44 +64,64 @@ WatcherKqueue::~WatcherKqueue()
 	// Remove the childs watchers ( sub-folders watches )
 	removeAll();
 
-	close( mDescriptor );
+	for ( size_t i = 0; i < mChangeListCount; i++ )
+	{
+		if ( NULL != mChangeList[i].udata )
+		{
+			FileInfo * fi		= reinterpret_cast<FileInfo*>( mChangeList[i].udata );
 
-	mWatcher->removeFD();
+			efSAFE_DELETE( fi );
+		}
+	}
 
 	close( mKqueue );
-
+	
 	mWatcher->removeFD();
 }
 
 void WatcherKqueue::addAll()
 {
+	if ( -1 == mKqueue )
+	{
+		return;
+	}
+
 	// scan directory and call addFile(name, false) on each file
 	FileSystem::dirAddSlashAtEnd( Directory );
 
 	efDEBUG( "addAll(): Added folder: %s\n", Directory.c_str());
 
 	// add base dir
-	mDescriptor = open( Directory.c_str(), O_RDONLY );
-
-	if ( -1 == mDescriptor )
+	int fd = open( Directory.c_str(), O_RDONLY );
+	
+	if ( -1 == fd )
 	{
 		efDEBUG( "addAll(): Couldn't open folder: %s\n", Directory.c_str() );
+		
+		if ( EACCES != errno )
+		{
+			mInitOK = false;
+		}
+
+		mErrno = errno;
+		
+		return;
 	}
-	else
-	{
-		mWatcher->addFD();
-	}
+
+	mChangeList.resize( KEVENT_RESERVE_VALUE );
 
 	// Creates the kevent for the folder
 	EV_SET(
-		&mKevent,
-		mDescriptor,
+		&mChangeList[0],
+		fd,
 		EVFILT_VNODE,
 		EV_ADD | EV_ENABLE | EV_ONESHOT,
 		NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
 		0,
 		0
 	);
+
+	mWatcher->addFD();
 
 	// Get the files and directories from the directory
 	FileInfoMap files = FileSystem::filesInfoFromPath( Directory );
@@ -126,8 +170,56 @@ void WatcherKqueue::removeAll()
 
 void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 {
+	efDEBUG( "addFile(): Added: %s\n", name.c_str() );
+
+	// Open the file to get the file descriptor
+	int fd = open( name.c_str(), O_RDONLY );
+
+	if( fd == -1 )
+	{
+		efDEBUG( "addFile(): Could open file descriptor for %s. File descriptor count: %ld\n", name.c_str(), mWatcher->mFileDescriptorCount );
+		
+		Errors::Log::createLastError( Errors::FileNotFound, name );
+		
+		if ( EACCES != errno )
+		{
+			mInitOK = false;
+		}
+
+		mErrno = errno;
+		
+		return;
+	}
+
+	mWatcher->addFD();
+
+	// increase the file kevent file count
+	mChangeListCount++;
+
+	if ( mChangeListCount + KEVENT_RESERVE_VALUE > mChangeList.size() &&
+		 mChangeListCount % KEVENT_RESERVE_VALUE == 0 )
+	{
+		size_t reserve_size = mChangeList.size() + KEVENT_RESERVE_VALUE;
+		mChangeList.resize( reserve_size );
+		efDEBUG( "addFile(): Reserverd more KEvents space for %s, space reserved %ld, list actual size %ld.\n", Directory.c_str(), reserve_size, mChangeListCount );
+	}
+
 	// create entry
-	mFiles[ name ] = FileInfo( name );
+	FileInfo * entry = new FileInfo( name );
+
+	// set the event data at the end of the list
+	EV_SET(
+			&mChangeList[mChangeListCount],
+			fd,
+			EVFILT_VNODE,
+			EV_ADD | EV_ENABLE | EV_ONESHOT,
+			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
+			0,
+			(void*)entry
+	);
+
+	// qsort sort the list by name
+	qsort(&mChangeList[1], mChangeListCount, sizeof(KEvent), comparator);
 
 	// handle action
 	if( emitEvents )
@@ -138,13 +230,54 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 
 void WatcherKqueue::removeFile( const std::string& name, bool emitEvents )
 {
-	mFiles.erase( name );
+	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
+
+	// bsearch
+	KEvent target;
+
+	// Create a temporary file info to search the kevent ( searching the directory )
+	FileInfo tempEntry( name );
+
+	target.udata = &tempEntry;
+
+	// Search the kevent
+	KEvent * ke = (KEvent*)bsearch(&target, &mChangeList[0], mChangeListCount + 1, sizeof(KEvent), comparator);
+
+	// Trying to remove a non-existing file?
+	if( !ke )
+	{
+		Errors::Log::createLastError( Errors::FileNotFound, name );
+		return;
+	}
+
+	/// @TODO: Why was this?
+	//tempEntry.Filepath = "";
 
 	// handle action
 	if ( emitEvents )
 	{
 		handleAction( name, Actions::Delete );
 	}
+
+	// Delete the user data ( FileInfo ) from the kevent closed
+	FileInfo * del = reinterpret_cast<FileInfo*>( ke->udata );
+
+	efSAFE_DELETE( del );
+
+	// close the file descriptor from the kevent
+	close( ke->ident );
+
+	mWatcher->removeFD();
+
+	memset(ke, 0, sizeof(KEvent));
+
+	// move end to current
+	memcpy(ke, &mChangeList[mChangeListCount], sizeof(KEvent));
+	memset(&mChangeList[mChangeListCount], 0, sizeof(KEvent));
+	--mChangeListCount;
+
+	// qsort list by name
+	qsort(&mChangeList[1], mChangeListCount, sizeof(KEvent), comparator);
 }
 
 // called when the directory is actually changed
@@ -174,9 +307,10 @@ void WatcherKqueue::rescan()
 	}
 
 	struct dirent * dentry;
-	FileInfoMap FilesCpy = mFiles;
-	FileInfo fi;
-	FileInfoMap::iterator fif;
+	size_t kec			= 1;
+	KEvent * ke			= &mChangeList[ kec ]; // first file kevent pointer
+	FileInfo * entry	= NULL;
+	//WatchMap watches	= mWatches;
 
 	// struct stat attrib
 	// update the directory
@@ -190,7 +324,7 @@ void WatcherKqueue::rescan()
 			continue;
 		}
 
-		fi = FileInfo( fname );
+		FileInfo fi( fname );
 
 		if ( Recursive && fi.isDirectory() )
 		{
@@ -210,66 +344,49 @@ void WatcherKqueue::rescan()
 					efDEBUG( "rescan(): Directory %s added\n", fi.Filepath.c_str() );
 				}
 			}
-			else
-			{
-				FilesCpy.erase( fi.Filepath );
-			}
 		}
 		else if ( fi.isRegularFile() ) // Skip non-regular files
 		{
-			/// File existed before?
-			fif = mFiles.find( fi.Filepath );
-
-			if ( fif != mFiles.end() )
+			if( ke <= &mChangeList[ mChangeListCount ] )
 			{
-				/// Erase from the file list copy
-				FilesCpy.erase( fif->first );
+				entry = reinterpret_cast<FileInfo*>( ke->udata );
 
-				/// File changed?
-				if ( fif->second != fi )
+				int result = strcmp( entry->Filepath.c_str(), fname.c_str() );
+
+				// The file is still here?
+				if( result == 0 )
 				{
-					/// Update the new file info
-					mFiles[ fi.Filepath ] = fi;
+					// If the file changed, send the event and update the file info
+					if ( *entry != fi )
+					{
+						*entry = fi;
 
-					/// handle modified event
-					handleAction( fi.Filepath, Actions::Modified );
+						handleAction( entry->Filepath, Actions::Modified );
+					}
 				}
-
-				FilesCpy.erase( fi.Filepath );
+				else if( result < 0 )
+				{	// If already passed the position that should be the entry, it means that it was deleted
+					removeFile( entry->Filepath );
+				}
+				else
+				{
+					// The file seems to be before the kevent file, add it
+					addFile(fname);
+				}
 			}
-			else /// Only add regular files
+			else
 			{
-				/// New file found
-				mFiles[ fi.Filepath ] = fi;
-
-				/// handle add event
-				handleAction( fi.Filepath, Actions::Add );
+				// add the file at the end
+				addFile(fname);
 			}
+
+			// Move to the next kvent
+			kec++;
+			ke = &mChangeList[kec];
 		}
 	}
 
 	closedir(dir);
-
-	/// The files or directories that remains were deleted
-	for ( FileInfoMap::iterator it = FilesCpy.begin(); it != FilesCpy.end(); it++ )
-	{
-		fi = it->second;
-
-		if ( fi.isDirectory() )
-		{
-			WatchID id = watchingDirectory( fi.Filepath );
-
-			// Create another watcher if the watcher doesn't exists
-			if ( id < 0 )
-			{
-				mErased.push_back( id );
-			}
-		}
-		else if ( fi.isRegularFile() )
-		{
-			removeFile( fi.Filepath, true );
-		}
-	}
 }
 
 WatchID WatcherKqueue::watchingDirectory( std::string dir )
@@ -299,6 +416,11 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 
 void WatcherKqueue::watch()
 {
+	if ( -1 == mKqueue )
+	{
+		return;
+	}
+
 	int nev = 0;
 	KEvent event;
 
@@ -309,7 +431,7 @@ void WatcherKqueue::watch()
 	}
 
 	// Then we get the the events of the current folder
-	while( ( nev = kevent( mKqueue, &mKevent, 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
+	while( ( nev = kevent( mKqueue, &mChangeList[0], mChangeListCount + 1, &event, 1, &mWatcher->mTimeOut ) ) != 0 )
 	{
 		// An error ocurred?
 		if( nev == -1 )
@@ -320,10 +442,46 @@ void WatcherKqueue::watch()
 		}
 		else
 		{
-			rescan();
+			FileInfo * entry = NULL;
+
+			// If udate == NULL means that it is the fisrt element of the change list, the folder.
+			// otherwise it is an event of some file inside the folder
+			if( ( entry = reinterpret_cast<FileInfo*> ( event.udata ) ) != NULL )
+			{
+				efDEBUG( "watch(): File: %s ", entry->Filepath.c_str() );
+
+				// If the event flag is delete... the file was deleted
+				if ( event.fflags & NOTE_DELETE )
+				{
+					efDEBUG( "deleted\n" );
+
+					removeFile( entry->Filepath );
+				}
+				else if (	event.fflags & NOTE_EXTEND	||
+							event.fflags & NOTE_WRITE	||
+							event.fflags & NOTE_ATTRIB
+				)
+				{
+					// The file was modified
+					efDEBUG( "modified\n" );
+
+					*entry = FileInfo( entry->Filepath );
+
+					handleAction( entry->Filepath, efsw::Actions::Modified );
+				}
+			}
+			else
+			{
+				rescan();
+			}
 		}
 	}
 
+	eraseQueue();
+}
+
+void WatcherKqueue::eraseQueue()
+{
 	// Erase all watchers marked for deletion
 	if ( !mErased.empty() )
 	{
@@ -331,18 +489,18 @@ void WatcherKqueue::watch()
 
 		for ( std::vector<WatchID>::iterator eit = mErased.begin(); eit != mErased.end(); eit++ )
 		{
-				if ( mWatches.find( (*eit) ) != mWatches.end() )
-				{
-					efDEBUG( "watch(): Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
+			if ( mWatches.find( (*eit) ) != mWatches.end() )
+			{
+				efDEBUG( "watch(): Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
 
-					handleFolderAction( mWatches[ (*eit) ]->Directory, Actions::Delete );
+				handleFolderAction( mWatches[ (*eit) ]->Directory, Actions::Delete );
 
-					removeWatch( (*eit) );
-				}
-				else
-				{
-					efDEBUG( "watch(): Tryed to remove watcher ID: %ld, but it wasn't present.", (*eit) );
-				}
+				removeWatch( (*eit) );
+			}
+			else
+			{
+				efDEBUG( "watch(): Tryed to remove watcher ID: %ld, but it wasn't present.", (*eit) );
+			}
 		}
 
 		mErased.clear();
@@ -397,16 +555,28 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 
 		s_fc++;
 
-		// if failed to open the directory... ( permissions problem ), erase the watcher
+		// if failed to open the directory... erase the watcher
 		if ( !watch->initOK() )
 		{
+			int le = watch->lastErrno();
+
 			mWatches.erase( watch->ID );
 
 			efSAFE_DELETE( watch );
 
 			mLastWatchID--;
 
-			return Errors::Log::createLastError( Errors::Unspecified, link );
+			// Probably the folder has too many files, create a generic watcher
+			if ( EACCES != le )
+			{
+				WatcherGeneric * watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+
+				mWatches.insert(std::make_pair(mLastWatchID, watch));
+			}
+			else
+			{
+				return Errors::Log::createLastError( Errors::Unspecified, link );
+			}
 		}
 	}
 	else
@@ -427,7 +597,7 @@ WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener*
 
 bool WatcherKqueue::initOK()
 {
-	return -1 != mKqueue && -1 != mDescriptor;
+	return mInitOK;
 }
 
 void WatcherKqueue::removeWatch( WatchID watchid )
@@ -437,7 +607,7 @@ void WatcherKqueue::removeWatch( WatchID watchid )
 	if(iter == mWatches.end())
 		return;
 
-	Watcher* watch = iter->second;
+	Watcher * watch = iter->second;
 
 	mWatches.erase(iter);
 
@@ -484,6 +654,11 @@ bool WatcherKqueue::pathInParent( const std::string &path )
 	}
 
 	return false;
+}
+
+int WatcherKqueue::lastErrno()
+{
+	return mErrno;
 }
 
 }
