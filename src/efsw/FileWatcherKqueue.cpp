@@ -261,7 +261,7 @@ void FileWatcherKqueue::removeFD()
 
 bool FileWatcherKqueue::availablesFD()
 {
-	return mFileDescriptorCount <= System::getMaxFD() - 500;
+	return mFileDescriptorCount <= (Int64)System::getMaxFD() - 500;
 }
 
 }

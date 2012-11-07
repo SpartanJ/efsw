@@ -39,15 +39,13 @@ class FileWatcherGeneric : public FileWatcherImpl
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	protected:
-		FileWatcher * mParent;
-
-		/// Map of WatchID to WatchStruct pointers
-		WatchList mWatches;
+		Thread * mThread;
 
 		/// The last watchid
 		WatchID mLastWatchID;
 
-		Thread * mThread;
+		/// Map of WatchID to WatchStruct pointers
+		WatchList mWatches;
 
 		Mutex mWatchesLock;
 

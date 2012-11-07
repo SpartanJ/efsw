@@ -43,6 +43,8 @@ FileWatcher::FileWatcher() :
 FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
 	mOutOfScopeLinks(false)
 {
+	efDEBUG( "Using backend: %s\n", BACKEND_NAME );
+
 	if ( useGenericFileWatcher )
 	{
 		mImpl = new FileWatcherGeneric( this );
@@ -54,6 +56,8 @@ FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
 		if ( !mImpl->initOK() )
 		{
 			efSAFE_DELETE( mImpl );
+
+			efDEBUG( "Falled back to backend: %s\n", BACKEND_NAME );
 
 			mImpl = new FileWatcherGeneric( this );
 		}

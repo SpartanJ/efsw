@@ -24,6 +24,7 @@ class UpdateListener : public efsw::FileWatchListener
 				case efsw::Actions::Add:		return "Add";
 				case efsw::Actions::Modified:	return "Modified";
 				case efsw::Actions::Delete:		return "Delete";
+				default:						return "Bad Action";
 			}
 		}
 
@@ -98,7 +99,7 @@ int main(int argc, char **argv)
 		std::cout << "CurPath: " << CurPath.c_str() << std::endl;
 
 		/// add a watch to the system
-		efsw::WatchID watchID = handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
+		handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
 
 		/// some recursive paths for testing
 		//handleWathID( fileWatcher.addWatch( CurPath + "test/1", ul, true ) );
@@ -110,13 +111,14 @@ int main(int argc, char **argv)
 		/// adds another watch after started watching...
 		efsw::System::sleep( 100 );
 
-		efsw::WatchID watchID2 = fileWatcher.addWatch( CurPath + "test2", ul, true );
+		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test2", ul, true );
 
 		/// delete the watch
-		//efsw::System::sleep( 1000 );
-		//fileWatcher.removeWatch( watchID );
-		//efsw::System::sleep( 1000 );
-		//fileWatcher.removeWatch( watchID2 );
+		if ( watchID > 0 )
+		{
+			efsw::System::sleep( 1000 );
+			fileWatcher.removeWatch( watchID );
+		}
 	}
 	else
 	{

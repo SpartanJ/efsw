@@ -12,6 +12,7 @@ typedef SOPHIST_int16		Int16;
 typedef SOPHIST_uint16		Uint16;
 typedef SOPHIST_int32		Int32;
 typedef SOPHIST_uint32		Uint32;
+typedef SOPHIST_int64		Int64;
 typedef SOPHIST_uint64		Uint64;
 
 #define EFSW_OS_WIN		1

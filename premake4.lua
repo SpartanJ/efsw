@@ -41,6 +41,7 @@ solution "efsw"
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
+			buildoptions{ "-Wall" }
 			targetname "efsw-static-debug"
 
 		configuration "release"
@@ -66,11 +67,13 @@ solution "efsw"
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
+			buildoptions{ "-Wall" }
 			targetname "efsw-test-debug"
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
+			buildoptions{ "-Wall" }
 			targetname "efsw-test-release"
 
 	project "efsw-shared-lib"
@@ -83,10 +86,12 @@ solution "efsw"
 		
 		configuration "debug"
 			defines { "DEBUG" }
+			buildoptions{ "-Wall" }
 			flags { "Symbols" }
 			targetname "efsw-debug"
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
+			buildoptions{ "-Wall" }
 			targetname "efsw"
