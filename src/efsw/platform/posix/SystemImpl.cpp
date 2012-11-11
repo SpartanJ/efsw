@@ -24,7 +24,8 @@
 
 namespace efsw { namespace Platform {
 
-void System::sleep( const unsigned long& ms ) {
+void System::sleep( const unsigned long& ms )
+{
 	// usleep( static_cast<unsigned long>( ms * 1000 ) );
 
 	// usleep is not reliable enough (it might block the
