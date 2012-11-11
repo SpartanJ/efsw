@@ -26,7 +26,7 @@ class WatcherKqueue : public Watcher
 	public:
 		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent = NULL );
 
-		~WatcherKqueue();
+		virtual ~WatcherKqueue();
 
 		void addFile(  const std::string& name, bool emitEvents = true );
 

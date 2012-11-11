@@ -111,7 +111,7 @@ int main(int argc, char **argv)
 		/// adds another watch after started watching...
 		efsw::System::sleep( 100 );
 
-		efsw::WatchID watchID = fileWatcher.addWatch( CurPath + "test2", ul, true );
+		efsw::WatchID watchID = handleWathID( fileWatcher.addWatch( CurPath + "test2", ul, true ) );
 
 		/// delete the watch
 		if ( watchID > 0 )

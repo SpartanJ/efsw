@@ -34,7 +34,7 @@ void efPRINTC	( unsigned int cond, const char * format, ... );
 	#define efDEBUG efPRINT
 	#define efDEBUGC efPRINTC
 #else
-	#ifdef EFSW_COMPILER_GCC
+	#if defined( EFSW_COMPILER_GCC ) || defined( __clang__ )
 		#define efDEBUG( format, args... ) {}
 		#define efDEBUGC( cond, format, args... ) {}
 	#else
@@ -46,4 +46,3 @@ void efPRINTC	( unsigned int cond, const char * format, ... );
 }
 
 #endif
-
