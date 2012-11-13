@@ -217,7 +217,7 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 			fd,
 			EVFILT_VNODE,
 			EV_ADD | EV_ENABLE | EV_ONESHOT,
-			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
+			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME,
 			0,
 			(void*)entry
 	);
