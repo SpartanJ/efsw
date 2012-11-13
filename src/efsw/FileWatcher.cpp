@@ -43,14 +43,16 @@ FileWatcher::FileWatcher() :
 FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
 	mOutOfScopeLinks(false)
 {
-	efDEBUG( "Using backend: %s\n", BACKEND_NAME );
-
 	if ( useGenericFileWatcher )
 	{
+		efDEBUG( "Using backend: Generic\n" );
+
 		mImpl = new FileWatcherGeneric( this );
 	}
 	else
 	{
+		efDEBUG( "Using backend: %s\n", BACKEND_NAME );
+
 		mImpl = new FILEWATCHER_IMPL( this );
 
 		if ( !mImpl->initOK() )

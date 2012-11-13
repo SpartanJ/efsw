@@ -9,15 +9,7 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	Recursive( recursive ),
 	Deleted( false )
 {
-	/// Is this a recursive watch?
-	if ( Watch->Directory != directory )
-	{
-		if ( !( directory.size() && ( directory.at(0) == FileSystem::getOSSlash() || directory.at( directory.size() - 1 ) == FileSystem::getOSSlash() ) ) )
-		{
-			/// Get the real directory
-			Directory = Watch->CurDirWatch->Directory + directory;
-		}
-	}
+	resetDirectory( directory );
 
 	if ( NULL == Watch->DirWatch )
 	{
@@ -25,13 +17,6 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	}
 
 	Watch->CurDirWatch = this;
-
-	FileSystem::dirAddSlashAtEnd( Directory );
-
-	/// Why i'm doing this? stat in mingw32 doesn't work for directories if the dir path ends with a path slash
-	std::string dir( Directory );
-	FileSystem::dirRemoveSlashAtEnd( dir );
-	DirInfo = FileInfo( dir );
 
 	GetFiles( Directory, Files );
 
@@ -51,6 +36,28 @@ DirWatcherGeneric::DirWatcherGeneric( WatcherGeneric * ws, const std::string& di
 	{
 		Files.erase( *eit );
 	}
+}
+
+void DirWatcherGeneric::resetDirectory( const std::string& directory )
+{
+	Directory = directory;
+
+	/// Is this a recursive watch?
+	if ( Watch->Directory != directory )
+	{
+		if ( !( directory.size() && ( directory.at(0) == FileSystem::getOSSlash() || directory.at( directory.size() - 1 ) == FileSystem::getOSSlash() ) ) )
+		{
+			/// Get the real directory
+			Directory = Watch->CurDirWatch->Directory + directory;
+		}
+	}
+
+	FileSystem::dirAddSlashAtEnd( Directory );
+
+	/// Why i'm doing this? stat in mingw32 doesn't work for directories if the dir path ends with a path slash
+	std::string dir( Directory );
+	FileSystem::dirRemoveSlashAtEnd( dir );
+	DirInfo = FileInfo( dir );
 }
 
 void DirWatcherGeneric::addChilds()
@@ -140,6 +147,24 @@ DirWatcherGeneric::~DirWatcherGeneric()
 	}
 }
 
+FileInfoMap::iterator DirWatcherGeneric::nodeInFiles( FileInfo& fi )
+{
+	FileInfoMap::iterator it;
+
+	if ( FileInfo::inodeSupported() )
+	{
+		for ( it = Files.begin(); it != Files.end(); it++ )
+		{
+			if ( it->second.sameInode( fi ) && it->second.Filepath != fi.Filepath )
+			{
+				return it;
+			}
+		}
+	}
+
+	return Files.end();
+}
+
 void DirWatcherGeneric::watch()
 {
 	DirWatcherGeneric * oldWatch = Watch->CurDirWatch;
@@ -161,12 +186,7 @@ void DirWatcherGeneric::watch()
 		return;
 	}
 
-	FileInfoMap FilesCpy;
-
-	if ( dirchanged )
-	{
-		FilesCpy = Files;
-	}
+	FileInfoMap FilesCpy = Files;
 
 	FileInfoMap::iterator it;
 	DirWatchMap::iterator dit;
@@ -188,10 +208,7 @@ void DirWatcherGeneric::watch()
 			if ( fif != Files.end() )
 			{
 				/// Erase from the file list copy
-				if ( dirchanged )
-				{
-					FilesCpy.erase( it->first );
-				}
+				FilesCpy.erase( it->first );
 
 				/// File changed?
 				if ( (*fif).second != fi )
@@ -209,9 +226,43 @@ void DirWatcherGeneric::watch()
 				/// New file found
 				Files[ it->first ] = fi;
 
-				/// handle add event
-				Watch->CurDirWatch = this;
-				Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Add );
+				FileInfoMap::iterator fit;
+				std::string olfFile = "";
+
+				/// Check if the same inode already existed
+				if ( ( fit = nodeInFiles( fi ) ) != Files.end() )
+				{
+					olfFile = fit->first;
+
+					/// Avoid firing a Delete event
+					FilesCpy.erase( fit->first );
+					Files.erase( fit->first );
+
+					/// Directory existed?
+					dit = Directories.find( fit->first );
+
+					if ( dit != Directories.end() )
+					{
+						dw = dit->second;
+
+						/// Remove the directory from the map
+						Directories.erase( dit->first );
+
+						Directories[ it->first ] = dw;
+
+						dw->resetDirectory( it->first );
+					}
+
+					/// handle moved event
+					Watch->CurDirWatch = this;
+					Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Moved, olfFile );
+				}
+				else
+				{
+					/// handle add event
+					Watch->CurDirWatch = this;
+					Watch->WatcherImpl->handleAction( Watch, it->first, Actions::Add );
+				}
 			}
 
 			/// Is directory and recursive?
@@ -229,46 +280,7 @@ void DirWatcherGeneric::watch()
 				}
 				else
 				{
-					/// Check if the directory is a symbolic link
-					std::string dir( Directory + it->first );
-
-					FileSystem::dirAddSlashAtEnd( dir );
-
-					std::string curPath;
-					std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
-					bool skip = false;
-
-					if ( "" != link )
-					{
-						/// If it's a symlink check if the realpath exists as a watcher, or
-						/// if the path is outside the current dir
-						if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
-						{
-							skip = true;
-						}
-						else
-						{
-							dir = link;
-						}
-					}
-					else
-					{
-						if ( Watch->pathInWatches( link ) || Watch->WatcherImpl->pathInWatches( it->second.Filepath ) )
-						{
-							skip = true;
-						}
-					}
-
-					/** @TODO: Check if the watch directory was added succesfully */
-					if ( !skip )
-					{
-						/// Creates the new directory watcher of the subfolder and check for new files
-						dw = new DirWatcherGeneric( Watch, dir, Recursive );
-						dw->watch();
-
-						/// Add it to the list of directories
-						Directories[ dir ] = dw;
-					}
+					createDirectory( it->first );
 				}
 			}
 		}
@@ -303,7 +315,7 @@ void DirWatcherGeneric::watch()
 
 			if ( dit != Directories.end() )
 			{
-				dw = (*dit).second;;
+				dw = dit->second;
 
 				/// Flag it as deleted so it fire the event for every file inside deleted
 				dw->Deleted = true;
@@ -312,7 +324,7 @@ void DirWatcherGeneric::watch()
 				efSAFE_DELETE( dw );
 
 				/// Remove the directory from the map
-				Directories.erase( (*dit).first );
+				Directories.erase( dit->first );
 			}
 		}
 
@@ -327,6 +339,54 @@ void DirWatcherGeneric::watch()
 	}
 
 	Watch->CurDirWatch = oldWatch;
+}
+
+DirWatcherGeneric * DirWatcherGeneric::createDirectory( const std::string& newdir )
+{
+	DirWatcherGeneric * dw = NULL;
+
+	/// Check if the directory is a symbolic link
+	std::string dir( Directory + newdir );
+
+	FileSystem::dirAddSlashAtEnd( dir );
+
+	std::string curPath;
+	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
+	bool skip = false;
+
+	if ( "" != link )
+	{
+		/// If it's a symlink check if the realpath exists as a watcher, or
+		/// if the path is outside the current dir
+		if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
+		{
+			skip = true;
+		}
+		else
+		{
+			dir = link;
+		}
+	}
+	else
+	{
+		if ( Watch->pathInWatches( dir ) || Watch->WatcherImpl->pathInWatches( dir ) )
+		{
+			skip = true;
+		}
+	}
+
+	/** @TODO: Check if the watch directory was added succesfully */
+	if ( !skip )
+	{
+		/// Creates the new directory watcher of the subfolder and check for new files
+		dw = new DirWatcherGeneric( Watch, dir, Recursive );
+		dw->watch();
+
+		/// Add it to the list of directories
+		Directories[ dir ] = dw;
+	}
+
+	return dw;
 }
 
 void DirWatcherGeneric::GetFiles( const std::string& directory, FileInfoMap& files )

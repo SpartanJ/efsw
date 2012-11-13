@@ -297,23 +297,44 @@ void FileWatcherInotify::run()
 	} while( mFD > 0 );
 }
 
-void FileWatcherInotify::handleAction(Watcher* watch, const std::string& filename, unsigned long action)
+void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename )
 {
 	if ( !watch || !watch->Listener )
 	{
 		return;
 	}
 
-	std::string fpath(watch->Directory + filename);
+	std::string fpath( watch->Directory + filename );
 
 	if( IN_CLOSE_WRITE & action )
 	{
 		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,Actions::Modified );
 	}
-
-	if( IN_MOVED_TO & action || IN_CREATE & action )
+	else if( IN_MOVED_TO & action )
 	{
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,Actions::Add );
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Moved, watch->OldFileName );
+
+		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
+		{
+			/// Update the new directory path
+			std::string opath( watch->Directory + watch->OldFileName );
+			FileSystem::dirAddSlashAtEnd( opath );
+			FileSystem::dirAddSlashAtEnd( fpath );
+
+			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
+			{
+				if ( it->second->Directory == opath )
+				{
+					it->second->Directory = fpath;
+
+					break;
+				}
+			}
+		}
+	}
+	else if( IN_CREATE & action )
+	{
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
 
 		/// If the watcher is recursive, checks if the new file is a folder, and creates a watcher
 		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
@@ -336,10 +357,13 @@ void FileWatcherInotify::handleAction(Watcher* watch, const std::string& filenam
 			}
 		}
 	}
-
-	if( IN_MOVED_FROM & action || IN_DELETE & action )
+	else if ( IN_MOVED_FROM & action )
 	{
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,Actions::Delete );
+		watch->OldFileName = filename;
+	}
+	else if( IN_DELETE & action )
+	{
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Delete );
 
 		/// If the file erased is a directory and recursive is enabled, removes the directory erased
 		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
@@ -376,9 +400,10 @@ std::list<std::string> FileWatcherInotify::directories()
 
 bool FileWatcherInotify::pathInWatches( const std::string& path )
 {
-	WatchMap::iterator it = mWatches.begin();
+	/// Search in the real watches, since it must allow adding a watch already watched as a subdir
+	WatchMap::iterator it = mRealWatches.begin();
 
-	for ( ; it != mWatches.end(); it++ )
+	for ( ; it != mRealWatches.end(); it++ )
 	{
 		if ( it->second->Directory == path )
 		{

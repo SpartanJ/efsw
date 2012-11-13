@@ -79,7 +79,9 @@ namespace Actions {
 		/// Sent when a file is deleted or renamed
 		Delete = 2,
 		/// Sent when a file is modified
-		Modified = 4
+		Modified = 3,
+		/// Sent when a file is moved
+		Moved = 4
 	};
 }
 typedef Actions::Action Action;
@@ -174,7 +176,8 @@ class FileWatchListener
 		/// @param dir The directory
 		/// @param filename The filename that was accessed (not full path)
 		/// @param action Action that was performed
-		virtual void handleFileAction(WatchID watchid, const std::string& dir, const std::string& filename, Action action) = 0;
+		/// @param oldFilename The name of the file or directory moved
+		virtual void handleFileAction(WatchID watchid, const std::string& dir, const std::string& filename, Action action, std::string oldFilename = "" ) = 0;
 
 };
 

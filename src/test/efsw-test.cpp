@@ -24,13 +24,14 @@ class UpdateListener : public efsw::FileWatchListener
 				case efsw::Actions::Add:		return "Add";
 				case efsw::Actions::Modified:	return "Modified";
 				case efsw::Actions::Delete:		return "Delete";
+				case efsw::Actions::Moved:		return "Moved";
 				default:						return "Bad Action";
 			}
 		}
 
-		void handleFileAction( efsw::WatchID watchid, const std::string& dir, const std::string& filename, efsw::Action action )
+		void handleFileAction( efsw::WatchID watchid, const std::string& dir, const std::string& filename, efsw::Action action, std::string oldFilename = ""  )
 		{
-			std::cout << "DIR (" << dir + ") FILE (" + filename + ") has event " << getActionName( action ) << std::endl;
+			std::cout << "DIR (" << dir + ") FILE (" + ( oldFilename.empty() ? "" : "from file " + oldFilename + " to " ) + filename + ") has event " << getActionName( action ) << std::endl;
 		}
 };
 
@@ -90,7 +91,7 @@ int main(int argc, char **argv)
 	/// create the file watcher object
 	efsw::FileWatcher fileWatcher( useGeneric );
 
-	fileWatcher.allowOutOfScopeLinks( true );
+	fileWatcher.allowOutOfScopeLinks( false );
 
 	if ( commonTest )
 	{

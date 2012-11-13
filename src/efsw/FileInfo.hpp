@@ -10,6 +10,8 @@ namespace efsw {
 class FileInfo
 {
 	public:
+		static bool inodeSupported();
+
 		FileInfo();
 
 		FileInfo( const std::string& filepath );
@@ -26,6 +28,8 @@ class FileInfo
 
 		bool isRegularFile();
 
+		bool sameInode( const FileInfo& Other ) const;
+
 		bool isLink();
 
 		std::string linksTo();
@@ -41,7 +45,7 @@ class FileInfo
 		Uint32			OwnerId;
 		Uint32			GroupId;
 		Uint32			Permissions;
-		Uint64			Size;
+		Uint64			Inode;
 };
 
 typedef std::map<std::string, FileInfo> FileInfoMap;

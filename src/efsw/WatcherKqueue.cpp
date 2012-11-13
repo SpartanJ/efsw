@@ -18,6 +18,10 @@
 
 #define KEVENT_RESERVE_VALUE (10)
 
+#ifndef O_EVTONLY
+#define O_EVTONLY (O_RDONLY | O_NONBLOCK)
+#endif
+
 namespace efsw {
 
 int comparator(const void* ke1, const void* ke2)
@@ -92,7 +96,7 @@ void WatcherKqueue::addAll()
 	efDEBUG( "addAll(): Added folder: %s\n", Directory.c_str());
 
 	// add base dir
-	int fd = open( Directory.c_str(), O_RDONLY );
+	int fd = open( Directory.c_str(), O_EVTONLY );
 	
 	if ( -1 == fd )
 	{
@@ -116,7 +120,7 @@ void WatcherKqueue::addAll()
 		fd,
 		EVFILT_VNODE,
 		EV_ADD | EV_ENABLE | EV_ONESHOT,
-		NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
+		NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME,
 		0,
 		0
 	);
@@ -173,7 +177,7 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 	efDEBUG( "addFile(): Added: %s\n", name.c_str() );
 
 	// Open the file to get the file descriptor
-	int fd = open( name.c_str(), O_RDONLY );
+	int fd = open( name.c_str(), O_EVTONLY );
 
 	if( fd == -1 )
 	{
@@ -310,7 +314,6 @@ void WatcherKqueue::rescan()
 	size_t kec			= 1;
 	KEvent * ke			= &mChangeList[ kec ]; // first file kevent pointer
 	FileInfo * entry	= NULL;
-	//WatchMap watches	= mWatches;
 
 	// struct stat attrib
 	// update the directory
@@ -391,27 +394,26 @@ void WatcherKqueue::rescan()
 
 WatchID WatcherKqueue::watchingDirectory( std::string dir )
 {
-	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
+	Watcher * watch = findWatcher( dir );
+
+	if ( NULL != watch )
 	{
-		if ( it->second->Directory == dir )
-		{
-			return it->first;
-		}
+		return watch->ID;
 	}
 
 	return Errors::FileNotFound;
 }
 
-void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action )
+void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action, const std::string& oldFilename )
 {
-	Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action );
+	Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action, FileSystem::fileNameFromPath( oldFilename ) );
 }
 
-void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action action )
+void WatcherKqueue::handleFolderAction(std::string filename, efsw::Action action , const std::string &oldFilename )
 {
 	FileSystem::dirRemoveSlashAtEnd( filename );
 
-	handleAction( filename, action );
+	handleAction( filename, action, oldFilename );
 }
 
 void WatcherKqueue::watch()
@@ -469,6 +471,41 @@ void WatcherKqueue::watch()
 
 					handleAction( entry->Filepath, efsw::Actions::Modified );
 				}
+				else if ( event.fflags & NOTE_RENAME )
+				{
+					efDEBUG( "moved" );
+
+					std::string opath( entry->Filepath );
+
+					// Update the directory path if it's a watcher
+					if ( Recursive && entry->isDirectory() )
+					{
+						std::string opath2( opath );
+						FileSystem::dirAddSlashAtEnd( opath2 );
+
+						Watcher * watch = findWatcher( opath2 );
+
+						if ( NULL != watch )
+						{
+							watch->Directory = opath2;
+						}
+					}
+
+					// Update the FileInfo of the file or directory moved
+					FileInfoMap::iterator it;
+					FileInfoMap files = FileSystem::filesInfoFromPath( Directory );
+
+					for ( it = files.begin(); it != files.end(); it++ )
+					{
+						if ( entry->sameInode( it->second ) )
+						{
+							*entry = it->second;
+							break;
+						}
+					}
+
+					handleAction( entry->Filepath, efsw::Actions::Moved, opath );
+				}
 			}
 			else
 			{
@@ -505,6 +542,21 @@ void WatcherKqueue::eraseQueue()
 
 		mErased.clear();
 	}
+}
+
+Watcher * WatcherKqueue::findWatcher( const std::string path )
+{
+	WatchMap::iterator it = mWatches.begin();
+
+	for ( ; it != mWatches.end(); it++ )
+	{
+		if ( it->second->Directory == path )
+		{
+			return it->second;
+		}
+	}
+
+	return NULL;
 }
 
 WatchID WatcherKqueue::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive , WatcherKqueue *parent)
@@ -616,17 +668,7 @@ void WatcherKqueue::removeWatch( WatchID watchid )
 
 bool WatcherKqueue::pathInWatches( const std::string& path )
 {
-	WatchMap::iterator it = mWatches.begin();
-
-	for ( ; it != mWatches.end(); it++ )
-	{
-		if ( it->second->Directory == path )
-		{
-			return true;
-		}
-	}
-
-	return false;
+	return NULL != findWatcher( path );
 }
 
 bool WatcherKqueue::pathInParent( const std::string &path )

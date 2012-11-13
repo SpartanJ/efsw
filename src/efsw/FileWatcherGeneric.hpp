@@ -34,7 +34,7 @@ class FileWatcherGeneric : public FileWatcherImpl
 		void watch();
 
 		/// Handles the action
-		void handleAction(Watcher * watch, const std::string& filename, unsigned long action);
+		void handleAction(Watcher * watch, const std::string& filename, unsigned long action, std::string oldFilename = "");
 
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();

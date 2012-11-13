@@ -212,7 +212,7 @@ void FileWatcherKqueue::run()
 	} while( mInitOK );
 }
 
-void FileWatcherKqueue::handleAction(Watcher* watch, const std::string& filename, unsigned long action)
+void FileWatcherKqueue::handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename)
 {
 }
 

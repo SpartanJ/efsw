@@ -24,6 +24,7 @@ class Watcher
 		std::string				Directory;
 		FileWatchListener	*	Listener;
 		bool					Recursive;
+		std::string				OldFileName;
 };
 
 class FileWatcherImpl
@@ -47,7 +48,7 @@ class FileWatcherImpl
 		virtual void watch() = 0;
 
 		/// Handles the action
-		virtual void handleAction(Watcher * watch, const std::string& filename, unsigned long action) = 0;
+		virtual void handleAction(Watcher * watch, const std::string& filename, unsigned long action, std::string oldFilename = "") = 0;
 
 		/// @return Returns a list of the directories that are being watched
 		virtual std::list<std::string> directories() = 0;

@@ -37,9 +37,9 @@ class WatcherKqueue : public Watcher
 		// rescans the watched directory adding/removing files and sending notices
 		void rescan();
 
-		void handleAction(const std::string& filename, efsw::Action action);
+		void handleAction( const std::string& filename, efsw::Action action, const std::string& oldFilename = "" );
 
-		void handleFolderAction( std::string filename, efsw::Action action );
+		void handleFolderAction( std::string filename, efsw::Action action, const std::string& oldFilename = "" );
 
 		void addAll();
 
@@ -81,6 +81,8 @@ class WatcherKqueue : public Watcher
 		bool pathInParent( const std::string& path );
 
 		void eraseQueue();
+
+		Watcher * findWatcher( const std::string path );
 };
 
 }

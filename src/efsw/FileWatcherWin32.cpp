@@ -327,17 +327,44 @@ void FileWatcherWin32::run()
 	} while ( mInitOK );
 }
 
-void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename, unsigned long action)
+void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename)
 {
 	Action fwAction;
 
 	switch(action)
 	{
 	case FILE_ACTION_RENAMED_NEW_NAME:
+		watch->OldFileName = filename;
+		break;
 	case FILE_ACTION_ADDED:
 		fwAction = Actions::Add;
 		break;
 	case FILE_ACTION_RENAMED_OLD_NAME:
+		fwAction = Actions::Moved;
+
+		std::string fpath( watch->Directory + filename );
+
+		// Update the directory path
+		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
+		{
+			// Update the new directory path
+			std::string opath( watch->Directory + watch->OldFileName );
+			FileSystem::dirAddSlashAtEnd( opath );
+			FileSystem::dirAddSlashAtEnd( fpath );
+
+			for ( WatchVector::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
+			{
+				if ( (*it).Directory == opath )
+				{
+					(*it).Directory = fpath;
+
+					break;
+				}
+			}
+		}
+
+		watch->Listener->handleFileAction(watch->ID, static_cast<WatcherWin32*>( watch )->DirName, filename, fwAction, watch->OldFileName);
+		return;
 	case FILE_ACTION_REMOVED:
 		fwAction = Actions::Delete;
 		break;

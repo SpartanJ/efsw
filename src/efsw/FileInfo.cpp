@@ -8,11 +8,21 @@
 
 namespace efsw {
 
+bool FileInfo::inodeSupported()
+{
+	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+	return true;
+	#else
+	return false;
+	#endif
+}
+
 FileInfo::FileInfo() :
 	ModificationTime(0),
 	OwnerId(0),
 	GroupId(0),
-	Permissions(0)
+	Permissions(0),
+	Inode(0)
 {}
 
 FileInfo::FileInfo( const std::string& filepath ) :
@@ -20,7 +30,8 @@ FileInfo::FileInfo( const std::string& filepath ) :
 	ModificationTime(0),
 	OwnerId(0),
 	GroupId(0),
-	Permissions(0)
+	Permissions(0),
+	Inode(0)
 {
 	getInfo();
 }
@@ -30,7 +41,8 @@ FileInfo::FileInfo( const std::string& filepath, bool linkInfo ) :
 	ModificationTime(0),
 	OwnerId(0),
 	GroupId(0),
-	Permissions(0)
+	Permissions(0),
+	Inode(0)
 {
 	if ( linkInfo )
 	{
@@ -53,7 +65,9 @@ void FileInfo::getInfo()
 		OwnerId				= st.st_uid;
 		GroupId				= st.st_gid;
 		Permissions			= st.st_mode;
-		Size				= st.st_size;
+		#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+		Inode				= st.st_ino;
+		#endif
 	}
 }
 
@@ -72,7 +86,9 @@ void FileInfo::getRealInfo()
 		OwnerId				= st.st_uid;
 		GroupId				= st.st_gid;
 		Permissions			= st.st_mode;
-		Size				= st.st_size;
+		#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+		Inode				= st.st_ino;
+		#endif
 	}
 }
 
@@ -82,7 +98,7 @@ bool FileInfo::operator==( const FileInfo& Other ) const
 				OwnerId				== Other.OwnerId &&
 				GroupId				== Other.GroupId &&
 				Permissions			== Other.Permissions &&
-				Size				== Other.Size
+				Inode				== Other.Inode
 	);
 }
 
@@ -135,8 +151,13 @@ FileInfo& FileInfo::operator=( const FileInfo& Other )
 	this->GroupId			= Other.GroupId;
 	this->OwnerId			= Other.OwnerId;
 	this->Permissions		= Other.Permissions;
-	this->Size				= Other.Size;
+	this->Inode				= Other.Inode;
 	return *this;
+}
+
+bool FileInfo::sameInode( const FileInfo& Other ) const
+{
+	return inodeSupported() && Inode == Other.Inode;
 }
 
 bool FileInfo::operator!=( const FileInfo& Other ) const

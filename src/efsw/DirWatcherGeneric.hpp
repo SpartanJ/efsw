@@ -32,8 +32,14 @@ class DirWatcherGeneric
 		bool pathInWatches( std::string path );
 
 		void addChilds();
+
+		FileInfoMap::iterator nodeInFiles( FileInfo &fi );
 	protected:
 		bool			Deleted;
+
+		DirWatcherGeneric * createDirectory( const std::string& newdir );
+
+		void resetDirectory( const std::string& directory );
 };
 
 }
