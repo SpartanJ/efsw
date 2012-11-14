@@ -56,6 +56,14 @@ FileInfo::FileInfo( const std::string& filepath, bool linkInfo ) :
 
 void FileInfo::getInfo()
 {
+	/// Why i'm doing this? stat in mingw32 doesn't work for directories if the dir path ends with a path slash
+	bool slashAtEnd = FileSystem::slashAtEnd( Filepath );
+
+	if ( slashAtEnd )
+	{
+		FileSystem::dirRemoveSlashAtEnd( Filepath );
+	}
+
 	struct stat st;
 	int res = stat( Filepath.c_str(), &st );
 
@@ -69,10 +77,22 @@ void FileInfo::getInfo()
 		Inode				= st.st_ino;
 		#endif
 	}
+
+	if ( slashAtEnd )
+	{
+		FileSystem::dirAddSlashAtEnd( Filepath );
+	}
 }
 
 void FileInfo::getRealInfo()
 {
+	bool slashAtEnd = FileSystem::slashAtEnd( Filepath );
+
+	if ( slashAtEnd )
+	{
+		FileSystem::dirRemoveSlashAtEnd( Filepath );
+	}
+
 	struct stat st;
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	int res = lstat( Filepath.c_str(), &st );
@@ -89,6 +109,11 @@ void FileInfo::getRealInfo()
 		#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 		Inode				= st.st_ino;
 		#endif
+	}
+
+	if ( slashAtEnd )
+	{
+		FileSystem::dirAddSlashAtEnd( Filepath );
 	}
 }
 

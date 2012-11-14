@@ -8,12 +8,11 @@ namespace efsw
 WatcherGeneric::WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive ) :
 	Watcher( id, directory, fwl, recursive ),
 	WatcherImpl( fw ),
-	DirWatch( NULL ),
-	CurDirWatch( NULL )
+	DirWatch( NULL )
 {
 	FileSystem::dirAddSlashAtEnd( Directory );
 
-	DirWatch = CurDirWatch	= new DirWatcherGeneric( this, directory, recursive );
+	DirWatch = new DirWatcherGeneric( NULL, this, directory, recursive );
 
 	DirWatch->addChilds();
 }

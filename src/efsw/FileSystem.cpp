@@ -21,6 +21,11 @@ char FileSystem::getOSSlash()
 	return Platform::FileSystem::getOSSlash();
 }
 
+bool FileSystem::slashAtEnd( std::string &dir )
+{
+	return ( dir.size() && dir[ dir.size() - 1 ] != getOSSlash() );
+}
+
 void FileSystem::dirAddSlashAtEnd( std::string& dir )
 {
 	if ( dir.size() && dir[ dir.size() - 1 ] != getOSSlash() )
@@ -37,14 +42,32 @@ void FileSystem::dirRemoveSlashAtEnd( std::string& dir )
 	}
 }
 
-std::string FileSystem::fileNameFromPath( const std::string& filepath )
+std::string FileSystem::fileNameFromPath( std::string filepath )
 {
-	return filepath.substr( filepath.find_last_of( getOSSlash() ) + 1 );
+	dirRemoveSlashAtEnd( filepath );
+
+	size_t pos = filepath.find_last_of( getOSSlash() );
+
+	if ( pos != std::string::npos )
+	{
+		return filepath.substr( pos + 1 );
+	}
+
+	return filepath;
 }
 
-std::string FileSystem::pathRemoveFileName( const std::string& filepath )
+std::string FileSystem::pathRemoveFileName( std::string filepath )
 {
-	return filepath.substr( 0, filepath.find_last_of( getOSSlash() ) + 1 );
+	dirRemoveSlashAtEnd( filepath );
+
+	size_t pos = filepath.find_last_of( getOSSlash() );
+
+	if ( pos != std::string::npos )
+	{
+		return filepath.substr( 0, pos + 1 );
+	}
+
+	return filepath;
 }
 
 std::string FileSystem::getLinkRealPath( std::string dir, std::string& curPath )

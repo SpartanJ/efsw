@@ -16,13 +16,15 @@ class FileSystem
 
 		static char getOSSlash();
 
+		static bool slashAtEnd( std::string& dir );
+
 		static void dirAddSlashAtEnd( std::string& dir );
 
 		static void dirRemoveSlashAtEnd( std::string& dir );
 
-		static std::string fileNameFromPath( const std::string& filepath );
+		static std::string fileNameFromPath( std::string filepath );
 
-		static std::string pathRemoveFileName( const std::string& filepath );
+		static std::string pathRemoveFileName( std::string filepath );
 
 		static void realPath( std::string curdir, std::string& path );
 

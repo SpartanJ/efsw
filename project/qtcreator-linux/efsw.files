@@ -97,3 +97,7 @@
 ../../src/efsw/WatcherInotify.hpp
 ../../src/efsw/WatcherInotify.cpp
 ../../src/efsw/FileWatcherImpl.cpp
+../../src/efsw/DirectorySnapshot.hpp
+../../src/efsw/DirectorySnapshot.cpp
+../../src/efsw/DirectorySnapshotDiff.hpp
+../../src/efsw/DirectorySnapshotDiff.cpp

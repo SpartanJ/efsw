@@ -16,7 +16,7 @@ class Watcher
 
 		Watcher( WatchID id, std::string directory, FileWatchListener * listener, bool recursive );
 
-		virtual ~Watcher() {};
+		virtual ~Watcher() {}
 
 		virtual void watch() {}
 

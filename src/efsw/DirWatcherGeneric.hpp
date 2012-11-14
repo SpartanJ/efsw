@@ -3,6 +3,7 @@
 
 #include <efsw/WatcherGeneric.hpp>
 #include <efsw/FileInfo.hpp>
+#include <efsw/DirectorySnapshot.hpp>
 #include <map>
 
 namespace efsw {
@@ -12,14 +13,13 @@ class DirWatcherGeneric
 	public:
 		typedef std::map<std::string, DirWatcherGeneric*> DirWatchMap;
 
+		DirWatcherGeneric *	Parent;
 		WatcherGeneric *	Watch;
-		std::string			Directory;
-		FileInfoMap			Files;
+		DirectorySnapshot	DirSnap;
 		DirWatchMap			Directories;
-		FileInfo			DirInfo;
 		bool				Recursive;
 
-		DirWatcherGeneric( WatcherGeneric * ws, const std::string& directory, bool recursive );
+		DirWatcherGeneric( DirWatcherGeneric * parent, WatcherGeneric * ws, const std::string& directory, bool recursive );
 
 		~DirWatcherGeneric();
 
@@ -27,19 +27,21 @@ class DirWatcherGeneric
 
 		static bool isDir( const std::string& directory );
 
-		void GetFiles( const std::string& directory, FileInfoMap& files );
-
 		bool pathInWatches( std::string path );
 
 		void addChilds();
-
-		FileInfoMap::iterator nodeInFiles( FileInfo &fi );
 	protected:
-		bool			Deleted;
+		bool				Deleted;
 
-		DirWatcherGeneric * createDirectory( const std::string& newdir );
+		DirWatcherGeneric * createDirectory( std::string newdir );
 
-		void resetDirectory( const std::string& directory );
+		void removeDirectory( std::string dir );
+
+		void moveDirectory( std::string oldDir, std::string newDir );
+
+		void resetDirectory( std::string directory );
+
+		void handleAction( const std::string& filename, unsigned long action, std::string oldFilename = "");
 };
 
 }

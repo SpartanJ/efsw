@@ -4,6 +4,7 @@
 #include <efsw/base.hpp>
 #include <string>
 #include <map>
+#include <list>
 
 namespace efsw {
 
@@ -48,7 +49,9 @@ class FileInfo
 		Uint64			Inode;
 };
 
-typedef std::map<std::string, FileInfo> FileInfoMap;
+typedef std::map<std::string, FileInfo>					FileInfoMap;
+typedef std::list<FileInfo>								FileInfoList;
+typedef std::list< std::pair< std::string, FileInfo> >	MovedList;
 
 }
 

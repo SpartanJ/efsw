@@ -13,7 +13,6 @@ class WatcherGeneric : public Watcher
 	public:
 		FileWatcherImpl *		WatcherImpl;
 		DirWatcherGeneric *		DirWatch;
-		DirWatcherGeneric *		CurDirWatch;
 
 		WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener * fwl, FileWatcherImpl * fw, bool recursive );
 

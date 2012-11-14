@@ -152,7 +152,7 @@ void FileWatcherGeneric::run()
 
 void FileWatcherGeneric::handleAction(Watcher * watch, const std::string& filename, unsigned long action, std::string oldFilename)
 {
-	watch->Listener->handleFileAction( watch->ID, static_cast<WatcherGeneric*>( watch )->CurDirWatch->Directory, filename, (Action)action, oldFilename );
+	/// Not used
 }
 
 std::list<std::string> FileWatcherGeneric::directories()
