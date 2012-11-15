@@ -1,6 +1,5 @@
 #include <efsw/FileInfo.hpp>
 #include <efsw/FileSystem.hpp>
-
 #include <sys/stat.h>
 #include <unistd.h>
 #include <limits.h>

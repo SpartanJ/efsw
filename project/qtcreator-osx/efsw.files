@@ -125,3 +125,7 @@
 ../../src/efsw/DirWatcherGeneric.cpp
 ../../src/efsw/Debug.cpp
 ../../src/efsw/FileWatcherImpl.cpp
+../../src/efsw/DirectorySnapshotDiff.hpp
+../../src/efsw/DirectorySnapshot.hpp
+../../src/efsw/DirectorySnapshotDiff.cpp
+../../src/efsw/DirectorySnapshot.cpp

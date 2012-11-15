@@ -26,6 +26,14 @@ class DirectorySnapshot
 		DirectorySnapshotDiff scan();
 
 		FileInfoMap::iterator nodeInFiles( FileInfo& fi );
+
+		void addFile( std::string path );
+
+		void removeFile( std::string path );
+
+		void moveFile( std::string oldPath, std::string newPath );
+
+		void updateFile( std::string path );
 	protected:
 		void initFiles();
 

@@ -229,4 +229,33 @@ FileInfoMap::iterator DirectorySnapshot::nodeInFiles( FileInfo& fi )
 	return Files.end();
 }
 
+void DirectorySnapshot::addFile( std::string path )
+{
+	std::string name( FileSystem::fileNameFromPath( path ) );
+	Files[ name ] = FileInfo( path );
+}
+
+void DirectorySnapshot::removeFile( std::string path )
+{
+	std::string name( FileSystem::fileNameFromPath( path ) );
+
+	FileInfoMap::iterator it = Files.find( name );
+
+	if ( Files.end() != it )
+	{
+		Files.erase( it );
+	}
+}
+
+void DirectorySnapshot::moveFile( std::string oldPath, std::string newPath )
+{
+	removeFile( oldPath );
+	addFile( newPath );
+}
+
+void DirectorySnapshot::updateFile(std::string path)
+{
+	addFile( path );
+}
+
 }

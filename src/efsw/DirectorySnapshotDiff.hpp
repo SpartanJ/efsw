@@ -22,6 +22,12 @@ class DirectorySnapshotDiff
 		bool changed();
 };
 
+#define DiffIterator( FileInfoListName )	it = Diff.FileInfoListName.begin(); \
+											for ( ; it != Diff.FileInfoListName.end(); it++ )
+
+#define DiffMovedIterator( MovedListName )	mit = Diff.MovedListName.begin(); \
+											for ( ; mit != Diff.MovedListName.end(); mit++ )
+
 }
 
 #endif

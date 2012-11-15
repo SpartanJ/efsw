@@ -9,6 +9,7 @@
 #include <vector>
 #include <sys/event.h>
 #include <sys/types.h>
+#include <efsw/DirectorySnapshot.hpp>
 
 namespace efsw
 {
@@ -63,6 +64,7 @@ class WatcherKqueue : public Watcher
 		// index 0 is always the directory
 		std::vector<KEvent>	mChangeList;
 		size_t				mChangeListCount;
+		DirectorySnapshot	mDirSnap;
 
 		/// The descriptor for the kqueue
 		int					mKqueue;
@@ -83,6 +85,8 @@ class WatcherKqueue : public Watcher
 		void eraseQueue();
 
 		Watcher * findWatcher( const std::string path );
+
+		void moveDirectory( std::string oldPath, std::string newPath, bool emitEvents = true );
 };
 
 }

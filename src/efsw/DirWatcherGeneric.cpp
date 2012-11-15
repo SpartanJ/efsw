@@ -2,11 +2,6 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/Debug.hpp>
 
-#define DiffIterator( FileInfoListName )	it = Diff.FileInfoListName.begin(); \
-											for ( ; it != Diff.FileInfoListName.end(); it++ )
-
-#define DiffMovedIterator( MovedListName )	mit = Diff.MovedListName.begin(); \
-											for ( ; mit != Diff.MovedListName.end(); mit++ )
 namespace efsw {
 
 DirWatcherGeneric::DirWatcherGeneric( DirWatcherGeneric * parent, WatcherGeneric * ws, const std::string& directory, bool recursive ) :
