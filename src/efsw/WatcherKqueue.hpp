@@ -76,13 +76,9 @@ class WatcherKqueue : public Watcher
 		bool				mInitOK;
 		int					mErrno;
 
-		std::vector<WatchID>	mErased;
-
 		bool pathInWatches( const std::string& path );
 		
 		bool pathInParent( const std::string& path );
-
-		void eraseQueue();
 
 		Watcher * findWatcher( const std::string path );
 

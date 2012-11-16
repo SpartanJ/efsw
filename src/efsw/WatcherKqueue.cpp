@@ -458,35 +458,6 @@ void WatcherKqueue::watch()
 	{
 		rescan();
 	}
-
-	eraseQueue();
-}
-
-void WatcherKqueue::eraseQueue()
-{
-	// Erase all watchers marked for deletion
-	if ( !mErased.empty() )
-	{
-		efDEBUG( "watch(): Directory %s is erasing childs. %ld deletions pending.\n", Directory.c_str(), mErased.size() );
-
-		for ( std::vector<WatchID>::iterator eit = mErased.begin(); eit != mErased.end(); eit++ )
-		{
-			if ( mWatches.find( (*eit) ) != mWatches.end() )
-			{
-				efDEBUG( "watch(): Directory %s removed. ID: %ld\n", mWatches[ (*eit) ]->Directory.c_str(), (*eit) );
-
-				handleFolderAction( mWatches[ (*eit) ]->Directory, Actions::Delete );
-
-				removeWatch( (*eit) );
-			}
-			else
-			{
-				efDEBUG( "watch(): Tryed to remove watcher ID: %ld, but it wasn't present.\n", (*eit) );
-			}
-		}
-
-		mErased.clear();
-	}
 }
 
 Watcher * WatcherKqueue::findWatcher( const std::string path )
