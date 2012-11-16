@@ -83,6 +83,8 @@ class WatcherKqueue : public Watcher
 		Watcher * findWatcher( const std::string path );
 
 		void moveDirectory( std::string oldPath, std::string newPath, bool emitEvents = true );
+
+		void sendDirChanged();
 };
 
 }

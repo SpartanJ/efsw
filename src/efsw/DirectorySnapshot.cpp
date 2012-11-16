@@ -81,9 +81,9 @@ DirectorySnapshotDiff DirectorySnapshot::scan()
 
 	FileInfo curFI( DirectoryInfo.Filepath );
 
-	bool dirchanged	= DirectoryInfo != curFI;
+	Diff.DirChanged	= DirectoryInfo != curFI;
 
-	if ( dirchanged )
+	if ( Diff.DirChanged )
 	{
 		DirectoryInfo = curFI;
 	}
@@ -108,7 +108,7 @@ DirectorySnapshotDiff DirectorySnapshot::scan()
 	FileInfoMap::iterator it;
 	FileInfoMap::iterator fiIt;
 
-	if ( dirchanged )
+	if ( Diff.DirChanged )
 	{
 		FilesCpy = Files;
 	}
@@ -185,7 +185,7 @@ DirectorySnapshotDiff DirectorySnapshot::scan()
 		}
 	}
 
-	if ( !dirchanged )
+	if ( !Diff.DirChanged )
 	{
 		return Diff;
 	}

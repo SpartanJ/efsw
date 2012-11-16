@@ -16,6 +16,7 @@ class DirectorySnapshotDiff
 		FileInfoList	DirsCreated;
 		FileInfoList	DirsModified;
 		MovedList		DirsMoved;
+		bool			DirChanged;
 
 		void clear();
 

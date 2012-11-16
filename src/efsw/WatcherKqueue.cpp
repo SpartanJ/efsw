@@ -290,6 +290,11 @@ void WatcherKqueue::rescan()
 
 	DirectorySnapshotDiff Diff = mDirSnap.scan();
 
+	if ( Diff.DirChanged )
+	{
+		sendDirChanged();
+	}
+
 	if ( Diff.changed() )
 	{
 		FileInfoList::iterator it;
@@ -372,6 +377,14 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 	FileSystem::dirRemoveSlashAtEnd( filename );
 
 	handleAction( filename, action, oldFilename );
+}
+
+void WatcherKqueue::sendDirChanged()
+{
+	if ( NULL != mParent )
+	{
+		Listener->handleFileAction( mParent->ID, mParent->Directory, FileSystem::fileNameFromPath( Directory ), Actions::Modified );
+	}
 }
 
 void WatcherKqueue::watch()
