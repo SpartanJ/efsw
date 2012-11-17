@@ -9,6 +9,7 @@
 #include <CoreServices/CoreServices.h>
 #include <efsw/WatcherFSEvents.hpp>
 #include <map>
+#include <list>
 
 namespace efsw
 {
@@ -27,6 +28,15 @@ static const int efswFSEventStreamEventFlagItemXattrMod = 0x00008000;
 static const int efswFSEventStreamEventFlagItemIsFile = 0x00010000;
 static const int efswFSEventStreamEventFlagItemIsDir = 0x00020000;
 static const int efswFSEventStreamEventFlagItemIsSymlink = 0x00040000;
+
+static const int kFSEventsModified = kFSEventStreamEventFlagItemFinderInfoMod |
+					kFSEventStreamEventFlagItemModified |
+					kFSEventStreamEventFlagItemInodeMetaMod |
+					kFSEventStreamEventFlagItemChangeOwner |
+					kFSEventStreamEventFlagItemXattrMod;
+static const int kFSEventsRenamed = kFSEventStreamEventFlagItemCreated |
+				   kFSEventStreamEventFlagItemRemoved |
+				   kFSEventStreamEventFlagItemRenamed;
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents
@@ -84,6 +94,8 @@ class FileWatcherFSEvents : public FileWatcherImpl
 		Mutex mWatchesLock;
 
 		bool pathInWatches( const std::string& path );
+
+		std::list<WatcherFSEvents*> mNeedInit;
 	private:
 		void run();
 };

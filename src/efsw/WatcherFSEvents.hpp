@@ -1,9 +1,12 @@
-#ifndef EFSW_WATCHERINOTIFY_HPP 
+#ifndef EFSW_WATCHERINOTIFY_HPP
 #define EFSW_WATCHERINOTIFY_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreServices/CoreServices.h>
 
 namespace efsw {
 
@@ -21,16 +24,18 @@ class WatcherFSEvents : public Watcher
 		bool inParentTree( WatcherFSEvents * parent );
 		
 		void init();
+
+		void initAsync();
 		
 		void handleAction( const std::string& path, const Uint32& flags );
 		
 		WatcherFSEvents * Parent;
 		
-		FileWatcherFSEvents * Watcher;
+		FileWatcherFSEvents * FWatcher;
 	
 		FSEventStreamRef FSStream;
-		CFStringRef CFDirectory;
-		CFArrayRef CFDirectoryArray;
+		std::string LastRenamed;
+		bool LastWasRenamed;
 };
 
 }

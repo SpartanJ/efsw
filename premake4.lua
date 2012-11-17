@@ -61,7 +61,7 @@ solution "efsw"
 		end
 
 		if os.is("macosx") then
-			links { "CoreFoundation.framework" }
+			links { "CoreFoundation.framework", "CoreServices.framework" }
 		end
 
 		configuration "debug"

@@ -1,6 +1,7 @@
 #include <efsw/WatcherFSEvents.hpp>
 #include <efsw/FileWatcherFSEvents.hpp>
 #include <efsw/FileSystem.hpp>
+#include <efsw/Debug.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
@@ -9,23 +10,22 @@ namespace efsw {
 WatcherFSEvents::WatcherFSEvents() :
 	Watcher(),
 	Parent( NULL ),
-	FileWatcher( NULL )
+	FWatcher( NULL ),
+	LastWasRenamed( false )
 {
 }
 
 WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherFSEvents * parent ) :
 	Watcher( id, directory, listener, recursive ),
 	Parent( parent ),
-	FileWatcher( NULL )
+	FWatcher( NULL ),
+	LastWasRenamed( false )
 {
 }
 
 WatcherFSEvents::~WatcherFSEvents()
 {
-	CFRelease( CFDirectoryArray );
-	CFRelease( CFDirectory );
-	
-    FSEventStreamStop( FSStream );
+	FSEventStreamStop( FSStream );
     FSEventStreamInvalidate( FSStream );
     FSEventStreamRelease( FSStream );
 }
@@ -49,8 +49,8 @@ bool WatcherFSEvents::inParentTree( WatcherFSEvents * parent )
 
 void WatcherFSEvents::init()
 {
-	CFDirectory			= CFStringCreateWithCString( NULL, Directory.c_str(), kCFStringEncodingUTF8 );
-	CFDirectoryArray	= CFArrayCreate( NULL, (const void **)&CFDirectory, 1, NULL );
+	CFStringRef CFDirectory			= CFStringCreateWithCString( NULL, Directory.c_str(), kCFStringEncodingUTF8 );
+	CFArrayRef	CFDirectoryArray	= CFArrayCreate( NULL, (const void **)&CFDirectory, 1, NULL );
 	
 	Uint32 streamFlags = kFSEventStreamCreateFlagNone;
 	
@@ -59,29 +59,43 @@ void WatcherFSEvents::init()
 		streamFlags = efswFSEventStreamCreateFlagFileEvents;
 	}
 	
-	FSStream = FSEventStreamCreate( NULL, &FileWatcherFSEvents::FSEventCallback, (void*)this, CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0, streamFlags );
-	
-	FSEventStreamScheduleWithRunLoop( FSStream, FileWatcher->mRunLoopRef, kCFRunLoopDefaultMode );
+	FSEventStreamContext ctx;
+	/* Initialize context */
+	ctx.version = 0;
+	ctx.info = this;
+	ctx.retain = NULL;
+	ctx.release = NULL;
+	ctx.copyDescription = NULL;
+
+	FSStream = FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx, CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0, streamFlags );
+
+	FWatcher->mNeedInit.push_back( this );
+
+	CFRelease( CFDirectoryArray );
+	CFRelease( CFDirectory );
+}
+
+void WatcherFSEvents::initAsync()
+{
+	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher->mRunLoopRef, kCFRunLoopDefaultMode );
 	FSEventStreamStart( FSStream );
 }
 
 void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags )
-{
-	static std::string lastRenamed;
-	
+{	
 	if ( flags & (	kFSEventStreamEventFlagUserDropped |
 					kFSEventStreamEventFlagKernelDropped |
 					kFSEventStreamEventFlagEventIdsWrapped |
 					kFSEventStreamEventFlagHistoryDone |
 					kFSEventStreamEventFlagMount |
 					kFSEventStreamEventFlagUnmount |
-					kFSEventStreamEventFlagRootChanged))
+					kFSEventStreamEventFlagRootChanged) )
 	{
 		return;
 	}
-    
-    if ( !Recursive )
-    {
+
+	if ( !Recursive )
+	{
 		/** In case that is not recursive the watcher, ignore the events from subfolders */
 		if ( path.find_last_of( FileSystem::getOSSlash() ) != Directory.size() - 1 )
 		{
@@ -94,28 +108,52 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 	
 	if ( FileWatcherFSEvents::isGranular() )
 	{
-		if ( flags & efswFSEventStreamEventFlagItemCreated )
-		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
-		}
-		else if ( flags & efswFSEventStreamEventFlagItemModified )
+		if ( ( flags & kFSEventsModified ) != 0 && ( flags & kFSEventsRenamed ) == 0 )
 		{
 			Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+			LastWasRenamed = false;
+		}
+		else if ( flags & efswFSEventStreamEventFlagItemRenamed )
+		{
+			efDEBUG( "Renamed event for %s\n", filePath.c_str() );
+
+			if ( LastWasRenamed )
+			{
+				Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, LastRenamed );
+				LastRenamed.clear();
+				LastWasRenamed = false;
+			}
+			else
+			{
+				LastWasRenamed = true;
+				LastRenamed = filePath;
+
+				FileInfo fi( path );
+
+				if ( fi.exists() & ( flags & efswFSEventStreamEventFlagItemRemoved ) )
+				{
+					LastWasRenamed = false;
+					LastRenamed.clear();
+				}
+				else if ( !fi.exists() & ( flags & efswFSEventStreamEventFlagItemRemoved ) )
+				{
+					Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
+				}
+			}
+		}
+		else if ( flags & efswFSEventStreamEventFlagItemCreated )
+		{
+			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+			LastWasRenamed = false;
 		}
 		else if ( flags & efswFSEventStreamEventFlagItemRemoved )
 		{
 			Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
+			LastWasRenamed = false;
 		}
-		else if ( flags & efswFSEventStreamEventFlagItemRenamed )
+		else
 		{
-			if ( lastRenamed.empty() )
-			{
-				lastRenamed = path;
-			}
-			else
-			{
-				Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, lastRenamed );
-			}
+			efDEBUG( "Event not filtered.\n" );
 		}
 	}
 	else
