@@ -53,10 +53,14 @@ void FileWatcherFSEvents::FSEventCallback(	ConstFSEventStreamRef streamRef,
 												const FSEventStreamEventFlags eventFlags[], 
 												const FSEventStreamEventId eventIds[] )
 {
+	WatcherFSEvents * watcher = static_cast<WatcherFSEvents*>( userData );
+
 	for ( size_t i = 0; i < numEvents; i++ )
 	{
-		static_cast<WatcherFSEvents*>( userData )->handleAction( std::string( ((char**)eventPaths)[i] ), (long)eventFlags[i] );
+		watcher->handleAction( std::string( ((char**)eventPaths)[i] ), (long)eventFlags[i] );
 	}
+
+	watcher->process();
 }
 
 FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher * parent ) :

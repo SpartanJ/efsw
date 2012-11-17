@@ -17,14 +17,14 @@ namespace efsw
 class FileWatcherKqueue;
 class WatcherKqueue;
 
-/// type for a map from WatchID to WatcherKqueue pointer
-typedef std::map<WatchID, Watcher*> WatchMap;
-
 typedef struct kevent KEvent;
 
 class WatcherKqueue : public Watcher
 {
 	public:
+		/// type for a map from WatchID to WatcherKqueue pointer
+		typedef std::map<WatchID, Watcher*> WatchMap;
+
 		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent = NULL );
 
 		virtual ~WatcherKqueue();
