@@ -6,14 +6,18 @@
 #	include <efsw/FileWatcherWin32.hpp>
 #	define FILEWATCHER_IMPL FileWatcherWin32
 #	define BACKEND_NAME "Win32"
-#elif EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
-#	include <efsw/FileWatcherKqueue.hpp>
-#	define FILEWATCHER_IMPL FileWatcherKqueue
-#	define BACKEND_NAME "Kqueue"
 #elif EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 #	include <efsw/FileWatcherInotify.hpp>
 #	define FILEWATCHER_IMPL FileWatcherInotify
 #	define BACKEND_NAME "Inotify"
+#elif EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#	include <efsw/FileWatcherKqueue.hpp>
+#	define FILEWATCHER_IMPL FileWatcherKqueue
+#	define BACKEND_NAME "Kqueue"
+#elif EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+#	include <efsw/FileWatcherFSEvents.hpp>
+#	define FILEWATCHER_IMPL FileWatcherFSEvents
+#	define BACKEND_NAME "FSEvents"
 #else
 #	define FILEWATCHER_IMPL FileWatcherGeneric
 #	define BACKEND_NAME "Generic"

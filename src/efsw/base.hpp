@@ -27,7 +27,8 @@ typedef SOPHIST_uint64		Uint64;
 #define EFSW_PLATFORM_WIN32		1
 #define EFSW_PLATFORM_INOTIFY	2
 #define EFSW_PLATFORM_KQUEUE	3
-#define EFSW_PLATFORM_GENERIC	4
+#define EFSW_PLATFORM_FSEVENTS	4
+#define EFSW_PLATFORM_GENERIC	5
 
 #if defined(_WIN32)
 	///	Any Windows platform
@@ -37,20 +38,20 @@ typedef SOPHIST_uint64		Uint64;
 	#if ( defined( _MSCVER ) || defined( _MSC_VER ) )
 		#define EFSW_COMPILER_MSVC
 	#endif
-#elif defined( __APPLE_CC__ ) || defined ( __APPLE__ ) || defined( __FreeBSD__ ) || defined(__OpenBSD__) || defined( __NetBSD__ ) || defined( __DragonFly__ )
-	///	This includes OS X, iOS and BSD
+
+#elif defined( __FreeBSD__ ) || defined(__OpenBSD__) || defined( __NetBSD__ ) || defined( __DragonFly__ )
+	#define EFSW_OS EFSW_OS_BSD
 	#define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
 
-	#if defined( __APPLE_CC__ ) || defined ( __APPLE__ )
-		#include <TargetConditionals.h>
+#elif defined( __APPLE_CC__ ) || defined ( __APPLE__ )
+	#include <TargetConditionals.h>
 
-		#if defined( __IPHONE__ ) || ( defined( TARGET_OS_IPHONE ) && TARGET_OS_IPHONE ) || ( defined( TARGET_IPHONE_SIMULATOR ) && TARGET_IPHONE_SIMULATOR )
-			#define EFSW_OS EFSW_OS_IOS
-		#else
-			#define EFSW_OS EFSW_OS_MACOSX
-		#endif
+	#if defined( __IPHONE__ ) || ( defined( TARGET_OS_IPHONE ) && TARGET_OS_IPHONE ) || ( defined( TARGET_IPHONE_SIMULATOR ) && TARGET_IPHONE_SIMULATOR )
+		#define EFSW_OS EFSW_OS_IOS
+		#define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
 	#else
-		#define EFSW_OS EFSW_OS_BSD
+		#define EFSW_OS EFSW_OS_MACOSX
+		#define EFSW_PLATFORM EFSW_PLATFORM_FSEVENTS
 	#endif
 
 #elif defined(__linux__)

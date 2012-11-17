@@ -101,3 +101,7 @@
 ../../src/efsw/DirectorySnapshot.cpp
 ../../src/efsw/DirectorySnapshotDiff.hpp
 ../../src/efsw/DirectorySnapshotDiff.cpp
+../../src/efsw/WatcherFSEvents.hpp
+../../src/efsw/FileWatcherFSEvents.hpp
+../../src/efsw/WatcherFSEvents.cpp
+../../src/efsw/FileWatcherFSEvents.cpp

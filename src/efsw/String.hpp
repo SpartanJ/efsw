@@ -12,6 +12,9 @@
 #include <string>
 #include <cstring>
 #include <cstdlib>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 
 namespace efsw {
 
@@ -27,6 +30,27 @@ class String
 	typedef StringType::const_reverse_iterator	ConstReverseIterator;	//! Constant iterator type
 
 	static const std::size_t InvalidPos; ///< Represents an invalid position in the string
+
+	template <class T>
+	static std::string toStr(const T& i) {
+		std::ostringstream ss;
+		ss << i;
+		return ss.str();
+	}
+
+	/** Converts from a string to type */
+	template <class T>
+	static bool fromString(T& t, const std::string& s, std::ios_base& (*f)(std::ios_base&) = std::dec  ) {
+		std::istringstream iss(s);
+		return !(iss >> f >> t).fail();
+	}
+
+	/** Converts from a String to type */
+	template <class T>
+	static bool fromString(T& t, const String& s, std::ios_base& (*f)(std::ios_base&) = std::dec ) {
+		std::istringstream iss( s.toUtf8() );
+		return !(iss >> f >> t).fail();
+	}
 
 	/** Determine if a string starts with the string passed
 	** @param start The substring expected to start
