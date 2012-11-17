@@ -10,16 +10,14 @@ namespace efsw {
 WatcherFSEvents::WatcherFSEvents() :
 	Watcher(),
 	Parent( NULL ),
-	FWatcher( NULL ),
-	LastWasRenamed( false )
+	FWatcher( NULL )
 {
 }
 
 WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherFSEvents * parent ) :
 	Watcher( id, directory, listener, recursive ),
 	Parent( parent ),
-	FWatcher( NULL ),
-	LastWasRenamed( false )
+	FWatcher( NULL )
 {
 }
 
@@ -82,7 +80,10 @@ void WatcherFSEvents::initAsync()
 }
 
 void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags )
-{	
+{
+	static std::string	lastRenamed = "";
+	static bool			lastWasAdd = false;
+
 	if ( flags & (	kFSEventStreamEventFlagUserDropped |
 					kFSEventStreamEventFlagKernelDropped |
 					kFSEventStreamEventFlagEventIdsWrapped |
@@ -108,52 +109,99 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 	
 	if ( FileWatcherFSEvents::isGranular() )
 	{
-		if ( ( flags & kFSEventsModified ) != 0 && ( flags & kFSEventsRenamed ) == 0 )
-		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
-			LastWasRenamed = false;
-		}
-		else if ( flags & efswFSEventStreamEventFlagItemRenamed )
-		{
-			efDEBUG( "Renamed event for %s\n", filePath.c_str() );
+		efDEBUG( "Event in: %s - flags: %ld\n", path.c_str(), flags );
 
-			if ( LastWasRenamed )
+		if ( !( flags & efswFSEventStreamEventFlagItemRenamed ) )
+		{
+			if ( flags & efswFSEventStreamEventFlagItemCreated )
 			{
-				Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, LastRenamed );
-				LastRenamed.clear();
-				LastWasRenamed = false;
+				Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
 			}
-			else
+
+			if ( flags & kFSEventsModified )
 			{
-				LastWasRenamed = true;
-				LastRenamed = filePath;
+				Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+			}
 
-				FileInfo fi( path );
+			if ( flags & efswFSEventStreamEventFlagItemRemoved )
+			{
+				Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
+			}
+		}
+		else
+		{
+			if ( lastRenamed.empty() )
+			{
+				efDEBUG( "New lastRenamed: %s\n", filePath.c_str() );
 
-				if ( fi.exists() & ( flags & efswFSEventStreamEventFlagItemRemoved ) )
+				lastRenamed	= path;
+				lastWasAdd	= FileInfo::exists( path );
+
+				if ( flags & efswFSEventStreamEventFlagItemCreated )
 				{
-					LastWasRenamed = false;
-					LastRenamed.clear();
+					Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
 				}
-				else if ( !fi.exists() & ( flags & efswFSEventStreamEventFlagItemRemoved ) )
+
+				if ( flags & kFSEventsModified )
+				{
+					Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+				}
+
+				if ( flags & efswFSEventStreamEventFlagItemRemoved )
 				{
 					Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
 				}
 			}
-		}
-		else if ( flags & efswFSEventStreamEventFlagItemCreated )
-		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
-			LastWasRenamed = false;
-		}
-		else if ( flags & efswFSEventStreamEventFlagItemRemoved )
-		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
-			LastWasRenamed = false;
-		}
-		else
-		{
-			efDEBUG( "Event not filtered.\n" );
+			else
+			{
+				std::string oldDir( FileSystem::pathRemoveFileName( lastRenamed ) );
+				std::string newDir( FileSystem::pathRemoveFileName( path ) );
+				std::string oldFilepath( FileSystem::fileNameFromPath( lastRenamed ) );
+
+				if ( lastRenamed != path )
+				{
+					if ( oldDir == newDir )
+					{
+						if ( !lastWasAdd )
+						{
+							Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, oldFilepath );
+						}
+						else
+						{
+							Listener->handleFileAction( ID, dirPath, oldFilepath, Actions::Moved, filePath );
+						}
+					}
+					else
+					{
+						Listener->handleFileAction( ID, oldDir, oldFilepath, Actions::Delete );
+						Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+
+						if ( flags & kFSEventsModified )
+						{
+							Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+						}
+					}
+				}
+				else
+				{
+					if ( flags & efswFSEventStreamEventFlagItemCreated )
+					{
+						Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+					}
+
+					if ( flags & kFSEventsModified )
+					{
+						Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+					}
+
+					if ( flags & efswFSEventStreamEventFlagItemRemoved )
+					{
+						Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
+					}
+				}
+
+				lastRenamed.clear();
+			}
 		}
 	}
 	else

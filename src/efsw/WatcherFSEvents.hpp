@@ -34,8 +34,6 @@ class WatcherFSEvents : public Watcher
 		FileWatcherFSEvents * FWatcher;
 	
 		FSEventStreamRef FSStream;
-		std::string LastRenamed;
-		bool LastWasRenamed;
 };
 
 }

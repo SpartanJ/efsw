@@ -7,6 +7,12 @@
 
 namespace efsw {
 
+bool FileInfo::exists( const std::string& filePath )
+{
+	FileInfo fi( filePath );
+	return fi.exists();
+}
+
 bool FileInfo::inodeSupported()
 {
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
