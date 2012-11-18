@@ -20,6 +20,8 @@
 namespace efsw
 {
 
+class WatcherWin32;
+
 /// Internal watch data
 struct WatcherStructWin32
 {
