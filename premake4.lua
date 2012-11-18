@@ -41,7 +41,7 @@ solution "efsw"
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
-			buildoptions{ "-Wall" }
+			buildoptions{ "-Wall -pedantic -Wno-long-long" }
 			targetname "efsw-static-debug"
 
 		configuration "release"
