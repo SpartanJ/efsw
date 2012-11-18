@@ -25,11 +25,15 @@ class DirWatcherGeneric
 
 		void watch();
 
+		void watchDir( std::string& dir );
+
 		static bool isDir( const std::string& directory );
 
 		bool pathInWatches( std::string path );
 
 		void addChilds();
+
+		DirWatcherGeneric * findDirWatcher( std::string dir );
 	protected:
 		bool				Deleted;
 

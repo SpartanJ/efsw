@@ -3,7 +3,7 @@
 
 #include <efsw/FileWatcherImpl.hpp>
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <efsw/WatcherKqueue.hpp>
 

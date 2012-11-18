@@ -51,7 +51,12 @@ typedef SOPHIST_uint64		Uint64;
 		#define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
 	#else
 		#define EFSW_OS EFSW_OS_MACOSX
-		#define EFSW_PLATFORM EFSW_PLATFORM_FSEVENTS
+
+		#if defined(EFSW_FSEVENTS_SUPPORTED)
+			#define EFSW_PLATFORM EFSW_PLATFORM_FSEVENTS
+		#else
+			#define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
+		#endif
 	#endif
 
 #elif defined(__linux__)

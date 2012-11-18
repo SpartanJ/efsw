@@ -5,7 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
-#include <efsw/DirectorySnapshot.hpp>
+#include <efsw/WatcherGeneric.hpp>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
 #include <set>
@@ -17,8 +17,6 @@ class FileWatcherFSEvents;
 class WatcherFSEvents : public Watcher
 {
 	public:
-		typedef std::map<std::string, DirectorySnapshot> WatchMap;
-
 		WatcherFSEvents();
 		
 		WatcherFSEvents( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherFSEvents * parent = NULL );
@@ -43,7 +41,9 @@ class WatcherFSEvents : public Watcher
 	protected:
 		void handleAddModDel( const Uint32 &flags, const std::string &path, std::string &dirPath, std::string &filePath );
 
-		WatchMap DirectoriesSnaps;
+		WatcherGeneric * WatcherGen;
+
+		bool initializedAsync;
 
 		std::set<std::string> DirsChanged;
 };

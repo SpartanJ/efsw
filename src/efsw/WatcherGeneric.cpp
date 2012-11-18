@@ -27,6 +27,11 @@ void WatcherGeneric::watch()
 	DirWatch->watch();
 }
 
+void WatcherGeneric::watchDir( std::string dir )
+{
+	DirWatch->watchDir( dir );
+}
+
 bool WatcherGeneric::pathInWatches( std::string path )
 {
 	return DirWatch->pathInWatches( path );

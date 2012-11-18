@@ -20,6 +20,8 @@ class WatcherGeneric : public Watcher
 
 		void watch();
 
+		void watchDir( std::string dir );
+
 		bool pathInWatches( std::string path );
 };
 

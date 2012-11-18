@@ -28,7 +28,13 @@ solution "efsw"
 	if args_contains( "verbose" ) then
 		defines { "EFSW_VERBOSE" }
 	end
-	
+
+	local ver = os.getversion();
+
+	if ver.majorversion >= 10 and ver.minorversion >= 5 then
+		defines { "EFSW_FSEVENTS_SUPPORTED" }
+	end
+
 	objdir("obj/" .. os.get() .. "/")
 	
 	project "efsw-static-lib"

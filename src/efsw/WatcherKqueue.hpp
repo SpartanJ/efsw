@@ -3,7 +3,7 @@
 
 #include <efsw/FileWatcherImpl.hpp>
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <map>
 #include <vector>
@@ -19,12 +19,12 @@ class WatcherKqueue;
 
 typedef struct kevent KEvent;
 
+/// type for a map from WatchID to WatcherKqueue pointer
+typedef std::map<WatchID, Watcher*> WatchMap;
+
 class WatcherKqueue : public Watcher
 {
 	public:
-		/// type for a map from WatchID to WatcherKqueue pointer
-		typedef std::map<WatchID, Watcher*> WatchMap;
-
 		WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener, bool recursive, FileWatcherKqueue * watcher, WatcherKqueue * parent = NULL );
 
 		virtual ~WatcherKqueue();

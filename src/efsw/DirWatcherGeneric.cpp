@@ -119,7 +119,7 @@ void DirWatcherGeneric::addChilds()
 					}
 				}
 
-				/** TODO Check if the watch directory was added succesfully */
+				/// TODO Check if the watch directory was added succesfully
 				Directories[ dir ] = new DirWatcherGeneric( this, Watch, dir, Recursive );
 
 				Directories[ dir ]->addChilds();
@@ -191,6 +191,49 @@ void DirWatcherGeneric::watch()
 	}
 }
 
+void DirWatcherGeneric::watchDir( std::string &dir )
+{
+	/** TODO Optimize findDirWatcher
+	* Split the dir in directories levels search level for level and incresing each level on every coincidence
+	* Example: /folder_1/folder_2/folder_3/
+	*	First search folder_1
+	*		Found? Search in folder_1 watcher folder_2,
+	*			Found? Search in folder_2 watcher folder_3
+	*				Found? Return folder_3 watcher pointer
+	*/
+
+	DirWatcherGeneric * watcher = findDirWatcher( dir );
+
+	if ( NULL != watcher )
+	{
+		watcher->watch();
+	}
+}
+
+DirWatcherGeneric * DirWatcherGeneric::findDirWatcher( std::string dir )
+{
+	if ( DirSnap.DirectoryInfo.Filepath == dir )
+	{
+		return this;
+	}
+	else
+	{
+		DirWatcherGeneric * watcher = NULL;
+
+		for ( DirWatchMap::iterator it = Directories.begin(); it != Directories.end(); it++ )
+		{
+			watcher = it->second->findDirWatcher( dir );
+
+			if ( NULL != watcher )
+			{
+				return watcher;
+			}
+		}
+	}
+
+	return NULL;
+}
+
 DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 {
 	FileSystem::dirRemoveSlashAtEnd( newdir );
@@ -228,7 +271,7 @@ DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 		}
 	}
 
-	/** @TODO: Check if the watch directory was added succesfully */
+	/// TODO Check if the watch directory was added succesfully
 	if ( !skip )
 	{
 		/// Creates the new directory watcher of the subfolder and check for new files
