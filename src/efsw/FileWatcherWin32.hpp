@@ -1,44 +1,16 @@
 #ifndef EFSW_FILEWATCHERWIN32_HPP
 #define EFSW_FILEWATCHERWIN32_HPP
 
-#include <efsw/FileWatcherImpl.hpp>
+#include <efsw/base.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
+#include <efsw/WatcherWin32.hpp>
 #include <vector>
-
-#define _WIN32_WINNT 0x0550
-#include <windows.h>
-
-#ifdef EFSW_COMPILER_MSVC
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "ole32.lib")
-
-// disable secure warnings
-#pragma warning (disable: 4996)
-#endif
-
 #include <map>
 
 namespace efsw
 {
-
-/// Internal watch data
-struct WatcherStructWin32;
-
-class WatcherWin32 : public Watcher
-{
-	public:
-		WatcherStructWin32 * Struct;
-		HANDLE DirHandle;
-		BYTE mBuffer[32 * 1024];
-		LPARAM lParam;
-		DWORD NotifyFilter;
-		bool StopNow;
-		FileWatcherImpl* Watch;
-		char* DirName;
-};
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherWin32

@@ -105,3 +105,7 @@
 ../../src/efsw/FileWatcherFSEvents.hpp
 ../../src/efsw/WatcherFSEvents.cpp
 ../../src/efsw/FileWatcherFSEvents.cpp
+../../src/efsw/Watcher.hpp
+../../src/efsw/Watcher.cpp
+../../src/efsw/WatcherWin32.hpp
+../../src/efsw/WatcherWin32.cpp
