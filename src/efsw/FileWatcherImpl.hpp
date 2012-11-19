@@ -43,7 +43,7 @@ class FileWatcherImpl
 
 		/// Search if a directory already exists in the watches
 		virtual bool pathInWatches( const std::string& path ) = 0;
-	protected:
+
 		FileWatcher *	mFileWatcher;
 		bool			mInitOK;
 };

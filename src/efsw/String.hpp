@@ -15,6 +15,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace efsw {
 
@@ -51,6 +52,12 @@ class String
 		std::istringstream iss( s.toUtf8() );
 		return !(iss >> f >> t).fail();
 	}
+
+	/** Split a string and hold it on a vector */
+	static std::vector < std::string > split( const std::string& str, const char& splitchar, const bool& pushEmptyString = false );
+
+	/** Split a string and hold it on a vector */
+	static std::vector < String > split( const String& str, const Uint32& splitchar, const bool& pushEmptyString = false );
 
 	/** Determine if a string starts with the string passed
 	** @param start The substring expected to start

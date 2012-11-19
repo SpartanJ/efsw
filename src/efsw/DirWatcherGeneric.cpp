@@ -1,6 +1,7 @@
 #include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/Debug.hpp>
+#include <efsw/String.hpp>
 
 namespace efsw {
 
@@ -193,21 +194,60 @@ void DirWatcherGeneric::watch()
 
 void DirWatcherGeneric::watchDir( std::string &dir )
 {
-	/** TODO Optimize findDirWatcher
-	* Split the dir in directories levels search level for level and incresing each level on every coincidence
-	* Example: /folder_1/folder_2/folder_3/
-	*	First search folder_1
-	*		Found? Search in folder_1 watcher folder_2,
-	*			Found? Search in folder_2 watcher folder_3
-	*				Found? Return folder_3 watcher pointer
-	*/
-
-	DirWatcherGeneric * watcher = findDirWatcher( dir );
+	DirWatcherGeneric * watcher = Watch->WatcherImpl->mFileWatcher->allowOutOfScopeLinks() ?
+									findDirWatcher( dir ) :
+									findDirWatcherFast( dir );
 
 	if ( NULL != watcher )
 	{
 		watcher->watch();
 	}
+}
+
+DirWatcherGeneric * DirWatcherGeneric::findDirWatcherFast( std::string dir )
+{
+	// remove the common base ( dir should always start with the same base as the watcher )
+	efASSERT( !dir.empty() );
+	efASSERT( dir.size() >= DirSnap.DirectoryInfo.Filepath.size() );
+	efASSERT( DirSnap.DirectoryInfo.Filepath == dir.substr( 0, DirSnap.DirectoryInfo.Filepath.size() ) );
+
+	if ( dir.size() >= DirSnap.DirectoryInfo.Filepath.size() )
+	{
+		dir = dir.substr( DirSnap.DirectoryInfo.Filepath.size() - 1 );
+	}
+
+	if ( dir.size() == 1 )
+	{
+		efASSERT( dir[0] == FileSystem::getOSSlash() );
+		return this;
+	}
+
+	size_t level = 0;
+	std::vector<std::string> dirv = String::split( dir, FileSystem::getOSSlash(), false );
+
+	DirWatcherGeneric * watcher = this;
+
+	while ( level < dirv.size() )
+	{
+		// search the dir level in the current watcher
+		DirWatchMap::iterator it = watcher->Directories.find( dirv[ level ] );
+
+		// found? continue with the next level
+		if ( it != watcher->Directories.end() )
+		{
+			watcher = it->second;
+
+			level++;
+		}
+		else
+		{
+			// couldn't found the folder level?
+			// directory not watched
+			return NULL;
+		}
+	}
+
+	return watcher;
 }
 
 DirWatcherGeneric * DirWatcherGeneric::findDirWatcher( std::string dir )

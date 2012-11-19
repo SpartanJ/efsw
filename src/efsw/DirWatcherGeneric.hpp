@@ -34,6 +34,8 @@ class DirWatcherGeneric
 		void addChilds();
 
 		DirWatcherGeneric * findDirWatcher( std::string dir );
+
+		DirWatcherGeneric * findDirWatcherFast( std::string dir );
 	protected:
 		bool				Deleted;
 

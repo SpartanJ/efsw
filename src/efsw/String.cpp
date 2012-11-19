@@ -6,6 +6,64 @@ namespace efsw {
 
 const std::size_t String::InvalidPos = StringType::npos;
 
+std::vector < std::string > String::split ( const std::string& str, const char& splitchar, const bool& pushEmptyString )
+{
+	std::vector < std::string > tmp;
+	std::string tmpstr;
+
+	for ( size_t i = 0; i < str.size(); i++ )
+	{
+		if ( str[i] == splitchar )
+		{
+			if ( pushEmptyString || tmpstr.size() )
+			{
+				tmp.push_back(tmpstr);
+				tmpstr = "";
+			}
+		}
+		else
+		{
+			tmpstr += str[i];
+		}
+	}
+
+	if ( tmpstr.size() )
+	{
+		tmp.push_back( tmpstr );
+	}
+
+	return tmp;
+}
+
+std::vector < String > String::split ( const String& str, const Uint32& splitchar, const bool& pushEmptyString )
+{
+	std::vector < String > tmp;
+	String tmpstr;
+
+	for ( size_t i = 0; i < str.size(); i++ )
+	{
+		if ( str[i] == splitchar )
+		{
+			if ( pushEmptyString || tmpstr.size() )
+			{
+				tmp.push_back(tmpstr);
+				tmpstr = "";
+			}
+		}
+		else
+		{
+			tmpstr += str[i];
+		}
+	}
+
+	if ( tmpstr.size() )
+	{
+		tmp.push_back( tmpstr );
+	}
+
+	return tmp;
+}
+
 int String::strStartsWith( const std::string& start, const std::string& str )
 {
 	int pos		= -1;
