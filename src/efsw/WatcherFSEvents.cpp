@@ -106,7 +106,7 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 		Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
 	}
 
-	if ( flags & kFSEventsModified )
+	if ( flags & efswFSEventsModified )
 	{
 		Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
 	}
@@ -198,7 +198,7 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 						Listener->handleFileAction( ID, oldDir, oldFilepath, Actions::Delete );
 						Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
 
-						if ( flags & kFSEventsModified )
+						if ( flags & efswFSEventsModified )
 						{
 							Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
 						}

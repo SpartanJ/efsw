@@ -29,11 +29,11 @@ static const int efswFSEventStreamEventFlagItemIsFile = 0x00010000;
 static const int efswFSEventStreamEventFlagItemIsDir = 0x00020000;
 static const int efswFSEventStreamEventFlagItemIsSymlink = 0x00040000;
 
-static const int kFSEventsModified = kFSEventStreamEventFlagItemFinderInfoMod |
-					kFSEventStreamEventFlagItemModified |
-					kFSEventStreamEventFlagItemInodeMetaMod |
-					kFSEventStreamEventFlagItemChangeOwner |
-					kFSEventStreamEventFlagItemXattrMod;
+static const int efswFSEventsModified = efswFSEventStreamEventFlagItemFinderInfoMod |
+					efswFSEventStreamEventFlagItemModified |
+					efswFSEventStreamEventFlagItemInodeMetaMod |
+					efswFSEventStreamEventFlagItemChangeOwner |
+					efswFSEventStreamEventFlagItemXattrMod;
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents

@@ -14,7 +14,7 @@ namespace efsw
 int getOSXReleaseNumber()
 {
 	static int osxR = -1;
-	
+
 	if ( -1 == osxR )
 	{
 		struct utsname os;
@@ -22,7 +22,7 @@ int getOSXReleaseNumber()
 		if ( -1 != uname( &os ) ) {
 			std::string release( os.release );
 			
-			int pos = release.find_first_of( '.' );
+			size_t pos = release.find_first_of( '.' );
 			
 			if ( pos != std::string::npos )
 			{
