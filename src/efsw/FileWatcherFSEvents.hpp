@@ -34,9 +34,6 @@ static const int kFSEventsModified = kFSEventStreamEventFlagItemFinderInfoMod |
 					kFSEventStreamEventFlagItemInodeMetaMod |
 					kFSEventStreamEventFlagItemChangeOwner |
 					kFSEventStreamEventFlagItemXattrMod;
-static const int kFSEventsRenamed = kFSEventStreamEventFlagItemCreated |
-				   kFSEventStreamEventFlagItemRemoved |
-				   kFSEventStreamEventFlagItemRenamed;
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents

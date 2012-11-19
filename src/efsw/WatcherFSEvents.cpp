@@ -39,6 +39,8 @@ WatcherFSEvents::~WatcherFSEvents()
 	{
 		FSEventStreamRelease( FSStream );
 	}
+
+	efSAFE_DELETE( WatcherGen );
 }
 
 bool WatcherFSEvents::inParentTree( WatcherFSEvents * parent )
