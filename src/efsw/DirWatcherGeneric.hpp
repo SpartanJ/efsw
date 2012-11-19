@@ -23,7 +23,7 @@ class DirWatcherGeneric
 
 		~DirWatcherGeneric();
 
-		void watch();
+		void watch( bool reportOwnChange = false );
 
 		void watchDir( std::string& dir );
 

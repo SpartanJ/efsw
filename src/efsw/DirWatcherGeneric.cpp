@@ -129,9 +129,14 @@ void DirWatcherGeneric::addChilds()
 	}
 }
 
-void DirWatcherGeneric::watch()
+void DirWatcherGeneric::watch( bool reportOwnChange )
 {
 	DirectorySnapshotDiff Diff = DirSnap.scan();
+
+	if ( reportOwnChange && Diff.DirChanged && NULL != Parent )
+	{
+		Watch->Listener->handleFileAction( Watch->ID, FileSystem::pathRemoveFileName( DirSnap.DirectoryInfo.Filepath ), FileSystem::fileNameFromPath( DirSnap.DirectoryInfo.Filepath ), Actions::Modified );
+	}
 
 	if ( Diff.changed() )
 	{
@@ -200,7 +205,7 @@ void DirWatcherGeneric::watchDir( std::string &dir )
 
 	if ( NULL != watcher )
 	{
-		watcher->watch();
+		watcher->watch( true );
 	}
 }
 
