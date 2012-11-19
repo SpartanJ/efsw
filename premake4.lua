@@ -31,8 +31,8 @@ solution "efsw"
 
 	local ver = os.getversion();
 
-	if ver.majorversion >= 10 and ver.minorversion >= 5 then
-		defines { "EFSW_FSEVENTS_SUPPORTED" }
+	if os.is("macosx") and not ( ver.majorversion >= 10 and ver.minorversion >= 5 ) then
+		defines { "EFSW_FSEVENTS_NOT_SUPPORTED" }
 	end
 
 	objdir("obj/" .. os.get() .. "/")

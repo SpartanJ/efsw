@@ -52,10 +52,10 @@ typedef SOPHIST_uint64		Uint64;
 	#else
 		#define EFSW_OS EFSW_OS_MACOSX
 
-		#if defined(EFSW_FSEVENTS_SUPPORTED)
-			#define EFSW_PLATFORM EFSW_PLATFORM_FSEVENTS
-		#else
+		#if defined(EFSW_FSEVENTS_NOT_SUPPORTED)
 			#define EFSW_PLATFORM EFSW_PLATFORM_KQUEUE
+		#else
+			#define EFSW_PLATFORM EFSW_PLATFORM_FSEVENTS
 		#endif
 	#endif
 
