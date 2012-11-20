@@ -104,3 +104,10 @@ Kqueue implementation is limited by the maximun number of file descriptors allow
 FSEvents for OS X Lion and beyond in some cases will generate more actions that in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved, in some cases i need to guess/aproximate the order of them.
 
 Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix-y platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API.
+
+**Clarifications**
+----------------
+
+This software started as a fork of the [simplefilewatcher](http://code.google.com/p/simplefilewatcher/) by James Wynn (james[at]jameswynn.com), [MIT licensed](http://www.opensource.org/licenses/mit-license.html).
+
+The icon used for the project is part of the [Haiku®'s Icons](http://www.haiku-inc.org/haiku-icons.html), [MIT licensed](http://www.opensource.org/licenses/mit-license.html).
