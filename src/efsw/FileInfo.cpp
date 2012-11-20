@@ -142,6 +142,11 @@ bool FileInfo::isRegularFile()
 	return S_ISREG(Permissions);
 }
 
+bool FileInfo::isReadable()
+{
+	return Permissions & S_IRUSR;
+}
+
 bool FileInfo::isLink()
 {
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32

@@ -38,6 +38,17 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 {
 	std::string dir( directory );
 
+	FileInfo fi( dir );
+
+	if ( !fi.isDirectory() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+	else if ( !fi.isReadable() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
+	}
+
 	FileSystem::dirAddSlashAtEnd( dir );
 
 	WatchID watchid = ++mLastWatchID;

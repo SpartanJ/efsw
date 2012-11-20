@@ -145,7 +145,6 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	pWatch->ID					= mLastWatchID;
 	pWatch->Directory			= dir;
 	pWatch->Recursive			= recursive;
-	pWatch->Parent				= NULL;
 	pWatch->FWatcher			= this;
 	
 	pWatch->init();

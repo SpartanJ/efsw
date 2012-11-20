@@ -94,7 +94,8 @@ enum Error
 	FileNotFound	= -1,
 	FileRepeated	= -2,
 	FileOutOfScope	= -3,
-	Unspecified		= -4
+	FileNotReadable	= -4,
+	Unspecified		= -5
 };
 
 class EFSW_API Log

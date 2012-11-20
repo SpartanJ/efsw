@@ -16,24 +16,27 @@ namespace efsw
 
 /* OSX < 10.7 has no file events */
 /* So i declare the events constants */
-static const int efswFSEventStreamCreateFlagFileEvents = 0x00000010;
-static const int efswFSEventStreamEventFlagItemCreated = 0x00000100;
-static const int efswFSEventStreamEventFlagItemRemoved = 0x00000200;
-static const int efswFSEventStreamEventFlagItemInodeMetaMod = 0x00000400;
-static const int efswFSEventStreamEventFlagItemRenamed = 0x00000800;
-static const int efswFSEventStreamEventFlagItemModified = 0x00001000;
-static const int efswFSEventStreamEventFlagItemFinderInfoMod = 0x00002000;
-static const int efswFSEventStreamEventFlagItemChangeOwner = 0x00004000;
-static const int efswFSEventStreamEventFlagItemXattrMod = 0x00008000;
-static const int efswFSEventStreamEventFlagItemIsFile = 0x00010000;
-static const int efswFSEventStreamEventFlagItemIsDir = 0x00020000;
-static const int efswFSEventStreamEventFlagItemIsSymlink = 0x00040000;
+enum FSEventEvents
+{
+	efswFSEventStreamCreateFlagFileEvents			= 0x00000010,
+	efswFSEventStreamEventFlagItemCreated			= 0x00000100,
+	efswFSEventStreamEventFlagItemRemoved			= 0x00000200,
+	efswFSEventStreamEventFlagItemInodeMetaMod		= 0x00000400,
+	efswFSEventStreamEventFlagItemRenamed			= 0x00000800,
+	efswFSEventStreamEventFlagItemModified			= 0x00001000,
+	efswFSEventStreamEventFlagItemFinderInfoMod		= 0x00002000,
+	efswFSEventStreamEventFlagItemChangeOwner		= 0x00004000,
+	efswFSEventStreamEventFlagItemXattrMod			= 0x00008000,
+	efswFSEventStreamEventFlagItemIsFile			= 0x00010000,
+	efswFSEventStreamEventFlagItemIsDir				= 0x00020000,
+	efswFSEventStreamEventFlagItemIsSymlink			= 0x00040000,
+	efswFSEventsModified							= efswFSEventStreamEventFlagItemFinderInfoMod	|
+													  efswFSEventStreamEventFlagItemModified		|
+													  efswFSEventStreamEventFlagItemInodeMetaMod	|
+													  efswFSEventStreamEventFlagItemChangeOwner		|
+													  efswFSEventStreamEventFlagItemXattrMod
+};
 
-static const int efswFSEventsModified = efswFSEventStreamEventFlagItemFinderInfoMod |
-					efswFSEventStreamEventFlagItemModified |
-					efswFSEventStreamEventFlagItemInodeMetaMod |
-					efswFSEventStreamEventFlagItemChangeOwner |
-					efswFSEventStreamEventFlagItemXattrMod;
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents

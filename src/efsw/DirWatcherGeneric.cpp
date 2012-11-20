@@ -91,7 +91,7 @@ void DirWatcherGeneric::addChilds()
 
 		for ( FileInfoMap::iterator it = DirSnap.Files.begin(); it != DirSnap.Files.end(); it++ )
 		{
-			if ( it->second.isDirectory() )
+			if ( it->second.isDirectory() && it->second.isReadable() )
 			{	
 				/// Check if the directory is a symbolic link
 				std::string curPath;
@@ -120,7 +120,6 @@ void DirWatcherGeneric::addChilds()
 					}
 				}
 
-				/// TODO Check if the watch directory was added succesfully
 				Directories[ dir ] = new DirWatcherGeneric( this, Watch, dir, Recursive );
 
 				Directories[ dir ]->addChilds();
@@ -291,6 +290,13 @@ DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
+	FileInfo fi( dir );
+
+	if ( !fi.isDirectory() || !fi.isReadable() )
+	{
+		return NULL;
+	}
+
 	std::string curPath;
 	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );
 	bool skip = false;
@@ -316,7 +322,6 @@ DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 		}
 	}
 
-	/// TODO Check if the watch directory was added succesfully
 	if ( !skip )
 	{
 		/// Creates the new directory watcher of the subfolder and check for new files

@@ -72,7 +72,17 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	if ( pathInWatches( dir ) )
+	FileInfo fi( dir );
+
+	if ( !fi.isDirectory() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+	else if ( !fi.isReadable() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
+	}
+	else if ( pathInWatches( dir ) )
 	{
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
@@ -138,7 +148,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		{
 			FileInfo fi = it->second;
 
-			if ( fi.isDirectory() )
+			if ( fi.isDirectory() && fi.isReadable() )
 			{
 				addWatch( fi.Filepath, watcher, recursive, pWatch );
 			}

@@ -1,6 +1,6 @@
 #include <efsw/FileWatcherKqueue.hpp>
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -57,12 +57,17 @@ WatchID FileWatcherKqueue::addWatch(const std::string& directory, FileWatchListe
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	if( !FileSystem::isDirectory( dir ) )
-	{
-		return Errors::Log::createLastError( Errors::FileNotFound, directory );
-	}
+	FileInfo fi( dir );
 
-	if ( pathInWatches( dir ) )
+	if ( !fi.isDirectory() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+	else if ( !fi.isReadable() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
+	}
+	else if ( pathInWatches( dir ) )
 	{
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}

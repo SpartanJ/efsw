@@ -36,9 +36,15 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	if ( !FileSystem::isDirectory( dir ) )
+	FileInfo fi( dir );
+
+	if ( !fi.isDirectory() )
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
+	}
+	else if ( !fi.isReadable() )
+	{
+		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
 	}
 	else if ( pathInWatches( dir ) )
 	{
@@ -66,7 +72,6 @@ WatchID FileWatcherGeneric::addWatch(const std::string& directory, FileWatchList
 
 	mLastWatchID++;
 
-	/// TODO Check if the watch directory was added succesfully
 	WatcherGeneric * pWatch		= new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive );
 
 	mWatchesLock.lock();

@@ -31,6 +31,8 @@ class FileInfo
 
 		bool isRegularFile();
 
+		bool isReadable();
+
 		bool sameInode( const FileInfo& Other ) const;
 
 		bool isLink();

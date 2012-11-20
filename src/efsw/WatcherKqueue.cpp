@@ -1,6 +1,6 @@
 #include <efsw/WatcherKqueue.hpp>
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <sys/stat.h>
 #include <dirent.h>
@@ -143,7 +143,7 @@ void WatcherKqueue::addAll()
 			// Add the regular files kevent
 			addFile( fi.Filepath , false );
 		}
-		else if ( Recursive && fi.isDirectory() )
+		else if ( Recursive && fi.isDirectory() && fi.isReadable() )
 		{
 			// Create another watcher for the subfolders ( if recursive )
 			WatchID id = addWatch( fi.Filepath, Listener, Recursive, this );

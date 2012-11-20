@@ -1,6 +1,7 @@
 #include <efsw/efsw.hpp>
 #include <efsw/System.hpp>
 #include <efsw/FileSystem.hpp>
+#include <efsw/FileInfo.hpp>
 #include <signal.h>
 
 bool STOP = false;
@@ -58,6 +59,17 @@ efsw::WatchID handleWathID( efsw::WatchID watchid )
 
 int main(int argc, char **argv)
 {
+	efsw::FileInfo fi( efsw::System::getProcessPath() + "test" );
+
+	if ( fi.isReadable() )
+	{
+		std::cout << "Readable" << std::endl;
+	}
+	else
+	{
+		std::cout << "Not readable" << std::endl;
+	}
+
 	signal( SIGABRT	,	sigend );
 	signal( SIGINT	,	sigend );
 	signal( SIGTERM	,	sigend );

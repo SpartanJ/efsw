@@ -23,8 +23,6 @@ class WatcherFSEvents : public Watcher
 		
 		~WatcherFSEvents();
 
-		bool inParentTree( WatcherFSEvents * parent );
-		
 		void init();
 
 		void initAsync();
@@ -32,8 +30,6 @@ class WatcherFSEvents : public Watcher
 		void handleAction( const std::string& path, const Uint32& flags );
 		
 		void process();
-
-		WatcherFSEvents * Parent;
 
 		FileWatcherFSEvents * FWatcher;
 

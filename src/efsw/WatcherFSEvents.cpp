@@ -9,7 +9,6 @@ namespace efsw {
 
 WatcherFSEvents::WatcherFSEvents() :
 	Watcher(),
-	Parent( NULL ),
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
@@ -19,7 +18,6 @@ WatcherFSEvents::WatcherFSEvents() :
 
 WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherFSEvents * parent ) :
 	Watcher( id, directory, listener, recursive ),
-	Parent( parent ),
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
@@ -41,23 +39,6 @@ WatcherFSEvents::~WatcherFSEvents()
 	}
 
 	efSAFE_DELETE( WatcherGen );
-}
-
-bool WatcherFSEvents::inParentTree( WatcherFSEvents * parent )
-{
-	WatcherFSEvents * tNext = Parent;
-
-	while ( NULL != tNext )
-	{
-		if ( tNext == parent )
-		{
-			return true;
-		}
-
-		tNext = tNext->Parent;
-	}
-
-	return false;
 }
 
 void WatcherFSEvents::init()
@@ -153,7 +134,19 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 	
 	if ( FileWatcherFSEvents::isGranular() )
 	{
-		/// TODO Add directory modification events
+		if ( flags & ( efswFSEventStreamEventFlagItemCreated |
+					   efswFSEventStreamEventFlagItemRemoved |
+					   efswFSEventStreamEventFlagItemRenamed )
+		)
+		{
+			std::string dpath( FileSystem::pathRemoveFileName( path ) );
+
+			if ( dpath != Directory )
+			{
+				DirsChanged.insert( dpath );
+			}
+		}
+
 		// This is a mess. But it's FSEvents faults, because shrinks events from the same file in one single event ( so there's no order for them )
 		// For example a file could have been added modified and erased, but i can't know if first was erased and then added and modified, or added, then modified and then erased.
 		// I don't know what they were thinking by doing this...
@@ -222,17 +215,22 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 
 void WatcherFSEvents::process()
 {
-	if ( !FileWatcherFSEvents::isGranular() )
-	{
-		std::set<std::string>::iterator it = DirsChanged.begin();
 
-		for ( ; it != DirsChanged.end(); it++ )
+	std::set<std::string>::iterator it = DirsChanged.begin();
+
+	for ( ; it != DirsChanged.end(); it++ )
+	{
+		if ( !FileWatcherFSEvents::isGranular() )
 		{
 			WatcherGen->watchDir( (*it) );
 		}
-
-		DirsChanged.clear();
+		else
+		{
+			Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( (*it) ), FileSystem::fileNameFromPath( (*it) ), Actions::Modified );
+		}
 	}
+
+	DirsChanged.clear();
 }
 
 } 
