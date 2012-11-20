@@ -20,6 +20,8 @@
 	#include <kernel/image.h>
 #elif EFSW_OS == EFSW_OS_SOLARIS
 	#include <stdlib.h>
+#elif EFSW_OS == EFSW_OS_BSD
+	#include <sys/sysctl.h>
 #endif
 
 namespace efsw { namespace Platform {
