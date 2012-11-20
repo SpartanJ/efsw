@@ -29,10 +29,15 @@ solution "efsw"
 		defines { "EFSW_VERBOSE" }
 	end
 
-	local ver = os.getversion();
+	if os.is("macosx") then
+		-- Premake 4.4 needed for this
+		if not string.match(_PREMAKE_VERSION, "^4.[123]") then
+			local ver = os.getversion();
 
-	if os.is("macosx") and not ( ver.majorversion >= 10 and ver.minorversion >= 5 ) then
-		defines { "EFSW_FSEVENTS_NOT_SUPPORTED" }
+			if not ( ver.majorversion >= 10 and ver.minorversion >= 5 ) then
+				defines { "EFSW_FSEVENTS_NOT_SUPPORTED" }
+			end
+		end
 	end
 
 	objdir("obj/" .. os.get() .. "/")
