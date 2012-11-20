@@ -28,6 +28,7 @@
 namespace efsw {
 
 FileWatcher::FileWatcher() :
+	mFollowSymlinks(false),
 	mOutOfScopeLinks(false)
 {
 	efDEBUG( "Using backend: %s\n", BACKEND_NAME );
@@ -45,6 +46,7 @@ FileWatcher::FileWatcher() :
 }
 
 FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
+	mFollowSymlinks(false),
 	mOutOfScopeLinks(false)
 {
 	if ( useGenericFileWatcher )
@@ -98,6 +100,16 @@ void FileWatcher::removeWatch(WatchID watchid)
 void FileWatcher::watch()
 {
 	mImpl->watch();
+}
+
+void FileWatcher::followSymlinks( bool follow )
+{
+	mFollowSymlinks = follow;
+}
+
+const bool& FileWatcher::followSymlinks() const
+{
+	return mFollowSymlinks;
 }
 
 void FileWatcher::allowOutOfScopeLinks( bool allow )

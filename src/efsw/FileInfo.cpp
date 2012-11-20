@@ -13,6 +13,12 @@ bool FileInfo::exists( const std::string& filePath )
 	return fi.exists();
 }
 
+bool FileInfo::isLink( const std::string& filePath )
+{
+	FileInfo fi( filePath, true );
+	return fi.isLink();
+}
+
 bool FileInfo::inodeSupported()
 {
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32

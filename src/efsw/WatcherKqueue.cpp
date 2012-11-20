@@ -187,7 +187,7 @@ void WatcherKqueue::addFile(const std::string& name, bool emitEvents)
 	{
 		efDEBUG( "addFile(): Could open file descriptor for %s. File descriptor count: %ld\n", name.c_str(), mWatcher->mFileDescriptorCount );
 		
-		Errors::Log::createLastError( Errors::FileNotFound, name );
+		Errors::Log::createLastError( Errors::FileNotReadable, name );
 		
 		if ( EACCES != errno )
 		{
@@ -532,6 +532,12 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 	if ( "" != link )
 	{
+		/// Avoid adding symlinks directories if it's now enabled
+		if ( NULL != parent && !mWatcher->mFileWatcher->followSymlinks() )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
+		}
+
 		if ( pathInWatches( link ) || pathInParent( link ) )
 		{
 			return Errors::Log::createLastError( Errors::FileRepeated, link );

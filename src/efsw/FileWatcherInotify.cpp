@@ -93,6 +93,12 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	if ( "" != link )
 	{
+		/// Avoid adding symlinks directories if it's now enabled
+		if ( NULL != parent && !mFileWatcher->followSymlinks() )
+		{
+			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
+		}
+
 		/// If it's a symlink check if the realpath exists as a watcher, or
 		/// if the path is outside the current dir
 		if ( pathInWatches( link ) )
@@ -342,6 +348,8 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 				}
 			}
 		}
+
+		watch->OldFileName = "";
 	}
 	else if( IN_CREATE & action )
 	{

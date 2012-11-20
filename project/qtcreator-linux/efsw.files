@@ -109,3 +109,4 @@
 ../../src/efsw/Watcher.cpp
 ../../src/efsw/WatcherWin32.hpp
 ../../src/efsw/WatcherWin32.cpp
+../../README.md

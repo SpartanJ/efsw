@@ -22,6 +22,7 @@ solution "efsw"
 	if args_contains( "kqueue" ) then
 		links { "kqueue" }
 		defines { "EFSW_KQUEUE" }
+		printf("Forced Kqueue backend build.")
 	end
 	
 	-- Activates verbose mode

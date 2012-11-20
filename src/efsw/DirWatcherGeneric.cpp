@@ -92,7 +92,7 @@ void DirWatcherGeneric::addChilds()
 		for ( FileInfoMap::iterator it = DirSnap.Files.begin(); it != DirSnap.Files.end(); it++ )
 		{
 			if ( it->second.isDirectory() && it->second.isReadable() )
-			{	
+			{
 				/// Check if the directory is a symbolic link
 				std::string curPath;
 				std::string link( FileSystem::getLinkRealPath( it->second.Filepath, curPath ) );
@@ -101,6 +101,12 @@ void DirWatcherGeneric::addChilds()
 
 				if ( "" != link )
 				{
+					/// Avoid adding symlinks directories if it's now enabled
+					if ( !Watch->WatcherImpl->mFileWatcher->followSymlinks() )
+					{
+						continue;
+					}
+
 					/// If it's a symlink check if the realpath exists as a watcher, or
 					/// if the path is outside the current dir
 					if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )
@@ -303,6 +309,12 @@ DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 
 	if ( "" != link )
 	{
+		/// Avoid adding symlinks directories if it's now enabled
+		if ( !Watch->WatcherImpl->mFileWatcher->followSymlinks() )
+		{
+			skip = true;
+		}
+
 		/// If it's a symlink check if the realpath exists as a watcher, or
 		/// if the path is outside the current dir
 		if ( Watch->WatcherImpl->pathInWatches( link ) || Watch->pathInWatches( link ) || !Watch->WatcherImpl->linkAllowed( curPath, link ) )

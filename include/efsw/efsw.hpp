@@ -112,7 +112,7 @@ class EFSW_API Log
 typedef Errors::Error Error;
 
 /// Listens to files and directories and dispatches events
-/// to notify the parent program of the changes.
+/// to notify the listener of files and directories changes.
 /// @class FileWatcher
 class EFSW_API FileWatcher
 {
@@ -146,10 +146,19 @@ class EFSW_API FileWatcher
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 
-		/** When enable this it will allow symlinks to recurse out of the pointed directory
+		/** Allow recursive watchers to follow symbolic links to other directories
+		* followSymlinks is disabled by default
+		*/
+		void followSymlinks( bool follow );
+
+		/** @return If can follow symbolic links to directorioes */
+		const bool& followSymlinks() const;
+
+		/** When enable this it will allow symlinks to watch recursively out of the pointed directory.
+		* follorSymlinks must be enabled to this work.
 		* For example, added symlink to /home/folder, and the symlink points to /, this by default is not allowed,
 		* it's only allowed to symlink anything from /home/ and deeper. This is to avoid great levels of recursion.
-		* Enabling this could lead in infinite recursion, and crash the watcher.
+		* Enabling this could lead in infinite recursion, and crash the watcher ( it will try not to avoid this ).
 		* Buy enabling out of scope links, it will allow this behavior.
 		* allowOutOfScopeLinks are disabled by default.
 		*/
@@ -160,6 +169,7 @@ class EFSW_API FileWatcher
 	private:
 		/// The implementation
 		FileWatcherImpl	*	mImpl;
+		bool				mFollowSymlinks;
 		bool				mOutOfScopeLinks;
 };
 

@@ -13,6 +13,8 @@ class FileInfo
 	public:
 		static bool exists( const std::string& filePath );
 
+		static bool isLink( const std::string& filePath );
+
 		static bool inodeSupported();
 
 		FileInfo();

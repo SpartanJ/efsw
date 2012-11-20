@@ -91,6 +91,7 @@ int main(int argc, char **argv)
 	/// create the file watcher object
 	efsw::FileWatcher fileWatcher( useGeneric );
 
+	fileWatcher.followSymlinks( false );
 	fileWatcher.allowOutOfScopeLinks( false );
 
 	if ( commonTest )
@@ -101,10 +102,6 @@ int main(int argc, char **argv)
 
 		/// add a watch to the system
 		handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
-
-		/// some recursive paths for testing
-		//handleWathID( fileWatcher.addWatch( CurPath + "test/1", ul, true ) );
-		//handleWathID( fileWatcher.addWatch( CurPath + "test/imposibru", ul, true ) );
 
 		/// starts watching
 		fileWatcher.watch();
