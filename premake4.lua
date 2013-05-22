@@ -96,6 +96,14 @@ solution "efsw"
 		files { "src/efsw/*.cpp", osfiles }
 		defines { "EFSW_DYNAMIC", "EFSW_EXPORTS" }
 		
+		if not os.is("windows") and not os.is("haiku") then
+			links { "pthread" }
+		end
+
+		if os.is("macosx") then
+			links { "CoreFoundation.framework", "CoreServices.framework" }
+		end
+
 		configuration "debug"
 			defines { "DEBUG" }
 			buildoptions{ "-Wall" }
