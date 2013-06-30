@@ -103,6 +103,7 @@ typedef SOPHIST_uint64		Uint64;
 
 #define efSAFE_DELETE(p)		{ if(p) { delete (p);			(p)=NULL; } }
 #define efSAFE_DELETE_ARRAY(p)  { if(p) { delete [] (p);		(p)=NULL; } }
+#define efARRAY_SIZE(__array)	( sizeof(__array) / sizeof(__array[0]) )
 
 }
 

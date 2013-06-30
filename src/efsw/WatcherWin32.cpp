@@ -71,7 +71,7 @@ void DestroyWatch(WatcherStructWin32* pWatch)
 	{
 		WatcherWin32 * tWatch = pWatch->Watch;
 
-		tWatch->StopNow = TRUE;
+		tWatch->StopNow = true;
 
 		CancelIo(tWatch->DirHandle);
 

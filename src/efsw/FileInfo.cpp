@@ -1,9 +1,28 @@
 #include <efsw/FileInfo.hpp>
 #include <efsw/FileSystem.hpp>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <limits.h>
 #include <stdlib.h>
+
+#ifdef EFSW_COMPILER_MSVC
+	#ifndef S_ISDIR
+	#define S_ISDIR(f) ((f)&_S_IFDIR)
+	#endif
+
+	#ifndef S_ISREG
+	#define S_ISREG(f) ((f)&_S_IFREG)
+	#endif
+
+	#ifndef S_ISRDBL
+	#define S_ISRDBL(f) ((f)&_S_IREAD)
+	#endif
+#else
+	#include <unistd.h>
+
+	#ifndef S_ISRDBL
+	#define S_ISRDBL(f) ((f)&S_IRUSR)
+	#endif
+#endif
 
 namespace efsw {
 
@@ -150,7 +169,7 @@ bool FileInfo::isRegularFile()
 
 bool FileInfo::isReadable()
 {
-	return Permissions & S_IRUSR;
+	return S_ISRDBL(Permissions);
 }
 
 bool FileInfo::isLink()

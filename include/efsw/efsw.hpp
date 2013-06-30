@@ -30,7 +30,6 @@
 
 #include <string>
 #include <list>
-#include <iostream>
 
 #if defined(_WIN32)
 	#ifdef EFSW_DYNAMIC

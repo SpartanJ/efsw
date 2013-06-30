@@ -40,6 +40,17 @@ WatcherStructWin32* CreateWatch(LPCTSTR szDirectory, bool recursive, DWORD Notif
 class WatcherWin32 : public Watcher
 {
 	public:
+		WatcherWin32() :
+			Struct( NULL ),
+			DirHandle( NULL ),
+			lParam( 0 ),
+			NotifyFilter( 0 ),
+			StopNow( false ),
+			Watch( NULL ),
+			DirName( NULL )
+		{
+		}
+
 		WatcherStructWin32 * Struct;
 		HANDLE DirHandle;
 		BYTE mBuffer[32 * 1024];

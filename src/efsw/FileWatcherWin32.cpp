@@ -151,6 +151,11 @@ void FileWatcherWin32::watch()
 
 void FileWatcherWin32::run()
 {
+	if ( mHandles.empty() )
+	{
+		return;
+	}
+
 	do
 	{
 		DWORD wait_result = WaitForMultipleObjectsEx( mHandles.size(), &mHandles[0], FALSE, 1000, FALSE );
@@ -188,8 +193,6 @@ void FileWatcherWin32::run()
 						{
 							//"GetOverlappedResult failed."
 						}
-
-						break;
 					}
 				}
 				else

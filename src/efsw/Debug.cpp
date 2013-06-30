@@ -1,6 +1,8 @@
 #include <efsw/Debug.hpp>
+#include <iostream>
 
 #ifdef EFSW_COMPILER_MSVC
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <crtdbg.h>
 #endif
@@ -63,7 +65,7 @@ void efPRINTC( unsigned int cond, const char * format, ...)
 	va_start( args, format );
 
 	#ifdef EFSW_COMPILER_MSVC
-		_vsnprintf_s( buf, eeARRAY_SIZE( buf ), eeARRAY_SIZE( buf ), format, args );
+		_vsnprintf_s( buf, efARRAY_SIZE( buf ), efARRAY_SIZE( buf ), format, args );
 	#else
 		vsnprintf( buf, sizeof( buf ) / sizeof( buf[0]), format, args );
 	#endif
