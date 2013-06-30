@@ -110,3 +110,5 @@
 ../../src/efsw/WatcherWin32.hpp
 ../../src/efsw/WatcherWin32.cpp
 ../../README.md
+../../include/efsw/efsw.h
+../../src/efsw/FileWatcherCWrapper.cpp
