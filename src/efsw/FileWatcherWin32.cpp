@@ -211,7 +211,7 @@ void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename,
 	{
 	case FILE_ACTION_RENAMED_OLD_NAME:
 		watch->OldFileName = filename;
-		break;
+		return;
 	case FILE_ACTION_ADDED:
 		fwAction = Actions::Add;
 		break;
