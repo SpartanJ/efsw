@@ -283,6 +283,7 @@ void FileWatcherInotify::watch()
 void FileWatcherInotify::run()
 {
 	WatchMap::iterator wit;
+	std::list<WatcherInotify*> movedOutsideWatches;
 
 	do
 	{
@@ -292,7 +293,7 @@ void FileWatcherInotify::run()
 		len = read (mFD, buff, BUFF_SIZE);
 
 		if (len != -1)
-		{
+		{	
 			while (i < len)
 			{
 				struct inotify_event *pevent = (struct inotify_event *)&buff[i];
@@ -304,11 +305,35 @@ void FileWatcherInotify::run()
 				if ( wit != mWatches.end() )
 				{
 					handleAction(wit->second, pevent->name, pevent->mask);
+
+					/// Keep track of the IN_MOVED_FROM events to known if the IN_MOVED_TO event is also fired
+					if ( !wit->second->OldFileName.empty() )
+					{
+						movedOutsideWatches.push_back( wit->second );
+					}
 				}
 
 				mWatchesLock.unlock();
 
 				i += sizeof(struct inotify_event) + pevent->len;
+			}
+
+			if ( !movedOutsideWatches.empty() )
+			{
+				/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
+				for ( std::list<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); it++ )
+				{
+					if ( !(*it)->OldFileName.empty() )
+					{
+						/// So we send a IN_DELETE event for files that where moved outside of our scope
+						handleAction( *it, (*it)->OldFileName, IN_DELETE );
+
+						/// Remove the OldFileName
+						(*it)->OldFileName = "";
+					}
+				}
+
+				movedOutsideWatches.clear();
 			}
 		}
 	} while( mFD > 0 );
@@ -329,7 +354,15 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	}
 	else if( IN_MOVED_TO & action )
 	{
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Moved, watch->OldFileName );
+		/// If OldFileName doesn't exist means that the file has been moved from other folder, so we just send the Add event
+		if ( watch->OldFileName.empty() )
+		{
+			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
+		}
+		else
+		{
+			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Moved, watch->OldFileName );
+		}
 
 		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
 		{
