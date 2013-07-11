@@ -112,7 +112,7 @@ OS X will only use Kqueue if OS X version is below to 10.5, and this implementat
 
 FSEvents for OS X Lion and beyond in some cases will generate more actions that in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved, in some cases i need to guess/aproximate the order of them.
 
-Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix-y platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API.
+Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
 
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in support older kernels, since i don't see the point. If someone needs this open an issue in the issue tracker and i may consider implenent a dnotify backend.
 

@@ -293,7 +293,7 @@ void FileWatcherInotify::run()
 		len = read (mFD, buff, BUFF_SIZE);
 
 		if (len != -1)
-		{	
+		{
 			while (i < len)
 			{
 				struct inotify_event *pevent = (struct inotify_event *)&buff[i];
