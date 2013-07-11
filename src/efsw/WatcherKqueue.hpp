@@ -7,8 +7,8 @@
 
 #include <map>
 #include <vector>
-#include <sys/event.h>
 #include <sys/types.h>
+#include <sys/event.h>
 #include <efsw/DirectorySnapshot.hpp>
 
 namespace efsw
