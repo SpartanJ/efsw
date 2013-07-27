@@ -7,6 +7,48 @@ function args_contains( element )
   return false
 end
 
+function string.starts(String,Start)
+	if ( _ACTION ) then
+		return string.sub(String,1,string.len(Start))==Start
+	end
+	
+	return false
+end
+
+function is_vs()
+	return ( string.starts(_ACTION,"vs") )
+end
+
+function conf_warnings()
+	if not is_vs() then
+		buildoptions{ "-Wall -Wno-long-long" }
+	else
+		defines { "_SCL_SECURE_NO_WARNINGS" }
+	end
+end
+
+function conf_links()
+	if not os.is("windows") and not os.is("haiku") then
+		links { "pthread" }
+	end
+
+	if os.is("macosx") then
+		links { "CoreFoundation.framework", "CoreServices.framework" }
+	end
+end
+
+function conf_excludes()
+	if os.is("windows") then
+		excludes { "src/efsw/WatcherKqueue.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/WatcherInotify.cpp", "src/efsw/FileWatcherKqueue.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
+	elseif os.is("linux") then
+		excludes { "src/efsw/WatcherKqueue.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/FileWatcherKqueue.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
+	elseif os.is("macosx") then
+		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp" }
+	elseif os.is("freebsd") then
+		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
+	end
+end
+
 solution "efsw"
 	location("./make/" .. os.get() .. "/")
 	targetdir("./bin")
@@ -49,17 +91,19 @@ solution "efsw"
 		targetdir("./lib")
 		includedirs { "include", "src" }
 		files { "src/efsw/*.cpp", osfiles }
-
+		conf_excludes()
+		
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
-			buildoptions{ "-Wall -pedantic -Wno-long-long" }
 			targetname "efsw-static-debug"
+			conf_warnings()
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
 			targetname "efsw-static-release"
+			conf_warnings()
 	
 	project "efsw-test"
 		kind "ConsoleApp"
@@ -67,26 +111,19 @@ solution "efsw"
 		links { "efsw-static-lib" }
 		files { "src/test/*.cpp" }
 		includedirs { "include", "src" }
+		conf_links()
 		
-		if not os.is("windows") and not os.is("haiku") then
-			links { "pthread" }
-		end
-
-		if os.is("macosx") then
-			links { "CoreFoundation.framework", "CoreServices.framework" }
-		end
-
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
-			buildoptions{ "-Wall" }
 			targetname "efsw-test-debug"
+			conf_warnings()
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
-			buildoptions{ "-Wall" }
 			targetname "efsw-test-release"
+			conf_warnings()
 
 	project "efsw-shared-lib"
 		kind "SharedLib"
@@ -95,23 +132,17 @@ solution "efsw"
 		includedirs { "include", "src" }
 		files { "src/efsw/*.cpp", osfiles }
 		defines { "EFSW_DYNAMIC", "EFSW_EXPORTS" }
+		conf_excludes()
+		conf_links()
 		
-		if not os.is("windows") and not os.is("haiku") then
-			links { "pthread" }
-		end
-
-		if os.is("macosx") then
-			links { "CoreFoundation.framework", "CoreServices.framework" }
-		end
-
 		configuration "debug"
 			defines { "DEBUG" }
-			buildoptions{ "-Wall" }
 			flags { "Symbols" }
 			targetname "efsw-debug"
+			conf_warnings()
 
 		configuration "release"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
-			buildoptions{ "-Wall" }
 			targetname "efsw"
+			conf_warnings()

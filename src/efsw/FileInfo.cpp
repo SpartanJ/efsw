@@ -159,17 +159,17 @@ bool FileInfo::operator==( const FileInfo& Other ) const
 
 bool FileInfo::isDirectory()
 {
-	return S_ISDIR(Permissions);
+	return 0 != S_ISDIR(Permissions);
 }
 
 bool FileInfo::isRegularFile()
 {
-	return S_ISREG(Permissions);
+	return 0 != S_ISREG(Permissions);
 }
 
 bool FileInfo::isReadable()
 {
-	return S_ISRDBL(Permissions);
+	return 0 != S_ISRDBL(Permissions);
 }
 
 bool FileInfo::isLink()

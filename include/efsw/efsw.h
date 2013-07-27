@@ -98,7 +98,7 @@ efsw_watcher EFSW_API efsw_create(int generic_mode);
 void EFSW_API efsw_release(efsw_watcher watcher);
 
 /// Retreive last error occured by file-watcher
-const char* EFSW_API efsw_getlasterror();
+EFSW_API const char* efsw_getlasterror();
 
 /// Add a directory watch. Same as the other addWatch, but doesn't have recursive option.
 /// For backwards compatibility.
