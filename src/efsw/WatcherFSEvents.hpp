@@ -6,6 +6,7 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <efsw/WatcherGeneric.hpp>
+#include <efsw/FileInfo.hpp>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
 #include <set>
@@ -27,7 +28,7 @@ class WatcherFSEvents : public Watcher
 
 		void initAsync();
 		
-		void handleAction( const std::string& path, const Uint32& flags );
+		void handleAction( const std::string& path, const Uint32& flags, const Uint64& eventId );
 		
 		void process();
 
@@ -42,6 +43,12 @@ class WatcherFSEvents : public Watcher
 		bool initializedAsync;
 
 		std::set<std::string> DirsChanged;
+
+		std::list<FileInfo> mLastsRenamed;
+
+		Uint64 mLastId;
+
+		void CheckLostEvents();
 };
 
 }

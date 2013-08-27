@@ -12,7 +12,8 @@ WatcherFSEvents::WatcherFSEvents() :
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
-	initializedAsync( false )
+	initializedAsync( false ),
+	mLastId(0)
 {
 }
 
@@ -21,7 +22,8 @@ WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchLi
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
-	initializedAsync( false )
+	initializedAsync( false ),
+	mLastId(0)
 {
 }
 
@@ -84,7 +86,10 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 {
 	if ( flags & efswFSEventStreamEventFlagItemCreated )
 	{
-		Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+		if ( FileInfo::exists( path ) )
+		{
+			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+		}
 	}
 
 	if ( flags & efswFSEventsModified )
@@ -94,21 +99,40 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 
 	if ( flags & efswFSEventStreamEventFlagItemRemoved )
 	{
-		Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
-
 		// Since i don't know the order, at least i try to keep the data consistent with the real state
-		if ( FileInfo::exists( path ) )
+		if ( !FileInfo::exists( path ) )
 		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+			Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
 		}
 	}
 }
 
-void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags )
+void WatcherFSEvents::CheckLostEvents()
 {
-	static std::string	lastRenamed = "";
-	static bool			lastWasAdd = false;
+	if ( !mLastsRenamed.empty() )
+	{
+		for ( std::list<FileInfo>::iterator it = mLastsRenamed.begin(); it != mLastsRenamed.end(); it++ )
+		{
+			FileInfo tInfo = *it;
 
+			if ( !tInfo.Filepath.empty() )
+			{
+				// Some file must have been moved, not renamed
+				efDEBUG( "Weird crap %s\n", tInfo.Filepath.c_str() );
+
+				if ( tInfo.exists() )
+					Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Add );
+				else
+					Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Delete );
+			}
+		}
+
+		mLastsRenamed.clear();
+	}
+}
+
+void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags, const Uint64& eventId )
+{
 	if ( flags & (	kFSEventStreamEventFlagUserDropped |
 					kFSEventStreamEventFlagKernelDropped |
 					kFSEventStreamEventFlagEventIdsWrapped |
@@ -158,26 +182,30 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 		}
 		else
 		{
-			if ( lastRenamed.empty() )
+			if ( eventId - mLastId != 1 )
 			{
-				efDEBUG( "New lastRenamed: %s\n", filePath.c_str() );
+				CheckLostEvents();
 
-				lastRenamed	= path;
-				lastWasAdd	= FileInfo::exists( path );
+				efDEBUG( "New Last Renamed: %s\n", filePath.c_str() );
+
+				if ( !( flags & efswFSEventsModified ) ) {
+					mLastsRenamed.push_back( FileInfo( path ) );
+				}
 
 				handleAddModDel( flags, path, dirPath, filePath );
 			}
 			else
 			{
-				std::string oldDir( FileSystem::pathRemoveFileName( lastRenamed ) );
+				FileInfo tFile = mLastsRenamed.back();
+				std::string oldDir( FileSystem::pathRemoveFileName( tFile.Filepath ) );
 				std::string newDir( FileSystem::pathRemoveFileName( path ) );
-				std::string oldFilepath( FileSystem::fileNameFromPath( lastRenamed ) );
+				std::string oldFilepath( FileSystem::fileNameFromPath( tFile.Filepath ) );
 
-				if ( lastRenamed != path )
+				if ( tFile.Filepath != path )
 				{
 					if ( oldDir == newDir )
 					{
-						if ( !lastWasAdd )
+						if ( !tFile.exists() )
 						{
 							Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, oldFilepath );
 						}
@@ -202,8 +230,10 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 					handleAddModDel( flags, path, dirPath, filePath );
 				}
 
-				lastRenamed.clear();
+				mLastsRenamed.pop_back();
 			}
+
+			mLastId = eventId;
 		}
 	}
 	else
@@ -215,7 +245,6 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 
 void WatcherFSEvents::process()
 {
-
 	std::set<std::string>::iterator it = DirsChanged.begin();
 
 	for ( ; it != DirsChanged.end(); it++ )
@@ -231,6 +260,8 @@ void WatcherFSEvents::process()
 	}
 
 	DirsChanged.clear();
+
+	CheckLostEvents();
 }
 
 } 
