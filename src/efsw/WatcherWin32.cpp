@@ -31,7 +31,7 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 			}
 #			else
 			{
-				int count = WideCharToMultiByte(CP_ACP, 0, pNotify->FileName,
+				int count = WideCharToMultiByte(CP_UTF8, 0, pNotify->FileName,
 					pNotify->FileNameLength / sizeof(WCHAR),
 					szFile, MAX_PATH - 1, NULL, NULL);
 				szFile[count] = TEXT('\0');
@@ -39,7 +39,6 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 #			endif
 
 			pWatch->Watch->handleAction(pWatch, szFile, pNotify->Action);
-
 		} while (pNotify->NextEntryOffset != 0);
 	}
 

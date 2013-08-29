@@ -187,7 +187,7 @@ class String
 	** @return Converted wide string
 	** @see toAnsiString, operator String
 	**/
-	String toWideString() const;
+	std::wstring toWideString() const;
 #endif
 
 	std::string toUtf8() const;

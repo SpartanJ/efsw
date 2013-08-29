@@ -238,7 +238,7 @@ std::string String::toAnsiString(const std::locale& locale) const
 }
 
 #ifndef EFSW_NO_WIDECHAR
-String String::toWideString() const
+std::wstring String::toWideString() const
 {
     // Prepare the output string
 	std::wstring output;
