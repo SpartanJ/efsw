@@ -29,8 +29,6 @@ FileWatcherWin32::~FileWatcherWin32()
 
 	mInitOK = false;
 
-	mThread->wait();
-
 	efSAFE_DELETE( mThread );
 }
 
