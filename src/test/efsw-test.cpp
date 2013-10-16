@@ -36,7 +36,7 @@ class UpdateListener : public efsw::FileWatchListener
 		}
 };
 
-efsw::WatchID handleWathID( efsw::WatchID watchid )
+efsw::WatchID handleWatchID( efsw::WatchID watchid )
 {
 	switch ( watchid )
 	{
@@ -102,7 +102,7 @@ int main(int argc, char **argv)
 		std::cout << "CurPath: " << CurPath.c_str() << std::endl;
 
 		/// add a watch to the system
-		handleWathID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
+		handleWatchID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
 
 		/// starts watching
 		fileWatcher.watch();
@@ -110,7 +110,7 @@ int main(int argc, char **argv)
 		/// adds another watch after started watching...
 		efsw::System::sleep( 100 );
 
-		efsw::WatchID watchID = handleWathID( fileWatcher.addWatch( CurPath + "test2", ul, true ) );
+		efsw::WatchID watchID = handleWatchID( fileWatcher.addWatch( CurPath + "test2", ul, true ) );
 
 		/// delete the watch
 		if ( watchID > 0 )
