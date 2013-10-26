@@ -28,6 +28,10 @@
 #ifndef ESFW_H
 #define ESFW_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if defined(_WIN32)
 	#ifdef EFSW_DYNAMIC
 		// Windows platforms
@@ -85,7 +89,8 @@ typedef void (*efsw_pfn_fileaction_callback) (
 		const char* dir,
 		const char* filename,
 		enum efsw_action action,
-		const char* old_filename
+		const char* old_filename,
+		void* param
 );
 
 /**
@@ -104,7 +109,7 @@ EFSW_API const char* efsw_getlasterror();
 /// For backwards compatibility.
 /// On error returns WatchID with Error type.
 efsw_watchid EFSW_API efsw_addwatch(efsw_watcher watcher, const char* directory, 
-	efsw_pfn_fileaction_callback callback_fn, int recursive);
+	efsw_pfn_fileaction_callback callback_fn, int recursive, void* param);
 
 /// Remove a directory watch. This is a brute force search O(nlogn).
 void EFSW_API efsw_removewatch(efsw_watcher watcher, const char* directory);
@@ -137,5 +142,9 @@ void EFSW_API efsw_allow_outofscopelinks(efsw_watcher watcher, int allow);
 
 /// @return Returns if out of scope links are allowed
 int EFSW_API efsw_outofscopelinks_isallowed(efsw_watcher watcher);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

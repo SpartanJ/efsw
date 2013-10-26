@@ -10,19 +10,20 @@ class Watcher_CAPI : public efsw::FileWatchListener
 public:
 	efsw_watcher mWatcher;
 	efsw_pfn_fileaction_callback mFn;
-
+	void* mParam;
 public:
-	Watcher_CAPI(efsw_watcher watcher, efsw_pfn_fileaction_callback fn)
+	Watcher_CAPI(efsw_watcher watcher, efsw_pfn_fileaction_callback fn, void* param)
 	{
 		mWatcher = watcher;
 		mFn = fn;
+		mParam = param;
 	}
 
 	void handleFileAction(efsw::WatchID watchid, const std::string& dir, const std::string& filename,
 		efsw::Action action, std::string oldFilename = "")
 	{
 		mFn(mWatcher, watchid, dir.c_str(), filename.c_str(), (enum efsw_action)action,
-			oldFilename.c_str());
+			oldFilename.c_str(), mParam );
 	}
 };
 
@@ -80,13 +81,13 @@ const char* efsw_getlasterror()
 	return log_str.c_str();
 }
 
-efsw_watchid efsw_addwatch(efsw_watcher watcher, const char* directory, 
-	efsw_pfn_fileaction_callback callback_fn, int recursive)
+efsw_watchid efsw_addwatch(efsw_watcher watcher, const char* directory,
+	efsw_pfn_fileaction_callback callback_fn, int recursive, void * param)
 {
 	Watcher_CAPI* callback = find_callback(watcher, callback_fn);
 
 	if (callback == NULL)   {
-		callback = new Watcher_CAPI(watcher, callback_fn);
+		callback = new Watcher_CAPI(watcher, callback_fn, param);
 		g_callbacks.push_back(callback);
 	}
 
