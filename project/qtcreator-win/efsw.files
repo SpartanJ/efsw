@@ -210,3 +210,5 @@
 ../../src/efsw/DirectorySnapshotDiff.cpp
 ../../src/efsw/DirectorySnapshot.cpp
 ../../src/efsw/Debug.cpp
+../../include/efsw/efsw.h
+../../src/efsw/FileWatcherCWrapper.cpp
