@@ -51,7 +51,7 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	WatchID watchid = ++mLastWatchID;
 
-	WatcherStructWin32 * watch = CreateWatch( dir.c_str(), recursive,	FILE_NOTIFY_CHANGE_CREATION |
+	WatcherStructWin32 * watch = CreateWatch( dir.c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
 																			FILE_NOTIFY_CHANGE_SIZE |
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
 																			FILE_NOTIFY_CHANGE_DIR_NAME
@@ -156,50 +156,58 @@ void FileWatcherWin32::run()
 
 	do
 	{
-		DWORD wait_result = WaitForMultipleObjectsEx( mHandles.size(), &mHandles[0], FALSE, 1000, FALSE );
-
-		switch ( wait_result )
+		if ( !mHandles.empty() )
 		{
-			case WAIT_ABANDONED_0:
-			case WAIT_ABANDONED_0 + 1:
-				//"Wait abandoned."
-				break;
-			case WAIT_TIMEOUT:
-				break;
-			case WAIT_FAILED:
-				//"Wait failed."
-				break;
-			default:
+			DWORD wait_result = WaitForMultipleObjectsEx( mHandles.size(), &mHandles[0], FALSE, 1000, FALSE );
+
+			switch ( wait_result )
 			{
-				mWatchesLock.lock();
-
-				// Don't trust the result - multiple objects may be signalled during a single call.
-				if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mWatches.size() )
+				case WAIT_ABANDONED_0:
+				case WAIT_ABANDONED_0 + 1:
+					//"Wait abandoned."
+					break;
+				case WAIT_TIMEOUT:
+					break;
+				case WAIT_FAILED:
+					//"Wait failed."
+					break;
+				default:
 				{
-					WatcherStructWin32 * watch = mWatches[ wait_result ];
+					mWatchesLock.lock();
 
-					// First ensure that the handle is the same, this means that the watch was not removed.
-					if ( mHandles[ wait_result ] == watch->Watch->DirHandle && HasOverlappedIoCompleted( &watch->Overlapped ) )
+					// Don't trust the result - multiple objects may be signalled during a single call.
+					if ( wait_result >=  WAIT_OBJECT_0 && wait_result < WAIT_OBJECT_0 + mWatches.size() )
 					{
-						DWORD bytes;
+						WatcherStructWin32 * watch = mWatches[ wait_result ];
 
-						if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+						// First ensure that the handle is the same, this means that the watch was not removed.
+						if ( mHandles[ wait_result ] == watch->Watch->DirHandle && HasOverlappedIoCompleted( &watch->Overlapped ) )
 						{
-							WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
-						}
-						else
-						{
-							//"GetOverlappedResult failed."
+							DWORD bytes;
+
+							if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+							{
+								WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
+							}
+							else
+							{
+								//"GetOverlappedResult failed."
+							}
 						}
 					}
-				}
-				else
-				{
-					//"Unknown return value from WaitForMultipleObjectsEx."
-				}
+					else
+					{
+						//"Unknown return value from WaitForMultipleObjectsEx."
+					}
 
-				mWatchesLock.unlock();
+					mWatchesLock.unlock();
+				}
 			}
+		}
+		else
+		{
+			// Wait for a new handle to be added
+			System::sleep( 10 );
 		}
 	} while ( mInitOK );
 }
