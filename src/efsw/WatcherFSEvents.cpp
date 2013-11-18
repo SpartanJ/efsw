@@ -82,19 +82,24 @@ void WatcherFSEvents::initAsync()
 	initializedAsync = true;
 }
 
+void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename, Action action, std::string oldFilename )
+{
+	Listener->handleFileAction( watchid, FileSystem::precomposeFileName( dir ), FileSystem::precomposeFileName( filename ), action, oldFilename );
+}
+
 void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& path, std::string& dirPath, std::string& filePath )
 {
 	if ( flags & efswFSEventStreamEventFlagItemCreated )
 	{
 		if ( FileInfo::exists( path ) )
 		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+			sendFileAction( ID, dirPath, filePath, Actions::Add );
 		}
 	}
 
 	if ( flags & efswFSEventsModified )
 	{
-		Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+		sendFileAction( ID, dirPath, filePath, Actions::Modified );
 	}
 
 	if ( flags & efswFSEventStreamEventFlagItemRemoved )
@@ -102,7 +107,7 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 		// Since i don't know the order, at least i try to keep the data consistent with the real state
 		if ( !FileInfo::exists( path ) )
 		{
-			Listener->handleFileAction( ID, dirPath, filePath, Actions::Delete );
+			sendFileAction( ID, dirPath, filePath, Actions::Delete );
 		}
 	}
 }
@@ -121,9 +126,9 @@ void WatcherFSEvents::CheckLostEvents()
 				efDEBUG( "Weird crap %s\n", tInfo.Filepath.c_str() );
 
 				if ( tInfo.exists() )
-					Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Add );
+					sendFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Add );
 				else
-					Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Delete );
+					sendFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Delete );
 			}
 		}
 
@@ -207,21 +212,21 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 					{
 						if ( !tFile.exists() )
 						{
-							Listener->handleFileAction( ID, dirPath, filePath, Actions::Moved, oldFilepath );
+							sendFileAction( ID, dirPath, filePath, Actions::Moved, oldFilepath );
 						}
 						else
 						{
-							Listener->handleFileAction( ID, dirPath, oldFilepath, Actions::Moved, filePath );
+							sendFileAction( ID, dirPath, oldFilepath, Actions::Moved, filePath );
 						}
 					}
 					else
 					{
-						Listener->handleFileAction( ID, oldDir, oldFilepath, Actions::Delete );
-						Listener->handleFileAction( ID, dirPath, filePath, Actions::Add );
+						sendFileAction( ID, oldDir, oldFilepath, Actions::Delete );
+						sendFileAction( ID, dirPath, filePath, Actions::Add );
 
 						if ( flags & efswFSEventsModified )
 						{
-							Listener->handleFileAction( ID, dirPath, filePath, Actions::Modified );
+							sendFileAction( ID, dirPath, filePath, Actions::Modified );
 						}
 					}
 				}
@@ -255,7 +260,7 @@ void WatcherFSEvents::process()
 		}
 		else
 		{
-			Listener->handleFileAction( ID, FileSystem::pathRemoveFileName( (*it) ), FileSystem::fileNameFromPath( (*it) ), Actions::Modified );
+			sendFileAction( ID, FileSystem::pathRemoveFileName( (*it) ), FileSystem::fileNameFromPath( (*it) ), Actions::Modified );
 		}
 	}
 

@@ -49,6 +49,8 @@ class WatcherFSEvents : public Watcher
 		Uint64 mLastId;
 
 		void CheckLostEvents();
+
+		void sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename, Action action, std::string oldFilename = "" );
 };
 
 }
