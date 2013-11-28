@@ -5,29 +5,6 @@
 namespace efsw
 {
 
-Int64 NowMs()
-{
-	static LARGE_INTEGER s_frequency;
-	static BOOL s_use_qpc = QueryPerformanceFrequency(&s_frequency);
-	if (s_use_qpc)
-	{
-		LARGE_INTEGER now;
-		QueryPerformanceCounter(&now);
-		return Int64( (1000LL * now.QuadPart) / s_frequency.QuadPart );
-	}
-
-	return Int64( GetTickCount() );
-}
-
-class cLastModifiedEvent
-{
-	public:
-		cLastModifiedEvent() : lastModificationTime(0) {}
-		std::string	file;
-		Uint64		lastModificationTime;
-};
-cLastModifiedEvent sLastModifiedEvent;
-
 /// Unpacks events and passes them to a user defined callback.
 void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped)
 {
@@ -67,13 +44,15 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 
 			if ( FILE_ACTION_MODIFIED == pNotify->Action )
 			{
-				if ( NowMs() - sLastModifiedEvent.lastModificationTime < 10 && sLastModifiedEvent.file == nfile )
+				FileInfo fifile( std::string( pWatch->DirName ) + nfile );
+
+				if ( pWatch->LastModifiedEvent.file.ModificationTime == fifile.ModificationTime && pWatch->LastModifiedEvent.fileName == nfile )
 				{
 					skip = true;
 				}
 
-				sLastModifiedEvent.file = nfile;
-				sLastModifiedEvent.lastModificationTime = NowMs();
+				pWatch->LastModifiedEvent.fileName	= nfile;
+				pWatch->LastModifiedEvent.file		= fifile;
 			}
 
 			if ( !skip )

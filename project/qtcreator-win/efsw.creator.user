@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 2.8.1, 2013-11-27T22:39:32. -->
+<!-- Written by QtCreator 2.8.1, 2013-11-28T13:20:12. -->
 <qtcreator>
  <data>
   <variable>ProjectExplorer.Project.ActiveTarget</variable>
@@ -290,9 +290,5 @@
  <data>
   <variable>ProjectExplorer.Project.Updater.FileVersion</variable>
   <value type="int">14</value>
- </data>
- <data>
-  <variable>ProjectExplorer.Project.UserStickyKeys</variable>
-  <valuelist type="QVariantList"/>
  </data>
 </qtcreator>

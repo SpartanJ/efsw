@@ -56,6 +56,7 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
 																			FILE_NOTIFY_CHANGE_DIR_NAME
 	);
+
 	if( NULL == watch )
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );

@@ -2,6 +2,7 @@
 #define EFSW_WATCHERWIN32_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/FileInfo.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -27,6 +28,14 @@ struct WatcherStructWin32
 {
 	OVERLAPPED Overlapped;
 	WatcherWin32 *	Watch;
+};
+
+class cLastModifiedEvent
+{
+	public:
+		cLastModifiedEvent() {}
+		FileInfo	file;
+		std::string fileName;
 };
 
 bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear = false);
@@ -59,6 +68,7 @@ class WatcherWin32 : public Watcher
 		bool StopNow;
 		FileWatcherImpl* Watch;
 		char* DirName;
+		cLastModifiedEvent LastModifiedEvent;
 };
 
 }
