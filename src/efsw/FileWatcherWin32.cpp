@@ -52,11 +52,10 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 	WatchID watchid = ++mLastWatchID;
 
 	WatcherStructWin32 * watch = CreateWatch( dir.c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
-																			FILE_NOTIFY_CHANGE_SIZE |
+																			FILE_NOTIFY_CHANGE_LAST_WRITE |
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
 																			FILE_NOTIFY_CHANGE_DIR_NAME
 	);
-
 	if( NULL == watch )
 	{
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
