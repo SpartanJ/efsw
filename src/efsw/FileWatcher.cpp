@@ -102,6 +102,11 @@ void FileWatcher::watch()
 	mImpl->watch();
 }
 
+std::list<std::string> FileWatcher::directories()
+{
+	return mImpl->directories();
+}
+
 void FileWatcher::followSymlinks( bool follow )
 {
 	mFollowSymlinks = follow;
