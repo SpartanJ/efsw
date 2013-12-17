@@ -10,7 +10,8 @@ WatcherInotify::WatcherInotify() :
 
 WatcherInotify::WatcherInotify( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherInotify * parent ) :
 	Watcher( id, directory, listener, recursive ),
-	Parent( parent )
+	Parent( parent ),
+	DirInfo( directory )
 {
 }
 

@@ -2,6 +2,7 @@
 #define EFSW_WATCHERINOTIFY_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/FileInfo.hpp>
 
 namespace efsw {
 
@@ -12,9 +13,11 @@ class WatcherInotify : public Watcher
 		
 		WatcherInotify( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherInotify * parent = NULL );
 
+		bool inParentTree( WatcherInotify * parent );
+
 		WatcherInotify * Parent;
 
-		bool inParentTree( WatcherInotify * parent );
+		FileInfo DirInfo;
 };
 
 }

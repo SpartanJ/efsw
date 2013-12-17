@@ -413,6 +413,8 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 		if ( watch->OldFileName.empty() )
 		{
 			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
+
+			checkForNewWatcher( watch, fpath );
 		}
 		else
 		{
@@ -428,9 +430,10 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 			{
-				if ( it->second->Directory == opath )
+				if ( it->second->Directory == opath && it->second->DirInfo.Inode == FileInfo( opath ).Inode )
 				{
-					it->second->Directory = fpath;
+					it->second->Directory	= fpath;
+					it->second->DirInfo		= FileInfo( fpath );
 
 					break;
 				}
@@ -453,8 +456,10 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	{
 		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Delete );
 
+		FileSystem::dirAddSlashAtEnd( fpath );
+
 		/// If the file erased is a directory and recursive is enabled, removes the directory erased
-		if ( watch->Recursive && FileSystem::isDirectory( fpath ) )
+		if ( watch->Recursive )
 		{
 			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 			{
