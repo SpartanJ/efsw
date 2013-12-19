@@ -1,4 +1,5 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
+newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "0"
@@ -158,5 +159,5 @@ solution "efsw"
 			
 			if os.is("linux") or os.is("bsd") or os.is("haiku") then
 				targetextension ( ".so." .. efsw_version )
-				postbuildcommands{ "sh ../../project/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version }
+				postbuildcommands { "sh ../../project/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version .. " " .. iif( _OPTIONS["strip-symbols"], "strip-symbols", "" ) }
 			end
