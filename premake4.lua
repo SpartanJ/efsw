@@ -1,11 +1,9 @@
-function args_contains( element )
-  for _, value in pairs(_ARGS) do
-    if value == element then
-      return true
-    end
-  end
-  return false
-end
+newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
+
+efsw_major_version	= "1"
+efsw_minor_version	= "0"
+efsw_patch_version	= "0"
+efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function string.starts(String,Start)
 	if ( _ACTION ) then
@@ -52,23 +50,16 @@ end
 solution "efsw"
 	location("./make/" .. os.get() .. "/")
 	targetdir("./bin")
-	configurations { "debug", "release" }
+	configurations { "debug", "release", "relwithdbginfo" }
 
 	if os.is("windows") then
 		osfiles = "src/efsw/platform/win/*.cpp"
 	else
 		osfiles = "src/efsw/platform/posix/*.cpp"
 	end
-			
-	-- This is for testing in other platforms that don't support kqueue
-	if args_contains( "kqueue" ) then
-		links { "kqueue" }
-		defines { "EFSW_KQUEUE" }
-		printf("Forced Kqueue backend build.")
-	end
 	
 	-- Activates verbose mode
-	if args_contains( "verbose" ) then
+	if _OPTIONS["verbose"] then
 		defines { "EFSW_VERBOSE" }
 	end
 
@@ -105,6 +96,12 @@ solution "efsw"
 			targetname "efsw-static-release"
 			conf_warnings()
 	
+		configuration "relwithdbginfo"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw-static-reldbginfo"
+			conf_warnings()
+
 	project "efsw-test"
 		kind "ConsoleApp"
 		language "C++"
@@ -123,6 +120,12 @@ solution "efsw"
 			defines { "NDEBUG" }
 			flags { "Optimize" }
 			targetname "efsw-test-release"
+			conf_warnings()
+			
+		configuration "relwithdbginfo"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw-test-reldbginfo"
 			conf_warnings()
 
 	project "efsw-shared-lib"
@@ -146,3 +149,14 @@ solution "efsw"
 			flags { "Optimize" }
 			targetname "efsw"
 			conf_warnings()
+
+		configuration "relwithdbginfo"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw"
+			conf_warnings()
+			
+			if os.is("linux") or os.is("bsd") or os.is("haiku") then
+				targetextension ( ".so." .. efsw_version )
+				postbuildcommands{ "sh ../../project/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version }
+			end
