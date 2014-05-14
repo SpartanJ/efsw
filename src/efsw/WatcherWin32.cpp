@@ -103,7 +103,7 @@ void DestroyWatch(WatcherStructWin32* pWatch)
 
 		CloseHandle(pWatch->Overlapped.hEvent);
 		CloseHandle(pWatch->Watch->DirHandle);
-		efSAFE_DELETE( pWatch->Watch->DirName );
+		efSAFE_DELETE_ARRAY( pWatch->Watch->DirName );
 		efSAFE_DELETE( pWatch->Watch );
 		HeapFree(GetProcessHeap(), 0, pWatch);
 	}
