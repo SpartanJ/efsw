@@ -1,4 +1,5 @@
 #include <efsw/WatcherWin32.hpp>
+#include <efsw/String.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -26,19 +27,10 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 			pNotify = (PFILE_NOTIFY_INFORMATION) &pWatch->mBuffer[offset];
 			offset += pNotify->NextEntryOffset;
 
-#			if defined(UNICODE)
-			{
-				lstrcpynW(szFile, pNotify->FileName,
-					min(MAX_PATH, pNotify->FileNameLength / sizeof(WCHAR) + 1));
-			}
-#			else
-			{
-				int count = WideCharToMultiByte(CP_UTF8, 0, pNotify->FileName,
-					pNotify->FileNameLength / sizeof(WCHAR),
-					szFile, MAX_PATH - 1, NULL, NULL);
-				szFile[count] = TEXT('\0');
-			}
-#			endif
+			int count = WideCharToMultiByte(CP_UTF8, 0, pNotify->FileName,
+				pNotify->FileNameLength / sizeof(WCHAR),
+				szFile, MAX_PATH - 1, NULL, NULL);
+			szFile[count] = TEXT('\0');
 
 			std::string nfile( szFile );
 
@@ -110,7 +102,7 @@ void DestroyWatch(WatcherStructWin32* pWatch)
 }
 
 /// Starts monitoring a directory.
-WatcherStructWin32* CreateWatch(LPCTSTR szDirectory, bool recursive, DWORD NotifyFilter)
+WatcherStructWin32* CreateWatch(LPCWSTR szDirectory, bool recursive, DWORD NotifyFilter)
 {
 	WatcherStructWin32 * tWatch;
 	size_t ptrsize = sizeof(*tWatch);
@@ -119,7 +111,7 @@ WatcherStructWin32* CreateWatch(LPCTSTR szDirectory, bool recursive, DWORD Notif
 	WatcherWin32 * pWatch = new WatcherWin32();
 	tWatch->Watch = pWatch;
 
-	pWatch->DirHandle = CreateFile(
+	pWatch->DirHandle = CreateFileW(
 							szDirectory,
 							GENERIC_READ,
 							FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,

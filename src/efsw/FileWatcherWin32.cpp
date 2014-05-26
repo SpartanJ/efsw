@@ -1,6 +1,7 @@
 #include <efsw/FileWatcherWin32.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
+#include <efsw/String.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -51,7 +52,7 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	WatchID watchid = ++mLastWatchID;
 
-	WatcherStructWin32 * watch = CreateWatch( dir.c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
+	WatcherStructWin32 * watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
 																			FILE_NOTIFY_CHANGE_LAST_WRITE |
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
 																			FILE_NOTIFY_CHANGE_DIR_NAME

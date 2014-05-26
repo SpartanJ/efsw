@@ -104,6 +104,10 @@ or
 **Platform limitations and clarifications**
 -------------------------------------------
 
+Directory paths are expected to be encoded as UTF-8 strings in all platforms.
+
+handleFileAction returns UTF-8 strings in all platforms.
+
 Windows and FSEvents Mac OS X implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
 
 Kqueue implementation is limited by the maximun number of file descriptors allowed per process by the OS, in the case of reaching the file descriptors limit ( in BSD around 18000 and in OS X around 10240 ) it will fallback to the generic file watcher.
@@ -117,6 +121,11 @@ Generic watcher relies on the inode information to detect file and directories r
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in support older kernels, since i don't see the point. If someone needs this open an issue in the issue tracker and i may consider implenent a dnotify backend.
 
 OS-independent watcher, Kqueue and FSEvents for OS X below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for this backends.
+
+**Useful information**
+--------------------
+There's a string manipulation class not exposed in the efsw header ( efsw::String ) that can be used to make string encoding conversion.
+
 
 **Clarifications**
 ----------------

@@ -6,7 +6,6 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
-#define _WIN32_WINNT 0x0550
 #include <windows.h>
 
 #ifdef EFSW_COMPILER_MSVC
@@ -44,7 +43,7 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 
 void DestroyWatch(WatcherStructWin32* pWatch);
 
-WatcherStructWin32* CreateWatch(LPCTSTR szDirectory, bool recursive, DWORD NotifyFilter);
+WatcherStructWin32* CreateWatch(LPCWSTR szDirectory, bool recursive, DWORD NotifyFilter);
 
 class WatcherWin32 : public Watcher
 {

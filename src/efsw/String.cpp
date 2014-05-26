@@ -118,19 +118,19 @@ String::String()
 
 String::String(char ansiChar, const std::locale& locale)
 {
-    mString += Utf32::DecodeAnsi(ansiChar, locale);
+	mString += Utf32::DecodeAnsi(ansiChar, locale);
 }
 
 #ifndef EFSW_NO_WIDECHAR
 String::String(wchar_t wideChar)
 {
-    mString += Utf32::DecodeWide(wideChar);
+	mString += Utf32::DecodeWide(wideChar);
 }
 #endif
 
 String::String(StringBaseType utf32Char)
 {
-    mString += utf32Char;
+	mString += utf32Char;
 }
 
 String::String( const char* uf8String ) {
@@ -155,48 +155,48 @@ String::String( const std::string& utf8String ) {
 
 String::String(const char* ansiString, const std::locale& locale)
 {
-    if (ansiString)
-    {
-        std::size_t length = strlen(ansiString);
-        if (length > 0)
-        {
-            mString.reserve(length + 1);
-            Utf32::FromAnsi(ansiString, ansiString + length, std::back_inserter(mString), locale);
-        }
-    }
+	if (ansiString)
+	{
+		std::size_t length = strlen(ansiString);
+		if (length > 0)
+		{
+			mString.reserve(length + 1);
+			Utf32::FromAnsi(ansiString, ansiString + length, std::back_inserter(mString), locale);
+		}
+	}
 }
 
 String::String(const std::string& ansiString, const std::locale& locale)
 {
-    mString.reserve(ansiString.length() + 1);
-    Utf32::FromAnsi(ansiString.begin(), ansiString.end(), std::back_inserter(mString), locale);
+	mString.reserve(ansiString.length() + 1);
+	Utf32::FromAnsi(ansiString.begin(), ansiString.end(), std::back_inserter(mString), locale);
 }
 
 #ifndef EFSW_NO_WIDECHAR
 String::String(const wchar_t* wideString)
 {
-    if (wideString)
-    {
-        std::size_t length = std::wcslen(wideString);
-        if (length > 0)
-        {
-            mString.reserve(length + 1);
-            Utf32::FromWide(wideString, wideString + length, std::back_inserter(mString));
-        }
-    }
+	if (wideString)
+	{
+		std::size_t length = std::wcslen(wideString);
+		if (length > 0)
+		{
+			mString.reserve(length + 1);
+			Utf32::FromWide(wideString, wideString + length, std::back_inserter(mString));
+		}
+	}
 }
 
 String::String(const std::wstring& wideString)
 {
-    mString.reserve(wideString.length() + 1);
-    Utf32::FromWide(wideString.begin(), wideString.end(), std::back_inserter(mString));
+	mString.reserve(wideString.length() + 1);
+	Utf32::FromWide(wideString.begin(), wideString.end(), std::back_inserter(mString));
 }
 #endif
 
 String::String(const StringBaseType* utf32String)
 {
-    if (utf32String)
-        mString = utf32String;
+	if (utf32String)
+		mString = utf32String;
 }
 
 String::String(const StringType& utf32String) :
@@ -222,32 +222,32 @@ String String::fromUtf8( const std::string& utf8String )
 
 String::operator std::string() const
 {
-    return toAnsiString();
+	return toAnsiString();
 }
 
 std::string String::toAnsiString(const std::locale& locale) const
 {
-    // Prepare the output string
-    std::string output;
-    output.reserve(mString.length() + 1);
+	// Prepare the output string
+	std::string output;
+	output.reserve(mString.length() + 1);
 
-    // Convert
-    Utf32::ToAnsi(mString.begin(), mString.end(), std::back_inserter(output), 0, locale);
+	// Convert
+	Utf32::ToAnsi(mString.begin(), mString.end(), std::back_inserter(output), 0, locale);
 
-    return output;
+	return output;
 }
 
 #ifndef EFSW_NO_WIDECHAR
 std::wstring String::toWideString() const
 {
-    // Prepare the output string
+	// Prepare the output string
 	std::wstring output;
-    output.reserve(mString.length() + 1);
+	output.reserve(mString.length() + 1);
 
-    // Convert
-    Utf32::ToWide(mString.begin(), mString.end(), std::back_inserter(output), 0);
+	// Convert
+	Utf32::ToWide(mString.begin(), mString.end(), std::back_inserter(output), 0);
 
-    return output;
+	return output;
 }
 #endif
 
@@ -264,8 +264,8 @@ std::string String::toUtf8() const {
 
 String& String::operator =(const String& right)
 {
-    mString = right.mString;
-    return *this;
+	mString = right.mString;
+	return *this;
 }
 
 String& String::operator =( const StringBaseType& right )
@@ -276,8 +276,8 @@ String& String::operator =( const StringBaseType& right )
 
 String& String::operator +=(const String& right)
 {
-    mString += right.mString;
-    return *this;
+	mString += right.mString;
+	return *this;
 }
 
 String& String::operator +=( const StringBaseType& right )
@@ -289,17 +289,17 @@ String& String::operator +=( const StringBaseType& right )
 
 String::StringBaseType String::operator [](std::size_t index) const
 {
-    return mString[index];
+	return mString[index];
 }
 
 String::StringBaseType& String::operator [](std::size_t index)
 {
-    return mString[index];
+	return mString[index];
 }
 
 String::StringBaseType String::at( std::size_t index ) const
 {
-    return mString.at( index );
+	return mString.at( index );
 }
 
 void String::push_back( StringBaseType c )
@@ -314,12 +314,12 @@ void String::swap ( String& str )
 
 void String::clear()
 {
-    mString.clear();
+	mString.clear();
 }
 
 std::size_t String::size() const
 {
-    return mString.size();
+	return mString.size();
 }
 
 std::size_t String::length() const
@@ -329,17 +329,17 @@ std::size_t String::length() const
 
 bool String::empty() const
 {
-    return mString.empty();
+	return mString.empty();
 }
 
 void String::erase(std::size_t position, std::size_t count)
 {
-    mString.erase(position, count);
+	mString.erase(position, count);
 }
 
 String& String::insert(std::size_t position, const String& str)
 {
-    mString.insert(position, str.mString);
+	mString.insert(position, str.mString);
 	return *this;
 }
 
@@ -395,22 +395,22 @@ const String::StringBaseType* String::data() const
 
 String::Iterator String::begin()
 {
-    return mString.begin();
+	return mString.begin();
 }
 
 String::ConstIterator String::begin() const
 {
-    return mString.begin();
+	return mString.begin();
 }
 
 String::Iterator String::end()
 {
-    return mString.end();
+	return mString.end();
 }
 
 String::ConstIterator String::end() const
 {
-    return mString.end();
+	return mString.end();
 }
 
 String::ReverseIterator String::rbegin()
@@ -420,17 +420,17 @@ String::ReverseIterator String::rbegin()
 
 String::ConstReverseIterator String::rbegin() const
 {
-    return mString.rbegin();
+	return mString.rbegin();
 }
 
 String::ReverseIterator String::rend()
 {
-    return mString.rend();
+	return mString.rend();
 }
 
 String::ConstReverseIterator String::rend() const
 {
-    return mString.rend();
+	return mString.rend();
 }
 
 void String::resize( std::size_t n, StringBaseType c )
@@ -774,40 +774,40 @@ std::size_t String::find_last_not_of ( StringBaseType c, std::size_t pos ) const
 
 bool operator ==(const String& left, const String& right)
 {
-    return left.mString == right.mString;
+	return left.mString == right.mString;
 }
 
 bool operator !=(const String& left, const String& right)
 {
-    return !(left == right);
+	return !(left == right);
 }
 
 bool operator <(const String& left, const String& right)
 {
-    return left.mString < right.mString;
+	return left.mString < right.mString;
 }
 
 bool operator >(const String& left, const String& right)
 {
-    return right < left;
+	return right < left;
 }
 
 bool operator <=(const String& left, const String& right)
 {
-    return !(right < left);
+	return !(right < left);
 }
 
 bool operator >=(const String& left, const String& right)
 {
-    return !(left < right);
+	return !(left < right);
 }
 
 String operator +(const String& left, const String& right)
 {
-    String string = left;
-    string += right;
+	String string = left;
+	string += right;
 
-    return string;
+	return string;
 }
 
 }

@@ -102,7 +102,7 @@ int main(int argc, char **argv)
 		std::cout << "CurPath: " << CurPath.c_str() << std::endl;
 
 		/// add a watch to the system
-		handleWatchID( fileWatcher.addWatch( CurPath + "test" + efsw::FileSystem::getOSSlash(), ul, true ) );
+		handleWatchID( fileWatcher.addWatch( CurPath + "test", ul, true ) );
 
 		/// starts watching
 		fileWatcher.watch();
