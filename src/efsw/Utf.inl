@@ -564,7 +564,7 @@ Uint32 Utf<32>::DecodeAnsi(In input, const std::locale& locale)
     // context we can only use the default locale and ignore
     // the one passed as parameter.
 
-    #if EE_PLATFORM == EE_PLATFORM_WIN &&                       /* if Windows ... */                          \
+    #if EFSW_PLATFORM == EFSW_PLATFORM_WIN &&                       /* if Windows ... */                          \
        (defined(__GLIBCPP__) || defined (__GLIBCXX__)) &&     /* ... and standard library is glibc++ ... */ \
       !(defined(__SGI_STL_PORT) || defined(_STLPORT_VERSION)) /* ... and STLPort is not used on top of it */
 
@@ -606,7 +606,7 @@ Out Utf<32>::EncodeAnsi(Uint32 codepoint, Out output, char replacement, const st
     // context we can only use the default locale and ignore
     // the one passed as parameter.
 
-    #if EE_PLATFORM == EE_PLATFORM_WIN &&                       /* if Windows ... */                          \
+    #if EFSW_PLATFORM == EFSW_PLATFORM_WIN &&                       /* if Windows ... */                          \
        (defined(__GLIBCPP__) || defined (__GLIBCXX__)) &&     /* ... and standard library is glibc++ ... */ \
       !(defined(__SGI_STL_PORT) || defined(_STLPORT_VERSION)) /* ... and STLPort is not used on top of it */
 

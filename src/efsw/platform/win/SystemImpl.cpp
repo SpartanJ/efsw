@@ -27,7 +27,7 @@ std::string System::getProcessPath()
 
 	GetModuleFileNameW(0, &dllName[0], _MAX_PATH);
 
-	#ifdef EE_COMPILER_MSVC
+	#ifdef EFSW_COMPILER_MSVC
 	_wsplitpath_s( dllName.c_str(), szDrive, _MAX_DRIVE, szDir, _MAX_DIR, szFilename, _MAX_DIR, szExt, _MAX_DIR );
 	#else
 	_wsplitpath( dllName.c_str(), szDrive, szDir, szFilename, szExt);
