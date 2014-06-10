@@ -193,7 +193,8 @@ void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags
 
 				efDEBUG( "New Last Renamed: %s\n", filePath.c_str() );
 
-				if ( !( flags & efswFSEventsModified ) ) {
+				if ( !( flags & efswFSEventsModified ) )
+				{
 					mLastsRenamed.push_back( FileInfo( path ) );
 				}
 
