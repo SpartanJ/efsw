@@ -99,7 +99,7 @@ void FileInfo::getInfo()
 	struct stat st;
 	int res = stat( Filepath.c_str(), &st );
 	#else
-	struct _stat64i32 st;
+	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
 	#endif
 
@@ -131,7 +131,7 @@ void FileInfo::getRealInfo()
 	struct stat st;
 	int res = lstat( Filepath.c_str(), &st );
 	#else
-	struct _stat64i32 st;
+	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
 	#endif
 
@@ -207,7 +207,7 @@ bool FileInfo::exists()
 	struct stat st;
 	return stat( Filepath.c_str(), &st ) == 0;
 #else
-	struct _stat64i32 st;
+	struct _stat st;
 	return _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st ) == 0;
 #endif
 }
