@@ -168,7 +168,7 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events )
 				{
 					FSEvent& nEvent = events[ i + 1 ];
 					std::string newDir( FileSystem::pathRemoveFileName( nEvent.Path ) );
-                    std::string newFilepath( FileSystem::fileNameFromPath( nEvent.Path ) );
+					std::string newFilepath( FileSystem::fileNameFromPath( nEvent.Path ) );
 
 					if ( event.Path != nEvent.Path )
 					{
@@ -198,17 +198,17 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events )
 					{
 						handleAddModDel( nEvent.Flags, nEvent.Path, dirPath, filePath );
 					}
-                    
-                    if ( nEvent.Flags & (	efswFSEventStreamEventFlagItemCreated |
-                                            efswFSEventStreamEventFlagItemRemoved |
-                                            efswFSEventStreamEventFlagItemRenamed )
-                        )
-                    {
-                        if ( newDir != Directory )
-                        {
-                            DirsChanged.insert( newDir );
-                        }
-                    }
+
+					if ( nEvent.Flags & (	efswFSEventStreamEventFlagItemCreated |
+											efswFSEventStreamEventFlagItemRemoved |
+											efswFSEventStreamEventFlagItemRenamed )
+					)
+					{
+						if ( newDir != Directory )
+						{
+							DirsChanged.insert( newDir );
+						}
+					}
 
 					// Skip the renamed file
 					i++;
@@ -216,11 +216,11 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events )
 				else if ( FileInfo::exists( event.Path ) )
 				{
 					sendFileAction( ID, dirPath, filePath, Actions::Add );
-                    
-                    if ( event.Flags & efswFSEventsModified )
-                    {
-                        sendFileAction( ID, dirPath, filePath, Actions::Modified );
-                    }
+
+					if ( event.Flags & efswFSEventsModified )
+					{
+						sendFileAction( ID, dirPath, filePath, Actions::Modified );
+					}
 				}
 				else
 				{
@@ -259,6 +259,6 @@ void WatcherFSEvents::process()
 	DirsChanged.clear();
 }
 
-} 
+}
 
 #endif
