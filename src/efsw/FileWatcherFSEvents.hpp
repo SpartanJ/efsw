@@ -10,6 +10,7 @@
 #include <efsw/WatcherFSEvents.hpp>
 #include <map>
 #include <list>
+#include <vector>
 
 namespace efsw
 {
@@ -36,7 +37,6 @@ enum FSEventEvents
 													  efswFSEventStreamEventFlagItemChangeOwner		|
 													  efswFSEventStreamEventFlagItemXattrMod
 };
-
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents

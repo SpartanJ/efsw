@@ -55,10 +55,15 @@ void FileWatcherFSEvents::FSEventCallback(	ConstFSEventStreamRef streamRef,
 {
 	WatcherFSEvents * watcher = static_cast<WatcherFSEvents*>( userData );
 
+	std::vector<FSEvent> events;
+	events.reserve( numEvents );
+
 	for ( size_t i = 0; i < numEvents; i++ )
 	{
-		watcher->handleAction( std::string( ((char**)eventPaths)[i] ), (long)eventFlags[i], (Uint64)eventIds[i] );
+		events.push_back( FSEvent( std::string( ((char**)eventPaths)[i] ), (long)eventFlags[i], (Uint64)eventIds[i] ) );
 	}
+
+	watcher->handleActions( events );
 
 	watcher->process();
 
@@ -95,8 +100,6 @@ FileWatcherFSEvents::~FileWatcherFSEvents()
 	{
 		CFRunLoopStop( mRunLoopRef );
 	}
-	
-	mThread->wait();
 
 	efSAFE_DELETE( mThread );
 }

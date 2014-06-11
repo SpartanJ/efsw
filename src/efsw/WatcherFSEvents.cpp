@@ -12,8 +12,7 @@ WatcherFSEvents::WatcherFSEvents() :
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
-	initializedAsync( false ),
-	mLastId(0)
+	initializedAsync( false )
 {
 }
 
@@ -22,8 +21,7 @@ WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchLi
 	FWatcher( NULL ),
 	FSStream( NULL ),
 	WatcherGen( NULL ),
-	initializedAsync( false ),
-	mLastId(0)
+	initializedAsync( false )
 {
 }
 
@@ -112,140 +110,133 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 	}
 }
 
-void WatcherFSEvents::CheckLostEvents()
+void WatcherFSEvents::handleActions( std::vector<FSEvent>& events )
 {
-	if ( !mLastsRenamed.empty() )
+	size_t esize = events.size();
+
+	for ( size_t i = 0; i < esize; i++ )
 	{
-		for ( std::list<FileInfo>::iterator it = mLastsRenamed.begin(); it != mLastsRenamed.end(); it++ )
+		FSEvent& event = events[i];
+
+		if ( event.Flags & (	kFSEventStreamEventFlagUserDropped |
+								kFSEventStreamEventFlagKernelDropped |
+								kFSEventStreamEventFlagEventIdsWrapped |
+								kFSEventStreamEventFlagHistoryDone |
+								kFSEventStreamEventFlagMount |
+								kFSEventStreamEventFlagUnmount |
+								kFSEventStreamEventFlagRootChanged ) )
 		{
-			FileInfo tInfo = *it;
+			continue;
+		}
 
-			if ( !tInfo.Filepath.empty() )
+		if ( !Recursive )
+		{
+			/** In case that is not recursive the watcher, ignore the events from subfolders */
+			if ( event.Path.find_last_of( FileSystem::getOSSlash() ) != Directory.size() - 1 )
 			{
-				// Some file must have been moved, not renamed
-				efDEBUG( "Weird crap %s\n", tInfo.Filepath.c_str() );
-
-				if ( tInfo.exists() )
-					sendFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Add );
-				else
-					sendFileAction( ID, FileSystem::pathRemoveFileName( tInfo.Filepath ), FileSystem::fileNameFromPath( tInfo.Filepath ), Actions::Delete );
+				continue;
 			}
 		}
 
-		mLastsRenamed.clear();
-	}
-}
-
-void WatcherFSEvents::handleAction( const std::string& path, const Uint32& flags, const Uint64& eventId )
-{
-	if ( flags & (	kFSEventStreamEventFlagUserDropped |
-					kFSEventStreamEventFlagKernelDropped |
-					kFSEventStreamEventFlagEventIdsWrapped |
-					kFSEventStreamEventFlagHistoryDone |
-					kFSEventStreamEventFlagMount |
-					kFSEventStreamEventFlagUnmount |
-					kFSEventStreamEventFlagRootChanged) )
-	{
-		return;
-	}
-
-	if ( !Recursive )
-	{
-		/** In case that is not recursive the watcher, ignore the events from subfolders */
-		if ( path.find_last_of( FileSystem::getOSSlash() ) != Directory.size() - 1 )
+		if ( FileWatcherFSEvents::isGranular() )
 		{
-			return;
-		}
-	}
-	
-	std::string dirPath( FileSystem::pathRemoveFileName( path ) );
-	std::string filePath( FileSystem::fileNameFromPath( path ) );
-	
-	if ( FileWatcherFSEvents::isGranular() )
-	{
-		if ( flags & ( efswFSEventStreamEventFlagItemCreated |
-					   efswFSEventStreamEventFlagItemRemoved |
-					   efswFSEventStreamEventFlagItemRenamed )
-		)
-		{
-			std::string dpath( FileSystem::pathRemoveFileName( path ) );
+			std::string dirPath( FileSystem::pathRemoveFileName( event.Path ) );
+			std::string filePath( FileSystem::fileNameFromPath( event.Path ) );
 
-			if ( dpath != Directory )
+			if ( event.Flags & (	efswFSEventStreamEventFlagItemCreated |
+									efswFSEventStreamEventFlagItemRemoved |
+									efswFSEventStreamEventFlagItemRenamed )
+			)
 			{
-				DirsChanged.insert( dpath );
-			}
-		}
-
-		// This is a mess. But it's FSEvents faults, because shrinks events from the same file in one single event ( so there's no order for them )
-		// For example a file could have been added modified and erased, but i can't know if first was erased and then added and modified, or added, then modified and then erased.
-		// I don't know what they were thinking by doing this...
-		efDEBUG( "Event in: %s - flags: %ld\n", path.c_str(), flags );
-
-		if ( !( flags & efswFSEventStreamEventFlagItemRenamed ) )
-		{
-			handleAddModDel( flags, path, dirPath, filePath );
-		}
-		else
-		{
-			if ( eventId - mLastId != 1 )
-			{
-				CheckLostEvents();
-
-				efDEBUG( "New Last Renamed: %s\n", filePath.c_str() );
-
-				if ( !( flags & efswFSEventsModified ) )
+				if ( dirPath != Directory )
 				{
-					mLastsRenamed.push_back( FileInfo( path ) );
+					DirsChanged.insert( dirPath );
 				}
-
-				handleAddModDel( flags, path, dirPath, filePath );
 			}
-			else
-			{
-				FileInfo tFile = mLastsRenamed.back();
-				std::string oldDir( FileSystem::pathRemoveFileName( tFile.Filepath ) );
-				std::string newDir( FileSystem::pathRemoveFileName( path ) );
-				std::string oldFilepath( FileSystem::fileNameFromPath( tFile.Filepath ) );
 
-				if ( tFile.Filepath != path )
+			// This is a mess. But it's FSEvents faults, because shrinks events from the same file in one single event ( so there's no order for them )
+			// For example a file could have been added modified and erased, but i can't know if first was erased and then added and modified, or added, then modified and then erased.
+			// I don't know what they were thinking by doing this...
+			efDEBUG( "Event in: %s - flags: %ld\n", path.c_str(), event.Flags );
+
+			if ( event.Flags & efswFSEventStreamEventFlagItemRenamed )
+			{
+				if (	( i + 1 < esize ) &&
+						( events[ i + 1 ].Flags & efswFSEventStreamEventFlagItemRenamed ) &&
+						( events[ i + 1 ].Id == event.Id + 1 )
+					)
 				{
-					if ( oldDir == newDir )
+					FSEvent& nEvent = events[ i + 1 ];
+					std::string newDir( FileSystem::pathRemoveFileName( nEvent.Path ) );
+                    std::string newFilepath( FileSystem::fileNameFromPath( nEvent.Path ) );
+
+					if ( event.Path != nEvent.Path )
 					{
-						if ( !tFile.exists() )
+						if ( dirPath == newDir )
 						{
-							sendFileAction( ID, dirPath, filePath, Actions::Moved, oldFilepath );
+							if ( !FileInfo::exists( event.Path ) )
+							{
+								sendFileAction( ID, dirPath, newFilepath, Actions::Moved, filePath );
+							}
+							else
+							{
+								sendFileAction( ID, dirPath, filePath, Actions::Moved, newFilepath );
+							}
 						}
 						else
 						{
-							sendFileAction( ID, dirPath, oldFilepath, Actions::Moved, filePath );
+							sendFileAction( ID, dirPath, filePath, Actions::Delete );
+							sendFileAction( ID, newDir, newFilepath, Actions::Add );
+
+							if ( nEvent.Flags & efswFSEventsModified )
+							{
+								sendFileAction( ID, newDir, newFilepath, Actions::Modified );
+							}
 						}
 					}
 					else
 					{
-						sendFileAction( ID, oldDir, oldFilepath, Actions::Delete );
-						sendFileAction( ID, dirPath, filePath, Actions::Add );
-
-						if ( flags & efswFSEventsModified )
-						{
-							sendFileAction( ID, dirPath, filePath, Actions::Modified );
-						}
+						handleAddModDel( nEvent.Flags, nEvent.Path, dirPath, filePath );
 					}
+                    
+                    if ( nEvent.Flags & (	efswFSEventStreamEventFlagItemCreated |
+                                            efswFSEventStreamEventFlagItemRemoved |
+                                            efswFSEventStreamEventFlagItemRenamed )
+                        )
+                    {
+                        if ( newDir != Directory )
+                        {
+                            DirsChanged.insert( newDir );
+                        }
+                    }
+
+					// Skip the renamed file
+					i++;
+				}
+				else if ( FileInfo::exists( event.Path ) )
+				{
+					sendFileAction( ID, dirPath, filePath, Actions::Add );
+                    
+                    if ( event.Flags & efswFSEventsModified )
+                    {
+                        sendFileAction( ID, dirPath, filePath, Actions::Modified );
+                    }
 				}
 				else
 				{
-					handleAddModDel( flags, path, dirPath, filePath );
+					sendFileAction( ID, dirPath, filePath, Actions::Delete );
 				}
-
-				mLastsRenamed.pop_back();
 			}
-
-			mLastId = eventId;
+			else
+			{
+				handleAddModDel( event.Flags, event.Path, dirPath, filePath );
+			}
 		}
-	}
-	else
-	{
-		efDEBUG( "Directory: %s changed\n", path.c_str() );
-		DirsChanged.insert( path );
+		else
+		{
+			efDEBUG( "Directory: %s changed\n", event.Path.c_str() );
+			DirsChanged.insert( event.Path );
+		}
 	}
 }
 
@@ -266,8 +257,6 @@ void WatcherFSEvents::process()
 	}
 
 	DirsChanged.clear();
-
-	CheckLostEvents();
 }
 
 } 
