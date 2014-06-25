@@ -2,6 +2,7 @@
 
 #if defined( EFSW_PLATFORM_POSIX )
 
+#include <cstdio>
 #include <pthread.h>
 #include <sys/time.h>
 #include <limits.h>
@@ -67,7 +68,7 @@ void System::sleep( const unsigned long& ms )
 std::string System::getProcessPath()
 {
 #if EFSW_OS == EFSW_OS_MACOSX
-	char exe_file[PATH_MAX + 1];
+	char exe_file[FILENAME_MAX + 1];
 
 	CFBundleRef mainBundle = CFBundleGetMainBundle();
 
@@ -77,7 +78,7 @@ std::string System::getProcessPath()
 
 		if (mainURL)
 		{
-			int ok = CFURLGetFileSystemRepresentation ( mainURL, (Boolean) true, (UInt8*)exe_file, PATH_MAX );
+			int ok = CFURLGetFileSystemRepresentation ( mainURL, (Boolean) true, (UInt8*)exe_file, FILENAME_MAX );
 
 			if (ok)
 			{
@@ -88,11 +89,11 @@ std::string System::getProcessPath()
 
 	return "./";
 #elif EFSW_OS == EFSW_OS_LINUX
-	char exe_file[PATH_MAX + 1];
+	char exe_file[FILENAME_MAX + 1];
 
 	int size;
 
-	size = readlink("/proc/self/exe", exe_file, PATH_MAX);
+	size = readlink("/proc/self/exe", exe_file, FILENAME_MAX);
 
 	if (size < 0)
 	{

@@ -8,7 +8,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
-#include <sys/inotify.h>
+#include <efsw/inotify-nosys.h>
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/Debug.hpp>

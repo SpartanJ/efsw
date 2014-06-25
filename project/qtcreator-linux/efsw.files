@@ -112,3 +112,4 @@
 ../../README.md
 ../../include/efsw/efsw.h
 ../../src/efsw/FileWatcherCWrapper.cpp
+../../src/efsw/inotify-nosys.h
