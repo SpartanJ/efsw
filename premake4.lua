@@ -46,6 +46,10 @@ function conf_excludes()
 	elseif os.is("freebsd") then
 		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
 	end
+	
+	if os.is("linux") and not os.isfile("/usr/include/sys/inotify.h") and not os.isfile("/usr/local/include/sys/inotify.h") then
+		defines { "EFSW_INOTIFY_NOSYS" }
+	end
 end
 
 solution "efsw"

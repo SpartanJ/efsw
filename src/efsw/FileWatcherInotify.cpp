@@ -8,7 +8,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+
+#ifdef EFSW_INOTIFY_NOSYS
 #include <efsw/inotify-nosys.h>
+#else
+#include <sys/inotify.h>
+#endif
+
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/Debug.hpp>
