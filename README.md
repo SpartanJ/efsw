@@ -100,6 +100,7 @@ or
 
 `premake4 xcode4` to generate Xcode 4 project.
 
+There is also a cmake file that i don't oficially support but it works just fine, provided by [Mohammed Nafees](https://bitbucket.org/binaryking).
 
 **Platform limitations and clarifications**
 -------------------------------------------
@@ -124,6 +125,8 @@ OS-independent watcher, Kqueue and FSEvents for OS X below 10.5 keep cache of th
 
 **Useful information**
 --------------------
+The project also comes with a C API wrapper, contributed by [Sepul Sepehr Taghdisian](https://bitbucket.org/sepul).
+
 There's a string manipulation class not exposed in the efsw header ( efsw::String ) that can be used to make string encoding conversion.
 
 
