@@ -45,7 +45,7 @@ if (WIN32)
 		  src/efsw/platform/win/MutexImpl.cpp
 		  src/efsw/platform/win/SystemImpl.cpp
 		  src/efsw/platform/win/ThreadImpl.cpp)
-else (WIN32)
+else ()
     list (APPEND SRCS
           src/efsw/platform/posix/FileSystemImpl.cpp
           src/efsw/platform/posix/MutexImpl.cpp
@@ -97,7 +97,7 @@ endif()
 
 if (MSVC)
 	add_definitions(-Wall -Wno-long-long)
-else (MSVC)
+else ()
 	add_definitions(-D_SCL_SECURE_NO_WARNINGS)
 endif()
 
@@ -123,3 +123,8 @@ endif()
 install (TARGETS efsw LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 file (GLOB HDRS "include/efsw/*.h" "include/efsw/*.hpp")
 install (FILES ${HDRS} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/efsw)
+
+if (BUILD_TEST_APP)
+    add_executable(efsw-test src/test/efsw-test.cpp)
+    target_link_libraries(efsw-test efsw)
+endif()
