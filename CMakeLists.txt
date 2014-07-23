@@ -96,7 +96,7 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 endif()
 
 if (MSVC)
-	add_definitions(-Wall -Wno-long-long)
+	add_definitions(-Wall)
 else ()
 	add_definitions(-D_SCL_SECURE_NO_WARNINGS)
 endif()
@@ -120,7 +120,8 @@ elseif (NOT (${CMAKE_SYSTEM_NAME} MATCHES "Haiku") AND NOT WIN32)
 	target_link_libraries(efsw pthread)
 endif()	
 
-install (TARGETS efsw LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+set(LIB_DESTINATION "${CMAKE_INSTALL_PREFIX}/lib")
+install(TARGETS efsw LIBRARY DESTINATION ${LIB_DESTINATION} ARCHIVE DESTINATION ${LIB_DESTINATION} RUNTIME DESTINATION ${LIB_DESTINATION})
 file (GLOB HDRS "include/efsw/*.h" "include/efsw/*.hpp")
 install (FILES ${HDRS} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/efsw)
 
