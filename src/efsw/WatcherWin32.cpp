@@ -9,7 +9,7 @@ namespace efsw
 /// Unpacks events and passes them to a user defined callback.
 void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped)
 {
-	TCHAR szFile[MAX_PATH];
+	char szFile[MAX_PATH];
 	PFILE_NOTIFY_INFORMATION pNotify;
 	WatcherStructWin32 * tWatch = (WatcherStructWin32*) lpOverlapped;
 	WatcherWin32 * pWatch = tWatch->Watch;
