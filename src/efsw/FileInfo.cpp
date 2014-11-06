@@ -203,13 +203,27 @@ std::string FileInfo::linksTo()
 
 bool FileInfo::exists()
 {
+	bool slashAtEnd = FileSystem::slashAtEnd( Filepath );
+
+	if ( slashAtEnd )
+	{
+		FileSystem::dirRemoveSlashAtEnd(Filepath);
+	}
+
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	struct stat st;
-	return stat( Filepath.c_str(), &st ) == 0;
+	int res = stat(Filepath.c_str(), &st);
 #else
 	struct _stat st;
-	return _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st ) == 0;
+	int res = _wstat(String::fromUtf8(Filepath).toWideString().c_str(), &st);
 #endif
+
+	if (slashAtEnd)
+	{
+		FileSystem::dirAddSlashAtEnd(Filepath);
+	}
+
+	return 0 == res;
 }
 
 FileInfo& FileInfo::operator=( const FileInfo& Other )
