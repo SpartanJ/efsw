@@ -15,8 +15,11 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 	WatcherWin32 * pWatch = tWatch->Watch;
 	size_t offset = 0;
 
-	if(dwNumberOfBytesTransfered == 0)
+	if (dwNumberOfBytesTransfered == 0)
+	{
+		RefreshWatch(tWatch); // If dwNumberOfBytesTransfered == 0, it means the buffer overflowed (too many changes between GetOverlappedResults calls). Those events are lost, but at least we can refresh so subsequent changes are seen again.
 		return;
+	}
 
 	if (dwErrorCode == ERROR_SUCCESS)
 	{

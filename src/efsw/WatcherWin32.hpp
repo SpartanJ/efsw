@@ -61,7 +61,7 @@ class WatcherWin32 : public Watcher
 
 		WatcherStructWin32 * Struct;
 		HANDLE DirHandle;
-		BYTE mBuffer[32 * 1024];
+		BYTE mBuffer[63 * 1024]; // do NOT make this bigger than 64K because it will fail if the folder being watched is on the network! (see http://msdn.microsoft.com/en-us/library/windows/desktop/aa365465(v=vs.85).aspx)
 		LPARAM lParam;
 		DWORD NotifyFilter;
 		bool StopNow;
