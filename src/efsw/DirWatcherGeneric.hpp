@@ -19,7 +19,7 @@ class DirWatcherGeneric
 		DirWatchMap			Directories;
 		bool				Recursive;
 
-		DirWatcherGeneric( DirWatcherGeneric * parent, WatcherGeneric * ws, const std::string& directory, bool recursive );
+		DirWatcherGeneric( DirWatcherGeneric * parent, WatcherGeneric * ws, const std::string& directory, bool recursive, bool reportNewFiles = false );
 
 		~DirWatcherGeneric();
 
@@ -31,7 +31,7 @@ class DirWatcherGeneric
 
 		bool pathInWatches( std::string path );
 
-		void addChilds();
+		void addChilds( bool reportNewFiles = true );
 
 		DirWatcherGeneric * findDirWatcher( std::string dir );
 
