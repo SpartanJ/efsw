@@ -44,8 +44,8 @@ char FileSystem::getOSSlash()
 
 bool FileSystem::isDirectory( const std::string& path )
 {
-	struct stat st;
-	int res = stat( path.c_str(), &st );
+	struct stat64 st;
+	int res = stat64( path.c_str(), &st );
 
 	if ( 0 == res )
 	{

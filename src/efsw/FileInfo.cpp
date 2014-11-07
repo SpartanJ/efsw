@@ -96,8 +96,8 @@ void FileInfo::getInfo()
 	}
 
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat st;
-	int res = stat( Filepath.c_str(), &st );
+	struct stat64 st;
+	int res = stat64( Filepath.c_str(), &st );
 	#else
 	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
@@ -128,8 +128,8 @@ void FileInfo::getRealInfo()
 	}
 
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat st;
-	int res = lstat( Filepath.c_str(), &st );
+	struct stat64 st;
+	int res = lstat64( Filepath.c_str(), &st );
 	#else
 	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
@@ -211,11 +211,11 @@ bool FileInfo::exists()
 	}
 
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat st;
-	int res = stat(Filepath.c_str(), &st);
+	struct stat64 st;
+	int res = stat64( Filepath.c_str(), &st ) == 0;
 #else
 	struct _stat st;
-	int res = _wstat(String::fromUtf8(Filepath).toWideString().c_str(), &st);
+	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st ) == 0;
 #endif
 
 	if (slashAtEnd)
