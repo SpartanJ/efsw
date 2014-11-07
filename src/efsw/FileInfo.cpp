@@ -212,10 +212,10 @@ bool FileInfo::exists()
 
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	struct stat64 st;
-	int res = stat64( Filepath.c_str(), &st ) == 0;
+	int res = stat64( Filepath.c_str(), &st );
 #else
 	struct _stat st;
-	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st ) == 0;
+	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
 #endif
 
 	if (slashAtEnd)
