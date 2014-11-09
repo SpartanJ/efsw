@@ -68,6 +68,21 @@ bool FileSystem::isDirectory( const std::string& path )
 	return GetFileAttributesW( String( path ).toWideString().c_str() ) == FILE_ATTRIBUTE_DIRECTORY;
 }
 
+bool FileSystem::isRemoteFS( const std::string& directory )
+{
+	if ((directory[0] == '\\' || directory[0] == '/')  &&
+		(directory[1] == '\\' || directory[1] == '/'))
+	{
+		return true;
+	}
+
+	if ( directory.size() >= 3 )
+	{
+		return 4 == GetDriveTypeA( directory.substr( 0, 3 ).c_str() );
+	}
+
+	return false;
+}
 
 }}
 

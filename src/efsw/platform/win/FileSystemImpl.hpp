@@ -17,6 +17,8 @@ class FileSystem
 		static char getOSSlash();
 
 		static bool isDirectory( const std::string& path );
+
+		static bool isRemoteFS( const std::string& directory );
 };
 
 }}

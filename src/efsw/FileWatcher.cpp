@@ -1,6 +1,7 @@
 #include <efsw/efsw.hpp>
 #include <efsw/FileWatcherImpl.hpp>
 #include <efsw/FileWatcherGeneric.hpp>
+#include <efsw/FileSystem.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 #	include <efsw/FileWatcherWin32.hpp>
@@ -79,12 +80,26 @@ FileWatcher::~FileWatcher()
 
 WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher)
 {
-	return mImpl->addWatch(directory, watcher, false);
+	if ( mImpl->mIsGeneric || !FileSystem::isRemoteFS( directory ) )
+	{
+		return mImpl->addWatch(directory, watcher, false);
+	}
+	else
+	{
+		return Errors::Log::createLastError( Errors::FileRemote, directory );
+	}
 }
 
 WatchID FileWatcher::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
 {
-	return mImpl->addWatch(directory, watcher, recursive);
+	if ( mImpl->mIsGeneric || !FileSystem::isRemoteFS( directory ) )
+	{
+		return mImpl->addWatch(directory, watcher, recursive);
+	}
+	else
+	{
+		return Errors::Log::createLastError( Errors::FileRemote, directory );
+	}
 }
 
 void FileWatcher::removeWatch(const std::string& directory)

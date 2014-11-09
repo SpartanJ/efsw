@@ -11,6 +11,7 @@ FileWatcherGeneric::FileWatcherGeneric( FileWatcher * parent ) :
 	mLastWatchID( 0 )
 {
 	mInitOK = true;
+	mIsGeneric = true;
 }
 
 FileWatcherGeneric::~FileWatcherGeneric()

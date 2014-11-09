@@ -31,6 +31,8 @@ class FileSystem
 		static std::string getLinkRealPath( std::string dir, std::string& curPath );
 
 		static std::string precomposeFileName(const std::string& name);
+
+		static bool isRemoteFS( const std::string& directory );
 };
 
 }

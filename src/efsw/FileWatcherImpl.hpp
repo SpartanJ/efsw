@@ -46,6 +46,7 @@ class FileWatcherImpl
 
 		FileWatcher *	mFileWatcher;
 		bool			mInitOK;
+		bool			mIsGeneric;
 };
 
 }

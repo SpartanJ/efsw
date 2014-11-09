@@ -98,9 +98,9 @@ std::string FileSystem::getLinkRealPath( std::string dir, std::string& curPath )
 	return "";
 }
 
-std::string FileSystem::precomposeFileName(const std::string& name)
+std::string FileSystem::precomposeFileName( const std::string& name )
 {
-	#if EFSW_OS == EFSW_OS_MACOSX
+#if EFSW_OS == EFSW_OS_MACOSX
 	CFStringRef cfStringRef = CFStringCreateWithCString(kCFAllocatorDefault, name.c_str(), kCFStringEncodingUTF8);
 	CFMutableStringRef cfMutable = CFStringCreateMutableCopy(NULL, 0, cfStringRef);
 
@@ -113,9 +113,14 @@ std::string FileSystem::precomposeFileName(const std::string& name)
 	CFRelease(cfMutable);
 
 	return std::string(c_str);
-	#else
+#else
 	return name;
-	#endif
+#endif
+}
+
+bool FileSystem::isRemoteFS( const std::string& directory )
+{
+	return Platform::FileSystem::isRemoteFS( directory );
 }
 
 }

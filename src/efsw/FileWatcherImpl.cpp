@@ -6,7 +6,8 @@ namespace efsw {
 
 FileWatcherImpl::FileWatcherImpl( FileWatcher * parent ) :
 	mFileWatcher( parent ),
-	mInitOK( false )
+	mInitOK( false ),
+	mIsGeneric( false )
 {
 	System::maxFD();
 }

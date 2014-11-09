@@ -94,7 +94,8 @@ enum Error
 	FileRepeated	= -2,
 	FileOutOfScope	= -3,
 	FileNotReadable	= -4,
-	Unspecified		= -5
+	FileRemote		= -5, /** Directory in remote file system ( create a generic FileWatcher instance to watch this directory ). */
+	Unspecified		= -6
 };
 
 class EFSW_API Log
