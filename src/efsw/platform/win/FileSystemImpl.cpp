@@ -65,7 +65,7 @@ char FileSystem::getOSSlash()
 
 bool FileSystem::isDirectory( const std::string& path )
 {
-	return GetFileAttributesW( String( path ).toWideString().c_str() ) == FILE_ATTRIBUTE_DIRECTORY;
+	return 0 != ( GetFileAttributesW( String( path ).toWideString().c_str() ) & FILE_ATTRIBUTE_DIRECTORY );
 }
 
 bool FileSystem::isRemoteFS( const std::string& directory )
