@@ -25,6 +25,11 @@
 	#endif
 #endif
 
+#if EFSW_OS == EFSW_OS_HAIKU
+	#define stat64 stat
+	#define lstat64 lstat
+#endif
+
 namespace efsw {
 
 bool FileInfo::exists( const std::string& filePath )

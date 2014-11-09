@@ -9,12 +9,16 @@
 #include <sys/stat.h>
 #include <cstdlib>
 
-
 #if EFSW_OS == EFSW_OS_LINUX || EFSW_OS == EFSW_OS_SOLARIS || EFSW_OS == EFSW_OS_ANDROID
 #include <sys/vfs.h>
 #elif EFSW_OS == EFSW_OS_MACOSX || EFSW_OS == EFSW_OS_BSD || EFSW_OS == EFSW_OS_IOS
 #include <sys/param.h>
 #include <sys/mount.h>
+#endif
+
+#if EFSW_OS == EFSW_OS_HAIKU
+	#define stat64 stat
+	#define lstat64 lstat
 #endif
 
 /** Remote file systems codes */
