@@ -6,6 +6,15 @@
 #include <efsw/FileSystem.hpp>
 #include <dirent.h>
 #include <cstring>
+
+#ifndef _DARWIN_FEATURE_64_BIT_INODE
+#define _DARWIN_FEATURE_64_BIT_INODE
+#endif
+
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include <sys/stat.h>
 #include <cstdlib>
 
@@ -14,11 +23,6 @@
 #elif EFSW_OS == EFSW_OS_MACOSX || EFSW_OS == EFSW_OS_BSD || EFSW_OS == EFSW_OS_IOS
 #include <sys/param.h>
 #include <sys/mount.h>
-#endif
-
-#if EFSW_OS == EFSW_OS_HAIKU
-	#define stat64 stat
-	#define lstat64 lstat
 #endif
 
 /** Remote file systems codes */
@@ -80,8 +84,8 @@ char FileSystem::getOSSlash()
 
 bool FileSystem::isDirectory( const std::string& path )
 {
-	struct stat64 st;
-	int res = stat64( path.c_str(), &st );
+	struct stat st;
+	int res = stat( path.c_str(), &st );
 
 	if ( 0 == res )
 	{

@@ -1,7 +1,17 @@
 #include <efsw/FileInfo.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/String.hpp>
+
+#ifndef _DARWIN_FEATURE_64_BIT_INODE
+#define _DARWIN_FEATURE_64_BIT_INODE
+#endif
+
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include <sys/stat.h>
+
 #include <limits.h>
 #include <stdlib.h>
 
@@ -23,11 +33,6 @@
 	#ifndef S_ISRDBL
 	#define S_ISRDBL(f) ((f)&S_IRUSR)
 	#endif
-#endif
-
-#if EFSW_OS == EFSW_OS_HAIKU
-	#define stat64 stat
-	#define lstat64 lstat
 #endif
 
 namespace efsw {
@@ -101,8 +106,8 @@ void FileInfo::getInfo()
 	}
 
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat64 st;
-	int res = stat64( Filepath.c_str(), &st );
+	struct stat st;
+	int res = stat( Filepath.c_str(), &st );
 	#else
 	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
@@ -133,8 +138,8 @@ void FileInfo::getRealInfo()
 	}
 
 	#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat64 st;
-	int res = lstat64( Filepath.c_str(), &st );
+	struct stat st;
+	int res = lstat( Filepath.c_str(), &st );
 	#else
 	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
@@ -216,8 +221,8 @@ bool FileInfo::exists()
 	}
 
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat64 st;
-	int res = stat64( Filepath.c_str(), &st );
+	struct stat st;
+	int res = stat( Filepath.c_str(), &st );
 #else
 	struct _stat st;
 	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
