@@ -74,7 +74,7 @@ bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear)
 				pWatch->Watch->NotifyFilter,
 				NULL,
 				&pWatch->Overlapped,
-				_clear ? 0 : WatchCallback
+				NULL
 	) != 0;
 }
 
