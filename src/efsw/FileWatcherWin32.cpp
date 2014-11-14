@@ -20,10 +20,14 @@ FileWatcherWin32::~FileWatcherWin32()
 {
 	WatchVector::iterator iter = mWatches.begin();
 
+	mWatchesLock.lock();
+
 	for(; iter != mWatches.end(); ++iter)
 	{
 		DestroyWatch((*iter));
 	}
+
+	mWatchesLock.unlock();
 
 	mHandles.clear();
 	mWatches.clear();

@@ -75,11 +75,12 @@ enum efsw_action
 
 enum efsw_error
 {
-	EFSW_NOTFOUND,
-	EFSW_REPEATED,
-	EFSW_OUTOFSCOPE,
-	EFSW_NOTREADABLE,
-	EFSW_UNSPECIFIED
+	EFSW_NOTFOUND		= -1,
+	EFSW_REPEATED		= -2,
+	EFSW_OUTOFSCOPE		= -3,
+	EFSW_NOTREADABLE	= -4,
+	EFSW_REMOTE			= -5,
+	EFSW_UNSPECIFIED	= -6
 };
 
 /// Basic interface for listening for file events.

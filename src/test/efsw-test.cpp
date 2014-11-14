@@ -43,6 +43,7 @@ efsw::WatchID handleWatchID( efsw::WatchID watchid )
 		case efsw::Errors::FileNotFound:
 		case efsw::Errors::FileRepeated:
 		case efsw::Errors::FileOutOfScope:
+		case efsw::Errors::FileRemote:
 		case efsw::Errors::Unspecified:
 		{
 			std::cout << efsw::Errors::Log::getLastErrorLog().c_str() << std::endl;
