@@ -27,12 +27,12 @@ FileWatcherWin32::~FileWatcherWin32()
 		DestroyWatch((*iter));
 	}
 
-	mWatchesLock.unlock();
-
 	mHandles.clear();
 	mWatches.clear();
 
 	mInitOK = false;
+
+	mWatchesLock.unlock();
 
 	efSAFE_DELETE( mThread );
 }
@@ -183,7 +183,10 @@ void FileWatcherWin32::run()
 
 			mWatchesLock.unlock();
 
-			System::sleep( 10 );
+			if ( mInitOK )
+			{
+				System::sleep( 10 );
+			}
 		}
 		else
 		{
