@@ -56,6 +56,8 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	WatchID watchid = ++mLastWatchID;
 
+	mWatchesLock.lock();
+
 	WatcherStructWin32 * watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
 																			FILE_NOTIFY_CHANGE_LAST_WRITE |
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
@@ -79,7 +81,6 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 	watch->Watch->DirName = new char[dir.length()+1];
 	strcpy(watch->Watch->DirName, dir.c_str());
 
-	mWatchesLock.lock();
 	mHandles.push_back( watch->Watch->DirHandle );
 	mWatches.push_back( watch );
 	mWatchesLock.unlock();
@@ -168,6 +169,14 @@ void FileWatcherWin32::run()
 			for ( std::size_t i = 0; i < mWatches.size(); i++ )
 			{
 				WatcherStructWin32 * watch = mWatches[ i ];
+
+				// If the overlapped struct was cancelled ( because the creator thread doesn't exists anymore ),
+				// we recreate the overlapped in the current thread and refresh the watch
+				if ( /*STATUS_CANCELED*/0xC0000120 == watch->Overlapped.Internal )
+				{
+					watch->Overlapped = OVERLAPPED();
+					RefreshWatch(watch);
+				}
 
 				// First ensure that the handle is the same, this means that the watch was not removed.
 				if ( HasOverlappedIoCompleted( &watch->Overlapped ) && mHandles[ i ] == watch->Watch->DirHandle )

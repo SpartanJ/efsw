@@ -64,7 +64,7 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 }
 
 /// Refreshes the directory monitoring.
-bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear)
+bool RefreshWatch(WatcherStructWin32* pWatch)
 {
 	return ReadDirectoryChangesW(
 				pWatch->Watch->DirHandle,
@@ -89,7 +89,7 @@ void DestroyWatch(WatcherStructWin32* pWatch)
 
 		CancelIo(tWatch->DirHandle);
 
-		RefreshWatch(pWatch, true);
+		RefreshWatch(pWatch);
 
 		if (!HasOverlappedIoCompleted(&pWatch->Overlapped))
 		{

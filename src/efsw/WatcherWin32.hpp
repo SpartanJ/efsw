@@ -37,7 +37,7 @@ class cLastModifiedEvent
 		std::string fileName;
 };
 
-bool RefreshWatch(WatcherStructWin32* pWatch, bool _clear = false);
+bool RefreshWatch(WatcherStructWin32* pWatch);
 
 void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped);
 
