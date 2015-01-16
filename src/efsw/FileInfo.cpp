@@ -209,8 +209,6 @@ std::string FileInfo::linksTo()
 
 			return tstr;
 		}
-
-		return std::string("");
 	}
 #endif
 	return std::string("");
