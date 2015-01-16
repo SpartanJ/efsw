@@ -526,6 +526,10 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 	{
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
+	else if ( NULL != parent && FileSystem::isRemoteFS( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRemote, dir );
+	}
 
 	std::string curPath;
 	std::string link( FileSystem::getLinkRealPath( dir, curPath ) );

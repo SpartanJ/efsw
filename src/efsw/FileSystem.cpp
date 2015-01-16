@@ -30,7 +30,7 @@ bool FileSystem::slashAtEnd( std::string &dir )
 
 void FileSystem::dirAddSlashAtEnd( std::string& dir )
 {
-	if ( dir.size() && dir[ dir.size() - 1 ] != getOSSlash() )
+	if ( dir.size() > 1 && dir[ dir.size() - 1 ] != getOSSlash() )
 	{
 		dir.push_back( getOSSlash() );
 	}
@@ -38,7 +38,7 @@ void FileSystem::dirAddSlashAtEnd( std::string& dir )
 
 void FileSystem::dirRemoveSlashAtEnd( std::string& dir )
 {
-	if ( dir.size() && dir[ dir.size() - 1 ] == getOSSlash() )
+	if ( dir.size() > 1 && dir[ dir.size() - 1 ] == getOSSlash() )
 	{
 		dir.erase( dir.size() - 1 );
 	}

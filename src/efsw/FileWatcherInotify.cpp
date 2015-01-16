@@ -92,6 +92,10 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	{
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
+	else if ( NULL != parent && FileSystem::isRemoteFS( dir ) )
+	{
+		return Errors::Log::createLastError( Errors::FileRemote, dir );
+	}
 
 	/// Check if the directory is a symbolic link
 	std::string curPath;

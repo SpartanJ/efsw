@@ -201,11 +201,16 @@ std::string FileInfo::linksTo()
 	{
 		char * ch = realpath( Filepath.c_str(), NULL);
 
-		std::string tstr( ch );
+		if ( NULL != ch )
+		{
+			std::string tstr( ch );
 
-		free( ch );
+			free( ch );
 
-		return tstr;
+			return tstr;
+		}
+
+		return std::string("");
 	}
 #endif
 	return std::string("");

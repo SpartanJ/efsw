@@ -110,7 +110,7 @@ void DirWatcherGeneric::addChilds( bool reportNewFiles )
 
 		for ( FileInfoMap::iterator it = DirSnap.Files.begin(); it != DirSnap.Files.end(); it++ )
 		{
-			if ( it->second.isDirectory() && it->second.isReadable() )
+			if ( it->second.isDirectory() && it->second.isReadable() && !FileSystem::isRemoteFS( it->second.Filepath ) )
 			{
 				/// Check if the directory is a symbolic link
 				std::string curPath;
@@ -321,7 +321,7 @@ DirWatcherGeneric * DirWatcherGeneric::createDirectory( std::string newdir )
 
 	FileInfo fi( dir );
 
-	if ( !fi.isDirectory() || !fi.isReadable() )
+	if ( !fi.isDirectory() || !fi.isReadable() || FileSystem::isRemoteFS( dir ) )
 	{
 		return NULL;
 	}
