@@ -415,7 +415,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 	if( IN_CLOSE_WRITE & action )
 	{
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,Actions::Modified );
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Modified );
 	}
 	else if( IN_MOVED_TO & action )
 	{
@@ -423,6 +423,8 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 		if ( watch->OldFileName.empty() )
 		{
 			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
+
+			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Modified );
 
 			checkForNewWatcher( watch, fpath );
 		}
