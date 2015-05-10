@@ -96,9 +96,9 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 endif()
 
 if (MSVC)
-	add_definitions(-Wall)
-else ()
 	add_definitions(-D_SCL_SECURE_NO_WARNINGS)
+else ()
+	add_definitions(-Wall -Wno-long-long)
 endif()
 
 if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
