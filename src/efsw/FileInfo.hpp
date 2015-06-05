@@ -49,6 +49,7 @@ class FileInfo
 
 		std::string		Filepath;
 		Uint64			ModificationTime;
+		Uint64			Size;
 		Uint32			OwnerId;
 		Uint32			GroupId;
 		Uint32			Permissions;

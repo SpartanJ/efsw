@@ -123,6 +123,7 @@ void FileInfo::getInfo()
 	if ( 0 == res )
 	{
 		ModificationTime	= st.st_mtime;
+		Size				= st.st_size;
 		OwnerId				= st.st_uid;
 		GroupId				= st.st_gid;
 		Permissions			= st.st_mode;
@@ -155,6 +156,7 @@ void FileInfo::getRealInfo()
 	if ( 0 == res )
 	{
 		ModificationTime	= st.st_mtime;
+		Size				= st.st_size;
 		OwnerId				= st.st_uid;
 		GroupId				= st.st_gid;
 		Permissions			= st.st_mode;
@@ -170,6 +172,7 @@ void FileInfo::getRealInfo()
 bool FileInfo::operator==( const FileInfo& Other ) const
 {
 	return (	ModificationTime	== Other.ModificationTime &&
+				Size				== Other.Size &&
 				OwnerId				== Other.OwnerId &&
 				GroupId				== Other.GroupId &&
 				Permissions			== Other.Permissions &&
@@ -249,6 +252,7 @@ bool FileInfo::exists()
 FileInfo& FileInfo::operator=( const FileInfo& Other )
 {
 	this->Filepath			= Other.Filepath;
+	this->Size				= Other.Size;
 	this->ModificationTime	= Other.ModificationTime;
 	this->GroupId			= Other.GroupId;
 	this->OwnerId			= Other.OwnerId;
