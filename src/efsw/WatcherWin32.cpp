@@ -41,7 +41,7 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 			{
 				FileInfo fifile( std::string( pWatch->DirName ) + nfile );
 
-				if ( pWatch->LastModifiedEvent.file.ModificationTime == fifile.ModificationTime && pWatch->LastModifiedEvent.fileName == nfile )
+				if ( pWatch->LastModifiedEvent.file.ModificationTime == fifile.ModificationTime && pWatch->LastModifiedEvent.file.Size == fifile.Size && pWatch->LastModifiedEvent.fileName == nfile )
 				{
 					skip = true;
 				}
