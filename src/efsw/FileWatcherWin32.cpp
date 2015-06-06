@@ -62,7 +62,6 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 																			FILE_NOTIFY_CHANGE_LAST_WRITE |
 																			FILE_NOTIFY_CHANGE_FILE_NAME |
 																			FILE_NOTIFY_CHANGE_DIR_NAME |
-																			FILE_NOTIFY_CHANGE_ATTRIBUTES | 
 																			FILE_NOTIFY_CHANGE_SIZE
 	);
 
