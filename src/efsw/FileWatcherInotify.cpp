@@ -321,16 +321,16 @@ void FileWatcherInotify::run()
 	static char buff[BUFF_SIZE] = {0};
 	WatchMap::iterator wit;
 	std::list<WatcherInotify*> movedOutsideWatches;
-	
-	fd_set rfds;
-	FD_ZERO (&rfds);
-	FD_SET (mFD, &rfds);
-	timeval timeout;
-	timeout.tv_sec=0;
-	timeout.tv_usec=100000;
 
 	do
 	{
+		fd_set rfds;
+		FD_ZERO (&rfds);
+		FD_SET (mFD, &rfds);
+		timeval timeout;
+		timeout.tv_sec=0;
+		timeout.tv_usec=100000;
+
 		if( select (FD_SETSIZE, &rfds, NULL, NULL, &timeout) > 0 )
 		{
 			ssize_t len, i = 0;
