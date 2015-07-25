@@ -5,6 +5,59 @@ efsw_major_version	= "1"
 efsw_minor_version	= "0"
 efsw_patch_version	= "0"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
+efsw_include_paths	= { }
+
+function trim(s)
+	return (s:gsub("^%s*(.-)%s*$", "%1"))
+end
+
+function insert_include_paths( file )
+	local paths = { }
+	local lines = file:read('*all')
+	
+	for line in string.gmatch(lines, '([^\n]+)')
+	do
+		table.insert( paths, trim( line ) )
+	end
+	
+	file:close()
+	
+	return paths
+end
+
+function get_include_paths()
+	local file = io.popen( "echo | gcc -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/'", 'r' )
+
+	efsw_include_paths = insert_include_paths( file )
+	
+	if next(efsw_include_paths) == nil then
+		file = io.popen( "echo | clang++ -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/' | grep -v 'nonexistent'", 'r' )
+		
+		efsw_include_paths = insert_include_paths( file )
+		
+		if next(efsw_include_paths) == nil then
+			table.insert( efsw_include_paths, "/usr/include" )
+			table.insert( efsw_include_paths, "/usr/local/include" )
+		end
+	end
+end
+
+function inotify_header_exists()
+	if next(efsw_include_paths) == nil then
+		get_include_paths()
+	end
+	
+	for _,v in pairs( efsw_include_paths )
+	do
+		local cur_path = v .. "/sys/inotify.h"
+		
+		if os.isfile( cur_path ) then
+			return true
+		end
+	end
+	
+	return false
+end
 
 function string.starts(String,Start)
 	if ( _ACTION ) then
@@ -47,7 +100,7 @@ function conf_excludes()
 		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
 	end
 	
-	if os.is("linux") and not os.isfile("/usr/include/sys/inotify.h") and not os.isfile("/usr/local/include/sys/inotify.h") then
+	if os.is("linux") and not inotify_header_exists() then
 		defines { "EFSW_INOTIFY_NOSYS" }
 	end
 end
