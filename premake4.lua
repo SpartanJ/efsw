@@ -5,47 +5,47 @@ efsw_major_version	= "1"
 efsw_minor_version	= "0"
 efsw_patch_version	= "0"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
-efsw_include_paths	= { }
-
-function trim(s)
-	return (s:gsub("^%s*(.-)%s*$", "%1"))
-end
-
-function insert_include_paths( file )
-	local paths = { }
-	local lines = file:read('*all')
-	
-	for line in string.gmatch(lines, '([^\n]+)')
-	do
-		table.insert( paths, trim( line ) )
-	end
-	
-	file:close()
-	
-	return paths
-end
 
 function get_include_paths()
+	local function _insert_include_paths( file )
+		local function _trim(s)
+			return (s:gsub("^%s*(.-)%s*$", "%1"))
+		end
+
+		local paths = { }
+		local lines = file:read('*all')
+		
+		for line in string.gmatch(lines, '([^\n]+)')
+		do
+			table.insert( paths, _trim( line ) )
+		end
+		
+		file:close()
+		
+		return paths
+	end
+
+	local include_paths = { }
 	local file = io.popen( "echo | gcc -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/'", 'r' )
 
-	efsw_include_paths = insert_include_paths( file )
+	include_paths = _insert_include_paths( file )
 	
-	if next(efsw_include_paths) == nil then
+	if next(include_paths) == nil then
 		file = io.popen( "echo | clang++ -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/' | grep -v 'nonexistent'", 'r' )
 		
-		efsw_include_paths = insert_include_paths( file )
+		include_paths = _insert_include_paths( file )
 		
-		if next(efsw_include_paths) == nil then
-			table.insert( efsw_include_paths, "/usr/include" )
-			table.insert( efsw_include_paths, "/usr/local/include" )
+		if next(include_paths) == nil then
+			table.insert( include_paths, "/usr/include" )
+			table.insert( include_paths, "/usr/local/include" )
 		end
 	end
+	
+	return include_paths
 end
 
 function inotify_header_exists()
-	if next(efsw_include_paths) == nil then
-		get_include_paths()
-	end
+	local efsw_include_paths = get_include_paths()
 	
 	for _,v in pairs( efsw_include_paths )
 	do
