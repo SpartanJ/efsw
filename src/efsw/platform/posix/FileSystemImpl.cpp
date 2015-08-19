@@ -102,7 +102,7 @@ bool FileSystem::isRemoteFS( const std::string& directory )
 
 	statfs( directory.c_str(), &statfsbuf );
 
-	switch ( statfsbuf.f_type )
+	switch ( statfsbuf.f_type | 0UL )
 	{
 		case S_MAGIC_AFS: /* 0x5346414F remote */
 		case S_MAGIC_AUFS: /* 0x61756673 remote */
