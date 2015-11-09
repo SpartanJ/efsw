@@ -100,7 +100,7 @@ void FileWatcherWin32::removeWatch(const std::string& directory)
 		if(directory == (*iter)->Watch->DirName)
 		{
 			removeWatch((*iter)->Watch->ID);
-			return;
+			break;
 		}
 	}
 
