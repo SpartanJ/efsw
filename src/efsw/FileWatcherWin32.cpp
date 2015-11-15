@@ -2,6 +2,7 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/System.hpp>
 #include <efsw/String.hpp>
+#include <efsw/Lock.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -20,19 +21,19 @@ FileWatcherWin32::~FileWatcherWin32()
 {
 	WatchVector::iterator iter = mWatches.begin();
 
-	mWatchesLock.lock();
-
-	for(; iter != mWatches.end(); ++iter)
 	{
-		DestroyWatch((*iter));
+		Lock lock( mWatchesLock );
+
+		for(; iter != mWatches.end(); ++iter)
+		{
+			DestroyWatch((*iter));
+		}
+
+		mHandles.clear();
+		mWatches.clear();
+
+		mInitOK = false;
 	}
-
-	mHandles.clear();
-	mWatches.clear();
-
-	mInitOK = false;
-
-	mWatchesLock.unlock();
 
 	efSAFE_DELETE( mThread );
 }
@@ -56,7 +57,7 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	WatchID watchid = ++mLastWatchID;
 
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	WatcherStructWin32 * watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
 																			FILE_NOTIFY_CHANGE_LAST_WRITE |
@@ -84,14 +85,13 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	mHandles.push_back( watch->Watch->DirHandle );
 	mWatches.push_back( watch );
-	mWatchesLock.unlock();
 
 	return watchid;
 }
 
 void FileWatcherWin32::removeWatch(const std::string& directory)
 {
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	WatchVector::iterator iter = mWatches.begin();
 
@@ -103,13 +103,11 @@ void FileWatcherWin32::removeWatch(const std::string& directory)
 			break;
 		}
 	}
-
-	mWatchesLock.unlock();
 }
 
 void FileWatcherWin32::removeWatch(WatchID watchid)
 {
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	WatchVector::iterator iter = mWatches.begin();
 
@@ -141,8 +139,6 @@ void FileWatcherWin32::removeWatch(WatchID watchid)
 			break;
 		}
 	}
-
-	mWatchesLock.unlock();
 }
 
 void FileWatcherWin32::watch()
@@ -165,33 +161,33 @@ void FileWatcherWin32::run()
 	{
 		if ( !mHandles.empty() )
 		{
-			mWatchesLock.lock();
-
-			for ( std::size_t i = 0; i < mWatches.size(); i++ )
 			{
-				WatcherStructWin32 * watch = mWatches[ i ];
+				Lock lock( mWatchesLock );
 
-				// If the overlapped struct was cancelled ( because the creator thread doesn't exists anymore ),
-				// we recreate the overlapped in the current thread and refresh the watch
-				if ( /*STATUS_CANCELED*/0xC0000120 == watch->Overlapped.Internal )
+				for ( std::size_t i = 0; i < mWatches.size(); i++ )
 				{
-					watch->Overlapped = OVERLAPPED();
-					RefreshWatch(watch);
-				}
+					WatcherStructWin32 * watch = mWatches[ i ];
 
-				// First ensure that the handle is the same, this means that the watch was not removed.
-				if ( HasOverlappedIoCompleted( &watch->Overlapped ) && mHandles[ i ] == watch->Watch->DirHandle )
-				{
-					DWORD bytes;
-
-					if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+					// If the overlapped struct was cancelled ( because the creator thread doesn't exists anymore ),
+					// we recreate the overlapped in the current thread and refresh the watch
+					if ( /*STATUS_CANCELED*/0xC0000120 == watch->Overlapped.Internal )
 					{
-						WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
+						watch->Overlapped = OVERLAPPED();
+						RefreshWatch(watch);
+					}
+
+					// First ensure that the handle is the same, this means that the watch was not removed.
+					if ( HasOverlappedIoCompleted( &watch->Overlapped ) && mHandles[ i ] == watch->Watch->DirHandle )
+					{
+						DWORD bytes;
+
+						if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
+						{
+							WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
+						}
 					}
 				}
 			}
-
-			mWatchesLock.unlock();
 
 			if ( mInitOK )
 			{
@@ -261,14 +257,12 @@ std::list<std::string> FileWatcherWin32::directories()
 {
 	std::list<std::string> dirs;
 
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	for ( WatchVector::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 	{
 		dirs.push_back( std::string( (*it)->Watch->DirName ) );
 	}
-
-	mWatchesLock.unlock();
 
 	return dirs;
 }
