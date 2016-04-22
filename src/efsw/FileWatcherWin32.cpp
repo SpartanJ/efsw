@@ -156,11 +156,6 @@ void FileWatcherWin32::watch()
 
 void FileWatcherWin32::run()
 {
-	if ( mHandles.empty() )
-	{
-		return;
-	}
-
 	do
 	{
 		if ( !mHandles.empty() )
