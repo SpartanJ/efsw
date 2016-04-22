@@ -3,6 +3,7 @@
 #include <efsw/System.hpp>
 #include <efsw/Debug.hpp>
 #include <efsw/String.hpp>
+#include <efsw/Lock.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
@@ -165,16 +166,15 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	
 	pWatch->init();
 
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 	mWatches.insert(std::make_pair(mLastWatchID, pWatch));
-	mWatchesLock.unlock();
 
 	return pWatch->ID;
 }
 
 void FileWatcherFSEvents::removeWatch(const std::string& directory)
 {
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	WatchMap::iterator iter = mWatches.begin();
 
@@ -186,13 +186,11 @@ void FileWatcherFSEvents::removeWatch(const std::string& directory)
 			return;
 		}
 	}
-
-	mWatchesLock.unlock();
 }
 
 void FileWatcherFSEvents::removeWatch(WatchID watchid)
 {
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	WatchMap::iterator iter = mWatches.find( watchid );
 
@@ -206,8 +204,6 @@ void FileWatcherFSEvents::removeWatch(WatchID watchid)
 	efDEBUG( "Removed watch %s\n", watch->Directory.c_str() );
 
 	efSAFE_DELETE( watch );
-
-	mWatchesLock.unlock();
 }
 
 void FileWatcherFSEvents::watch()
@@ -248,14 +244,12 @@ std::list<std::string> FileWatcherFSEvents::directories()
 {
 	std::list<std::string> dirs;
 
-	mWatchesLock.lock();
+	Lock lock( mWatchesLock );
 
 	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
 	{
 		dirs.push_back( std::string( it->second->Directory ) );
 	}
-
-	mWatchesLock.unlock();
 
 	return dirs;
 }
