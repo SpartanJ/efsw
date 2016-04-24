@@ -96,11 +96,6 @@ FileWatcherFSEvents::~FileWatcherFSEvents()
 	mWatches.clear();
 
 	mInitOK = false;
-	
-	if ( NULL != mRunLoopRef )
-	{
-		CFRunLoopStop( mRunLoopRef );
-	}
 
 	efSAFE_DELETE( mThread );
 }
@@ -233,6 +228,9 @@ void FileWatcherFSEvents::run()
 
 		CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
 	}
+
+	CFRunLoopStop( mRunLoopRef );
+	mRunLoopRef = NULL;
 }
 
 void FileWatcherFSEvents::handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename)

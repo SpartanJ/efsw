@@ -19,8 +19,6 @@ FileWatcherGeneric::~FileWatcherGeneric()
 {
 	mInitOK = false;
 
-	mThread->wait();
-
 	efSAFE_DELETE( mThread );
 
 	/// Delete the watches

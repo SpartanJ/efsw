@@ -45,8 +45,6 @@ FileWatcherKqueue::~FileWatcherKqueue()
 
 	mInitOK = false;
 
-	mThread->wait();
-
 	efSAFE_DELETE( mThread );
 }
 
