@@ -12,62 +12,39 @@
 namespace efsw
 {
 
-//Return Darwin release number in int format 1000*MAJOR+MINOR.
-//E.g. 10007 for release 10.7
 int getOSXReleaseNumber()
 {
 	static int osxR = -1;
-
+	
 	if ( -1 == osxR )
 	{
 		struct utsname os;
-
+		
 		if ( -1 != uname( &os ) ) {
 			std::string release( os.release );
-
+			
 			size_t pos = release.find_first_of( '.' );
-
+			
 			if ( pos != std::string::npos )
 			{
-				std::string releasePart = release.substr( 0, pos );
-				release = release.substr( pos + 1 );
-
-				int rel = 0;
-
-				if ( String::fromString<int>( rel, releasePart ) )
-				{
-					osxR = rel * 1000;
-				}
-				else
-				{
-					return osxR;
-				}
-
-				pos = release.find_first_of( '.' );
-
-				if ( pos != std::string::npos )
-				{
-					releasePart = release.substr( 0, pos );
-				}
-				else
-				{
-					releasePart = release;
-				}
-
-				if ( String::fromString<int>( rel, releasePart ) )
-				{
-					osxR += rel;
-				}
+				release = release.substr( 0, pos );
+			}
+			
+			int rel = 0;
+			
+			if ( String::fromString<int>( rel, release ) )
+			{
+				osxR = rel;
 			}
 		}
 	}
-
+	
 	return osxR;
 }
 
 bool FileWatcherFSEvents::isGranular()
 {
-	return getOSXReleaseNumber() >= 10007;
+	return getOSXReleaseNumber() >= 11;
 }
 
 void FileWatcherFSEvents::FSEventCallback(	ConstFSEventStreamRef streamRef,
