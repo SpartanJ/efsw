@@ -74,7 +74,7 @@ This should never happen, except for the Kqueue implementation, see `Platform li
     efsw::WatchID watchID2 = fileWatcher->addWatch( "/usr", listener, false );
 
 	// Start watching asynchronously the directories
-	fileWatcher.watch();
+	fileWatcher->watch();
 
 	// Remove the second watcher added
     // You can also call removeWatch by passing the watch path ( it must end with an slash or backslash in windows, since that's how internally it's saved )
