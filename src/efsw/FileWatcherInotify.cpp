@@ -19,6 +19,7 @@
 #include <efsw/System.hpp>
 #include <efsw/Debug.hpp>
 #include <efsw/Lock.hpp>
+#include <efsw/String.hpp>
 
 #define BUFF_SIZE ((sizeof(struct inotify_event)+FILENAME_MAX)*1024)
 
@@ -312,6 +313,25 @@ void FileWatcherInotify::watch()
 	}
 }
 
+Watcher * FileWatcherInotify::watcherContainsDirectory( std::string dir )
+{
+	FileSystem::dirRemoveSlashAtEnd( dir );
+	std::string watcherPath = FileSystem::pathRemoveFileName( dir );
+	FileSystem::dirAddSlashAtEnd( watcherPath );
+
+	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ )
+	{
+		Watcher * watcher = it->second;
+
+		if ( watcher->Directory == watcherPath )
+		{
+			return watcher;
+		}
+	}
+
+	return NULL;
+}
+
 void FileWatcherInotify::run()
 {
 	static char buff[BUFF_SIZE] = {0};
@@ -348,7 +368,7 @@ void FileWatcherInotify::run()
 						{
 							handleAction(wit->second, pevent->name, pevent->mask);
 
-							/// Keep track of the IN_MOVED_FROM events to known if the IN_MOVED_TO event is also fired
+							/// Keep track of the IN_MOVED_FROM events to know if the IN_MOVED_TO event is also fired
 							if ( !wit->second->OldFileName.empty() )
 							{
 								movedOutsideWatches.push_back( wit->second );
@@ -364,13 +384,42 @@ void FileWatcherInotify::run()
 					/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
 					for ( std::list<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); it++ )
 					{
-						if ( !(*it)->OldFileName.empty() )
+						Watcher * watch = (*it);
+
+						if ( !watch->OldFileName.empty() )
 						{
-							/// So we send a IN_DELETE event for files that where moved outside of our scope
-							handleAction( *it, (*it)->OldFileName, IN_DELETE );
+							/// Check if the file move was a folder already being watched
+							std::list<Watcher*> eraseWatches;
+
+							for(; wit != mWatches.end(); ++wit)
+							{
+								Watcher * oldWatch = wit->second;
+
+								if ( oldWatch != watch &&
+									-1 != String::strStartsWith( watch->Directory + watch->OldFileName + "/", oldWatch->Directory ) )
+								{
+									eraseWatches.push_back( oldWatch );
+								}
+							}
+
+							/// Remove invalid watches
+							eraseWatches.sort();
+
+							for ( std::list<Watcher*>::reverse_iterator eit = eraseWatches.rbegin(); eit != eraseWatches.rend(); eit++ )
+							{
+								Watcher * rmWatch = *eit;
+
+								/// Create Delete event for removed watches that have been moved too
+								if ( Watcher * cntWatch = watcherContainsDirectory( rmWatch->Directory ) )
+								{
+									handleAction( cntWatch, FileSystem::fileNameFromPath( rmWatch->Directory ), IN_DELETE );
+								}
+
+								removeWatch( rmWatch->ID );
+							}
 
 							/// Remove the OldFileName
-							(*it)->OldFileName = "";
+							watch->OldFileName = "";
 						}
 					}
 
