@@ -2,6 +2,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
+#include <climits>
 #ifndef WIN32_LEAN_AND_MEAN
 	#define WIN32_LEAN_AND_MEAN
 #endif
