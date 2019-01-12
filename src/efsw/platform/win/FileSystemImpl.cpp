@@ -10,6 +10,8 @@
 
 #ifndef EFSW_COMPILER_MSVC
 #include <dirent.h>
+#else
+#include <direct.h>
 #endif
 
 namespace efsw { namespace Platform {
