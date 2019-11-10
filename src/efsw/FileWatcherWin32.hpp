@@ -56,6 +56,8 @@ class FileWatcherWin32 : public FileWatcherImpl
 
 		bool pathInWatches( const std::string& path );
 
+		WatcherStructWin32* pathInWatchesRemoved( const std::string& path );
+
 		/// Remove all directory watches.
 		void removeAllWatches();
 

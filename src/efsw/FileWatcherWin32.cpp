@@ -45,6 +45,13 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	if ( pathInWatches( dir ) )
 	{
+		if ( WatcherStructWin32* oldWatcher = pathInWatchesRemoved( dir ) )
+		{
+			mWatchesRemoved.erase( oldWatcher );
+
+			return oldWatcher->Watch->ID;
+		}
+
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
 
@@ -297,6 +304,8 @@ std::list<std::string> FileWatcherWin32::directories()
 
 bool FileWatcherWin32::pathInWatches( const std::string& path )
 {
+	Lock lock( mWatchesLock );
+
 	for ( Watches::iterator it = mWatches.begin(); it != mWatches.end(); ++it )
 	{
 		if ( (*it)->Watch->DirName == path )
@@ -306,6 +315,19 @@ bool FileWatcherWin32::pathInWatches( const std::string& path )
 	}
 
 	return false;
+}
+
+WatcherStructWin32* FileWatcherWin32::pathInWatchesRemoved(const std::string & path)
+{
+	for ( Watches::iterator it = mWatchesRemoved.begin(); it != mWatchesRemoved.end(); ++it )
+	{
+		if ( (*it)->Watch->DirName == path )
+		{
+			return (*it);
+		}
+	}
+
+	return NULL;
 }
 
 }
