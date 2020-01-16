@@ -60,33 +60,6 @@ namespace efsw { namespace Platform {
 
 #if EFSW_OS == EFSW_OS_LINUX
 
-#pragma pack(push, 1)
-struct ntfs_super_block
-{
-	char		jump[3];
-	char		oem_id[8];
-};
-#pragma pack(pop)
-
-bool isNTFS( std::string device )
-{
-	FILE * fd = fopen( device.c_str(), "r" );
-
-	ntfs_super_block ns;
-
-	if ( fd != NULL )
-	{
-		fread( &ns, 1, sizeof(ntfs_super_block), fd );
-		fclose( fd );
-
-		std::string oemId( ns.oem_id );
-
-		return oemId.compare(0, 4, "NTFS") == 0;
-	}
-
-	return false;
-}
-
 std::string findMountPoint( std::string file )
 {
 	std::string cwd = FileSystem::getCurrentWorkingDirectory();
@@ -178,7 +151,7 @@ bool isLocalFUSEDirectory( std::string directory )
 	{
 		std::string devicePath = findDevicePath( directory );
 
-		return ( !devicePath.empty() && isNTFS( devicePath ) );
+		return !devicePath.empty();
 	}
 
 	return false;
