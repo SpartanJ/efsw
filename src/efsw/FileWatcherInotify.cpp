@@ -338,6 +338,9 @@ void FileWatcherInotify::run()
 	WatchMap::iterator wit;
 	std::list<WatcherInotify*> movedOutsideWatches;
 
+	WatcherInotify *currentMoveFrom = NULL;
+	u_int32_t currentMoveCookie = -1;
+
 	do
 	{
 		fd_set rfds;
@@ -368,66 +371,101 @@ void FileWatcherInotify::run()
 
 						if ( wit != mWatches.end() )
 						{
-							handleAction(wit->second, pevent->name, pevent->mask);
+							handleAction(wit->second, (char *)pevent->name, pevent->mask);
 
-							/// Keep track of the IN_MOVED_FROM events to know if the IN_MOVED_TO event is also fired
-							if ( !wit->second->OldFileName.empty() )
+							if (
+								( pevent->mask & IN_MOVED_TO ) &&
+								wit->second == currentMoveFrom &&
+								pevent->cookie == currentMoveCookie
+							)
 							{
-								movedOutsideWatches.push_back( wit->second );
+								/// make pair success
+								currentMoveFrom = NULL;
+								currentMoveCookie = -1;
+							}
+							else
+							if ( pevent->mask & IN_MOVED_FROM )
+							{
+								currentMoveFrom = wit->second;
+								currentMoveCookie = pevent->cookie;
+							}
+							else
+							{
+								/// Keep track of the IN_MOVED_FROM events to know
+								/// if the IN_MOVED_TO event is also fired
+								if ( currentMoveFrom )
+								{
+									movedOutsideWatches.push_back(currentMoveFrom);
+								}
+
+								currentMoveFrom = NULL;
+								currentMoveCookie = -1;
 							}
 						}
 					}
 
 					i += sizeof(struct inotify_event) + pevent->len;
 				}
+			}
+		} else {
+			// Here means no event received
+			// If last event is IN_MOVED_FROM, we assume no IN_MOVED_TO
+			if ( currentMoveFrom )
+			{
+				movedOutsideWatches.push_back(currentMoveFrom);
+			}
 
-				if ( !movedOutsideWatches.empty() )
+			currentMoveFrom = NULL;
+			currentMoveCookie = -1;
+		}
+
+		if ( !movedOutsideWatches.empty() )
+		{
+			/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
+			for ( std::list<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
+			{
+				Watcher * watch = (*it);
+
+				/// Check if the file move was a folder already being watched
+				std::list<Watcher*> eraseWatches;
+
+				for(; wit != mWatches.end(); ++wit)
 				{
-					/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
-					for ( std::list<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
+					Watcher * oldWatch = wit->second;
+
+					if ( oldWatch != watch &&
+						-1 != String::strStartsWith( watch->Directory + watch->OldFileName + "/", oldWatch->Directory ) )
 					{
-						Watcher * watch = (*it);
+						eraseWatches.push_back( oldWatch );
+					}
+				}
 
-						if ( !watch->OldFileName.empty() )
-						{
-							/// Check if the file move was a folder already being watched
-							std::list<Watcher*> eraseWatches;
+				/// Remove invalid watches
+				eraseWatches.sort();
 
-							for(; wit != mWatches.end(); ++wit)
-							{
-								Watcher * oldWatch = wit->second;
+				for ( std::list<Watcher*>::reverse_iterator eit = eraseWatches.rbegin(); eit != eraseWatches.rend(); ++eit )
+				{
+					Watcher * rmWatch = *eit;
 
-								if ( oldWatch != watch &&
-									-1 != String::strStartsWith( watch->Directory + watch->OldFileName + "/", oldWatch->Directory ) )
-								{
-									eraseWatches.push_back( oldWatch );
-								}
-							}
-
-							/// Remove invalid watches
-							eraseWatches.sort();
-
-							for ( std::list<Watcher*>::reverse_iterator eit = eraseWatches.rbegin(); eit != eraseWatches.rend(); ++eit )
-							{
-								Watcher * rmWatch = *eit;
-
-								/// Create Delete event for removed watches that have been moved too
-								if ( Watcher * cntWatch = watcherContainsDirectory( rmWatch->Directory ) )
-								{
-									handleAction( cntWatch, FileSystem::fileNameFromPath( rmWatch->Directory ), IN_DELETE );
-								}
-
-								removeWatch( rmWatch->ID );
-							}
-
-							/// Remove the OldFileName
-							watch->OldFileName = "";
-						}
+					/// Create Delete event for removed watches that have been moved too
+					if ( Watcher * cntWatch = watcherContainsDirectory( rmWatch->Directory ) )
+					{
+						handleAction( cntWatch, FileSystem::fileNameFromPath( rmWatch->Directory ), IN_DELETE );
 					}
 
-					movedOutsideWatches.clear();
+					removeWatch( rmWatch->ID );
 				}
+
+				if ( !eraseWatches.size() )
+				{
+					handleAction( watch, watch->OldFileName, IN_DELETE );
+				}
+
+				/// Remove the OldFileName
+				watch->OldFileName = "";
 			}
+
+			movedOutsideWatches.clear();
 		}
 	} while( mInitOK );
 }
