@@ -1,5 +1,8 @@
-Entropia File System Watcher
+Entropia File System Watcher ![efsw](https://web.ensoft.dev/efsw/efsw-logo.svg)
 ============================
+
+[![build status](https://img.shields.io/github/workflow/status/SpartanJ/efsw/build)](https://github.com/SpartanJ/efsw/actions?query=workflow%3Abuild)
+
 **efsw** is a C++ cross-platform file system watcher and notifier.
 
 **efsw** monitors the file system asynchronously for changes to files and directories by watching a list of specified paths, and raises events when a directory or file change.
