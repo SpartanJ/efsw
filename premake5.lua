@@ -96,7 +96,7 @@ function conf_excludes()
 		excludes { "src/efsw/WatcherKqueue.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/FileWatcherKqueue.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
 	elseif os.istarget("macosx") then
 		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp" }
-	elseif os.istarget("freebsd") then
+	elseif os.istarget("bsd") then
 		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
 	end
 
@@ -139,19 +139,19 @@ workspace "efsw"
 		files { "src/efsw/*.cpp", osfiles }
 		conf_excludes()
 
-		configuration "debug"
+		filter "configurations:debug"
 			defines { "DEBUG" }
 			symbols "On"
 			targetname "efsw-static-debug"
 			conf_warnings()
 
-		configuration "release"
+		filter "configurations:release"
 			defines { "NDEBUG" }
 			optimize "On"
 			targetname "efsw-static-release"
 			conf_warnings()
 
-		configuration "relwithdbginfo"
+		filter "configurations:relwithdbginfo"
 			defines { "NDEBUG" }
 			symbols "On"
 			optimize "On"
@@ -166,19 +166,19 @@ workspace "efsw"
 		includedirs { "include", "src" }
 		conf_links()
 
-		configuration "debug"
+		filter "configurations:debug"
 			defines { "DEBUG" }
 			symbols "On"
 			targetname "efsw-test-debug"
 			conf_warnings()
 
-		configuration "release"
+		filter "configurations:release"
 			defines { "NDEBUG" }
 			optimize "On"
 			targetname "efsw-test-release"
 			conf_warnings()
 
-		configuration "relwithdbginfo"
+		filter "configurations:relwithdbginfo"
 			defines { "NDEBUG" }
 			symbols "On"
 			optimize "On"
@@ -195,19 +195,19 @@ workspace "efsw"
 		conf_excludes()
 		conf_links()
 
-		configuration "debug"
+		filter "configurations:debug"
 			defines { "DEBUG" }
 			symbols "On"
 			targetname "efsw-debug"
 			conf_warnings()
 
-		configuration "release"
+		filter "configurations:release"
 			defines { "NDEBUG" }
 			optimize "On"
 			targetname "efsw"
 			conf_warnings()
 
-		configuration "relwithdbginfo"
+		filter "configurations:relwithdbginfo"
 			defines { "NDEBUG" }
 			symbols "On"
 			optimize "On"
