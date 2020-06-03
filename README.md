@@ -104,7 +104,7 @@ or
 
 `premake4 xcode4` to generate Xcode 4 project.
 
-There is also a cmake file that i don't oficially support but it works just fine, provided by [Mohammed Nafees](https://bitbucket.org/binaryking).
+There is also a cmake file that I don't oficially support but it works just fine, provided by [Mohammed Nafees](https://bitbucket.org/binaryking) and improved by [Eugene Shalygin](https://github.com/zeule).
 
 **Platform limitations and clarifications**
 -------------------------------------------
