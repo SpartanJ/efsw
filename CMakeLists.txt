@@ -126,7 +126,7 @@ configure_package_config_file(
 	NO_CHECK_REQUIRED_COMPONENTS_MACRO
 )
 
-export(TARGETS efsw NAMESPACE efsw FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${CMAKE_PROJECT_NAME}Targets.cmake)
+export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${CMAKE_PROJECT_NAME}Targets.cmake)
 
 install(TARGETS efsw EXPORT efswExport
 	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -141,7 +141,7 @@ install (
 	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
 )
 
-install(EXPORT efswExport NAMESPACE efsw DESTINATION "${packageDestDir}" FILE ${CMAKE_PROJECT_NAME}Targets.cmake)
+install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${CMAKE_PROJECT_NAME}Targets.cmake)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
 
 if (BUILD_TEST_APP)
