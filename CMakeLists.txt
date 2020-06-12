@@ -43,6 +43,9 @@ target_include_directories(efsw
 if (VERBOSE)
 	target_compile_definitions(efsw PRIVATE EFSW_VERBOSE)
 endif()
+if (BUILD_SHARED_LIBS)
+	target_compile_definitions(efsw PRIVATE EFSW_DYNAMIC EFSW_EXPORTS)
+endif()
 
 # platforms
 if (WIN32)
