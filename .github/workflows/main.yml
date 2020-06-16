@@ -15,7 +15,7 @@ jobs:
         tar xvzf premake-5.0.0-alpha14-linux.tar.gz
     - name: Build
       run: |
-        ./premake5 gmake2
+        ./premake5 --verbose gmake2
         cd make/linux
         make all
   MacOS:
@@ -29,7 +29,7 @@ jobs:
         tar -xzf premake-5.0.0-alpha14-macosx.tar.gz
     - name: Build
       run: |
-        ./premake5 gmake2
+        ./premake5 --verbose gmake2
         make -C make/macosx/ -j`nproc` all
   Windows:
     runs-on: windows-latest
@@ -45,7 +45,7 @@ jobs:
     - name: Create project
       shell: powershell
       run: |
-        ./premake5.exe vs2019
+        ./premake5.exe --verbose vs2019
     - name: Build
       shell: cmd
       run: |
