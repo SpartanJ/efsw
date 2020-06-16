@@ -122,14 +122,6 @@ workspace "efsw"
 		defines { "EFSW_VERBOSE" }
 	end
 
-	if os.istarget("macosx") then
-		local ver = os.getversion();
-
-		if not ( ver.majorversion >= 10 and ver.minorversion >= 5 ) then
-			defines { "EFSW_FSEVENTS_NOT_SUPPORTED" }
-		end
-	end
-
 	objdir("obj/" .. os.target() .. "/")
 
 	filter "platforms:x86"
