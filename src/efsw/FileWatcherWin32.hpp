@@ -55,6 +55,7 @@ class FileWatcherWin32 : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+		Mutex mWatchesNewLock;
 
 		bool pathInWatches( const std::string& path );
 

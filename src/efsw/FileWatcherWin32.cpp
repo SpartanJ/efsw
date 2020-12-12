@@ -76,7 +76,11 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 	watch->Watch->DirName = new char[dir.length()+1];
 	strcpy(watch->Watch->DirName, dir.c_str());
 
-	mWatchesNew.insert( watch );
+	{
+		Lock newLock( mWatchesNewLock );
+		mWatchesNew.insert( watch );
+	}
+
 	mWatches.insert( watch );
 
 	return watchid;
@@ -142,6 +146,7 @@ void FileWatcherWin32::removeWatches()
 			mWatches.erase( iter );
 		}
 
+		Lock newLock( mWatchesNewLock );
 		iter = mWatchesNew.find(*remWatchIter);
 
 		if( iter != mWatchesNew.end() )
@@ -175,6 +180,8 @@ void FileWatcherWin32::removeAllWatches()
 
 	mWatches.clear();
 	mWatchesRemoved.clear();
+
+	Lock newLock( mWatchesNewLock );
 	mWatchesNew.clear();
 }
 
@@ -207,7 +214,11 @@ void FileWatcherWin32::run()
 
 			if ( mInitOK )
 			{
-				WaitForMultipleObjects( mHandles.size(), &mHandles[0], FALSE, 10 );
+				if ( mHandles.size() > MAXIMUM_WAIT_OBJECTS ||
+					WaitForMultipleObjects( mHandles.size(), &mHandles[0], FALSE, 10 ) == WAIT_FAILED )
+				{
+					System::sleep( 1 );
+				}
 			}
 		}
 		else
@@ -216,6 +227,8 @@ void FileWatcherWin32::run()
 		}
 
 		removeWatches();
+
+		Lock newLock( mWatchesNewLock );
 
 		for ( Watches::iterator it = mWatchesNew.begin(); it != mWatchesNew.end(); ++it )
 		{
@@ -228,7 +241,7 @@ void FileWatcherWin32::run()
 	removeAllWatches();
 }
 
-void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename)
+void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string /*oldFilename*/)
 {
 	Action fwAction;
 
@@ -292,6 +305,8 @@ void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename,
 	case FILE_ACTION_MODIFIED:
 		fwAction = Actions::Modified;
 		break;
+	default:
+		return;
 	};
 
 	std::string folderPath( static_cast<WatcherWin32*>( watch )->DirName );
