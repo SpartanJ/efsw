@@ -66,6 +66,8 @@ void CALLBACK WatchCallback(DWORD dwErrorCode, DWORD dwNumberOfBytesTransfered, 
 /// Refreshes the directory monitoring.
 bool RefreshWatch(WatcherStructWin32* pWatch)
 {
+	ResetEvent(pWatch->Overlapped.hEvent);
+
 	return ReadDirectoryChangesW(
 				pWatch->Watch->DirHandle,
 				pWatch->Watch->mBuffer,

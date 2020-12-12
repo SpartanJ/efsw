@@ -8,6 +8,7 @@
 #include <efsw/WatcherWin32.hpp>
 #include <set>
 #include <map>
+#include <vector>
 
 namespace efsw
 {
@@ -46,6 +47,7 @@ class FileWatcherWin32 : public FileWatcherImpl
 		Watches mWatches;
 		Watches mWatchesRemoved;
 		Watches mWatchesNew;
+		std::vector<void*> mHandles;
 
 		/// The last watchid
 		WatchID mLastWatchID;

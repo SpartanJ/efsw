@@ -186,10 +186,12 @@ void FileWatcherWin32::run()
 		{
 			{
 				Lock lock( mWatchesLock );
+				mHandles.clear();
 
 				for( Watches::iterator iter = mWatches.begin() ; iter != mWatches.end(); ++iter )
 				{
 					WatcherStructWin32 * watch = *iter;
+					mHandles.push_back( watch->Overlapped.hEvent );
 
 					if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
 					{
@@ -205,12 +207,11 @@ void FileWatcherWin32::run()
 
 			if ( mInitOK )
 			{
-				System::sleep( 10 );
+				WaitForMultipleObjects( mHandles.size(), &mHandles[0], FALSE, 10 );
 			}
 		}
 		else
 		{
-			// Wait for a new handle to be added
 			System::sleep( 10 );
 		}
 
@@ -264,7 +265,25 @@ void FileWatcherWin32::handleAction(Watcher* watch, const std::string& filename,
 			}
 		}
 
-		watch->Listener->handleFileAction(watch->ID, static_cast<WatcherWin32*>( watch )->DirName, filename, fwAction, watch->OldFileName);
+		std::string folderPath( static_cast<WatcherWin32*>( watch )->DirName );
+		std::string realFilename = filename;
+		std::size_t sepPos = filename.find_last_of("/\\");
+		std::string oldFolderPath = static_cast<WatcherWin32*>( watch )->DirName + watch->OldFileName.substr( 0, watch->OldFileName.find_last_of( "/\\" ) );
+
+		if ( sepPos != std::string::npos )
+		{
+			folderPath += filename.substr( 0, sepPos );
+			realFilename = filename.substr( sepPos + 1 );
+		}
+
+		if ( folderPath == oldFolderPath )
+		{
+			watch->Listener->handleFileAction(watch->ID, folderPath, realFilename, fwAction, FileSystem::fileNameFromPath(watch->OldFileName));
+		}
+		else
+		{
+			watch->Listener->handleFileAction(watch->ID, static_cast<WatcherWin32*>( watch )->DirName, filename, fwAction, watch->OldFileName);
+		}
 		return;
 	}
 	case FILE_ACTION_REMOVED:
