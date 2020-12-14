@@ -14,7 +14,9 @@ FileWatcherWin32::FileWatcherWin32( FileWatcher * parent ) :
 	mLastWatchID(0),
 	mThread( NULL )
 {
-	mInitOK = true;
+	mIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+	if (mIOCP)
+		mInitOK = true;
 }
 
 FileWatcherWin32::~FileWatcherWin32()
@@ -22,6 +24,7 @@ FileWatcherWin32::~FileWatcherWin32()
 	mInitOK = false;
 	efSAFE_DELETE( mThread );
 	removeAllWatches();
+	CloseHandle(mIOCP);
 }
 
 WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
@@ -45,23 +48,18 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 
 	if ( pathInWatches( dir ) )
 	{
-		if ( WatcherStructWin32* oldWatcher = pathInWatchesRemoved( dir ) )
-		{
-			mWatchesRemoved.erase( oldWatcher );
-
-			return oldWatcher->Watch->ID;
-		}
-
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
 
 	WatchID watchid = ++mLastWatchID;
 
-	WatcherStructWin32 * watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive,		FILE_NOTIFY_CHANGE_CREATION |
-																			FILE_NOTIFY_CHANGE_LAST_WRITE |
-																			FILE_NOTIFY_CHANGE_FILE_NAME |
-																			FILE_NOTIFY_CHANGE_DIR_NAME |
-																			FILE_NOTIFY_CHANGE_SIZE
+	WatcherStructWin32 * watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive,
+												FILE_NOTIFY_CHANGE_CREATION |
+												FILE_NOTIFY_CHANGE_LAST_WRITE |
+												FILE_NOTIFY_CHANGE_FILE_NAME |
+												FILE_NOTIFY_CHANGE_DIR_NAME |
+												FILE_NOTIFY_CHANGE_SIZE,
+												mIOCP
 	);
 
 	if( NULL == watch )
@@ -75,11 +73,6 @@ WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListen
 	watch->Watch->Listener = watcher;
 	watch->Watch->DirName = new char[dir.length()+1];
 	strcpy(watch->Watch->DirName, dir.c_str());
-
-	{
-		Lock newLock( mWatchesNewLock );
-		mWatchesNew.insert( watch );
-	}
 
 	mWatches.insert( watch );
 
@@ -121,41 +114,10 @@ void FileWatcherWin32::removeWatch(WatchID watchid)
 
 void FileWatcherWin32::removeWatch(WatcherStructWin32* watch)
 {
-	mWatchesRemoved.insert(watch);
-
-	if( NULL == mThread )
-	{
-		removeWatches();
-	}
-}
-
-void FileWatcherWin32::removeWatches()
-{
 	Lock lock( mWatchesLock );
 
-	Watches::iterator remWatchIter = mWatchesRemoved.begin();
-
-	for( ; remWatchIter != mWatchesRemoved.end(); ++remWatchIter )
-	{
-		Watches::iterator iter = mWatches.find(*remWatchIter);
-
-		if( iter != mWatches.end() )
-		{
-			DestroyWatch(*iter);
-
-			mWatches.erase( iter );
-		}
-
-		Lock newLock( mWatchesNewLock );
-		iter = mWatchesNew.find(*remWatchIter);
-
-		if( iter != mWatchesNew.end() )
-		{
-			mWatchesNew.erase( iter );
-		}
-	}
-
-	mWatchesRemoved.clear();
+	DestroyWatch(watch);
+	mWatches.erase(watch);
 }
 
 void FileWatcherWin32::watch()
@@ -179,63 +141,29 @@ void FileWatcherWin32::removeAllWatches()
 	}
 
 	mWatches.clear();
-	mWatchesRemoved.clear();
-
-	Lock newLock( mWatchesNewLock );
-	mWatchesNew.clear();
 }
 
 void FileWatcherWin32::run()
 {
 	do
 	{
-		if ( !mWatches.empty() )
+		if ( mInitOK && !mWatches.empty() )
 		{
+			DWORD numOfBytes = 0;
+			OVERLAPPED* ov = NULL;
+			ULONG_PTR compKey = 0;
+			BOOL res = FALSE;
+
+			while ( ( res = GetQueuedCompletionStatus( mIOCP, &numOfBytes, &compKey, &ov, INFINITE ) ) != FALSE )
 			{
 				Lock lock( mWatchesLock );
-				mHandles.clear();
-
-				for( Watches::iterator iter = mWatches.begin() ; iter != mWatches.end(); ++iter )
-				{
-					WatcherStructWin32 * watch = *iter;
-					mHandles.push_back( watch->Overlapped.hEvent );
-
-					if ( HasOverlappedIoCompleted( &watch->Overlapped ) )
-					{
-						DWORD bytes;
-
-						if ( GetOverlappedResult( watch->Watch->DirHandle, &watch->Overlapped, &bytes, FALSE ) )
-						{
-							WatchCallback( ERROR_SUCCESS, bytes, &watch->Overlapped );
-						}
-					}
-				}
-			}
-
-			if ( mInitOK )
-			{
-				if ( mHandles.size() > MAXIMUM_WAIT_OBJECTS ||
-					WaitForMultipleObjects( mHandles.size(), &mHandles[0], FALSE, 10 ) == WAIT_FAILED )
-				{
-					System::sleep( 1 );
-				}
+				WatchCallback( numOfBytes, ov );
 			}
 		}
 		else
 		{
 			System::sleep( 10 );
 		}
-
-		removeWatches();
-
-		Lock newLock( mWatchesNewLock );
-
-		for ( Watches::iterator it = mWatchesNew.begin(); it != mWatchesNew.end(); ++it )
-		{
-			RefreshWatch(*it);
-		}
-
-		mWatchesNew.clear();
 	} while ( mInitOK );
 
 	removeAllWatches();
@@ -349,19 +277,6 @@ bool FileWatcherWin32::pathInWatches( const std::string& path )
 	}
 
 	return false;
-}
-
-WatcherStructWin32* FileWatcherWin32::pathInWatchesRemoved(const std::string & path)
-{
-	for ( Watches::iterator it = mWatchesRemoved.begin(); it != mWatchesRemoved.end(); ++it )
-	{
-		if ( (*it)->Watch->DirName == path )
-		{
-			return (*it);
-		}
-	}
-
-	return NULL;
 }
 
 }

@@ -44,28 +44,18 @@ class FileWatcherWin32 : public FileWatcherImpl
 		/// @return Returns a list of the directories that are being watched
 		std::list<std::string> directories();
 	protected:
+		HANDLE mIOCP;
 		Watches mWatches;
-		Watches mWatchesRemoved;
-		Watches mWatchesNew;
-		std::vector<void*> mHandles;
 
 		/// The last watchid
 		WatchID mLastWatchID;
-
 		Thread * mThread;
-
 		Mutex mWatchesLock;
-		Mutex mWatchesNewLock;
 
 		bool pathInWatches( const std::string& path );
 
-		WatcherStructWin32* pathInWatchesRemoved( const std::string& path );
-
 		/// Remove all directory watches.
 		void removeAllWatches();
-
-		/// Remove needed directory watches.
-		void removeWatches();
 
 		void removeWatch(WatcherStructWin32* watch);
 	private:
