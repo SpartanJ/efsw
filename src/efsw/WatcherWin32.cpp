@@ -80,13 +80,11 @@ void DestroyWatch(WatcherStructWin32* pWatch)
 	if (pWatch)
 	{
 		WatcherWin32 * tWatch = pWatch->Watch;
-
 		tWatch->StopNow = true;
-
+		CancelIoEx(pWatch->Watch->DirHandle, &pWatch->Overlapped);
 		CloseHandle(pWatch->Watch->DirHandle);
 		efSAFE_DELETE_ARRAY( pWatch->Watch->DirName );
 		efSAFE_DELETE( pWatch->Watch );
-		HeapFree(GetProcessHeap(), 0, pWatch);
 	}
 }
 
@@ -123,6 +121,7 @@ WatcherStructWin32* CreateWatch(LPCWSTR szDirectory, bool recursive, DWORD Notif
 	}
 
 	CloseHandle(pWatch->DirHandle);
+	efSAFE_DELETE( pWatch->Watch );
 	HeapFree(GetProcessHeap(), 0, tWatch);
 	return NULL;
 }

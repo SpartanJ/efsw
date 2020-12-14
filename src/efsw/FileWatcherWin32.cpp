@@ -15,16 +15,24 @@ FileWatcherWin32::FileWatcherWin32( FileWatcher * parent ) :
 	mThread( NULL )
 {
 	mIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
-	if (mIOCP)
+	if (mIOCP && mIOCP != INVALID_HANDLE_VALUE)
 		mInitOK = true;
 }
 
 FileWatcherWin32::~FileWatcherWin32()
 {
 	mInitOK = false;
-	efSAFE_DELETE( mThread );
+
 	removeAllWatches();
+
+	if (mIOCP && mIOCP != INVALID_HANDLE_VALUE)
+	{
+		PostQueuedCompletionStatus(mIOCP, 0, reinterpret_cast<ULONG_PTR>(this), NULL);
+	}
+
 	CloseHandle(mIOCP);
+
+	efSAFE_DELETE( mThread );
 }
 
 WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)
@@ -156,8 +164,15 @@ void FileWatcherWin32::run()
 
 			while ( ( res = GetQueuedCompletionStatus( mIOCP, &numOfBytes, &compKey, &ov, INFINITE ) ) != FALSE )
 			{
-				Lock lock( mWatchesLock );
-				WatchCallback( numOfBytes, ov );
+				if ( compKey != 0 && compKey == reinterpret_cast<ULONG_PTR>( this ) )
+				{
+					break;
+				}
+				else
+				{
+					Lock lock( mWatchesLock );
+					WatchCallback( numOfBytes, ov );
+				}
 			}
 		}
 		else
