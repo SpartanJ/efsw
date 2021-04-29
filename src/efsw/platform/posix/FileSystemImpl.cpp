@@ -166,8 +166,8 @@ bool FileSystem::changeWorkingDirectory( const std::string & path )
 
 std::string FileSystem::getCurrentWorkingDirectory() {
 	char dir[PATH_MAX + 1];
-	getcwd( dir, PATH_MAX + 1 );
-	return std::string( dir );
+	char *result = getcwd( dir, PATH_MAX + 1 );
+	return result != NULL ? std::string( result ) : std::string();
 }
 
 FileInfoMap FileSystem::filesInfoFromPath( const std::string& path )
