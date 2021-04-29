@@ -334,7 +334,7 @@ Watcher * FileWatcherInotify::watcherContainsDirectory( std::string dir )
 
 void FileWatcherInotify::run()
 {
-	static char buff[BUFF_SIZE] = {0};
+	char buff[BUFF_SIZE] = {0};
 	WatchMap::iterator wit;
 	std::list<WatcherInotify*> movedOutsideWatches;
 
