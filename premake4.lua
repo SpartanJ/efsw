@@ -14,14 +14,14 @@ function get_include_paths()
 
 		local paths = { }
 		local lines = file:read('*all')
-		
+
 		for line in string.gmatch(lines, '([^\n]+)')
 		do
 			table.insert( paths, _trim( line ) )
 		end
-		
+
 		file:close()
-		
+
 		return paths
 	end
 
@@ -29,33 +29,33 @@ function get_include_paths()
 	local file = io.popen( "echo | gcc -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/'", 'r' )
 
 	include_paths = _insert_include_paths( file )
-	
+
 	if next(include_paths) == nil then
 		file = io.popen( "echo | clang++ -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/' | grep -v 'nonexistent'", 'r' )
-		
+
 		include_paths = _insert_include_paths( file )
-		
+
 		if next(include_paths) == nil then
 			table.insert( include_paths, "/usr/include" )
 			table.insert( include_paths, "/usr/local/include" )
 		end
 	end
-	
+
 	return include_paths
 end
 
 function inotify_header_exists()
 	local efsw_include_paths = get_include_paths()
-	
+
 	for _,v in pairs( efsw_include_paths )
 	do
 		local cur_path = v .. "/sys/inotify.h"
-		
+
 		if os.isfile( cur_path ) then
 			return true
 		end
 	end
-	
+
 	return false
 end
 
@@ -63,7 +63,7 @@ function string.starts(String,Start)
 	if ( _ACTION ) then
 		return string.sub(String,1,string.len(Start))==Start
 	end
-	
+
 	return false
 end
 
@@ -73,7 +73,7 @@ end
 
 function conf_warnings()
 	if not is_vs() then
-		buildoptions{ "-Wall -Wno-long-long" }
+		buildoptions{ "-Wall -Wno-long-long -fPIC" }
 	else
 		defines { "_SCL_SECURE_NO_WARNINGS" }
 	end
@@ -99,7 +99,7 @@ function conf_excludes()
 	elseif os.is("freebsd") then
 		excludes { "src/efsw/WatcherInotify.cpp", "src/efsw/WatcherWin32.cpp", "src/efsw/WatcherFSEvents.cpp", "src/efsw/FileWatcherInotify.cpp", "src/efsw/FileWatcherWin32.cpp", "src/efsw/FileWatcherFSEvents.cpp" }
 	end
-	
+
 	if os.is("linux") and not inotify_header_exists() then
 		defines { "EFSW_INOTIFY_NOSYS" }
 	end
@@ -115,7 +115,7 @@ solution "efsw"
 	else
 		osfiles = "src/efsw/platform/posix/*.cpp"
 	end
-	
+
 	-- Activates verbose mode
 	if _OPTIONS["verbose"] then
 		defines { "EFSW_VERBOSE" }
@@ -133,7 +133,7 @@ solution "efsw"
 	end
 
 	objdir("obj/" .. os.get() .. "/")
-	
+
 	project "efsw-static-lib"
 		kind "StaticLib"
 		language "C++"
@@ -141,7 +141,7 @@ solution "efsw"
 		includedirs { "include", "src" }
 		files { "src/efsw/*.cpp", osfiles }
 		conf_excludes()
-		
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
@@ -153,7 +153,7 @@ solution "efsw"
 			flags { "Optimize" }
 			targetname "efsw-static-release"
 			conf_warnings()
-	
+
 		configuration "relwithdbginfo"
 			defines { "NDEBUG" }
 			flags { "Optimize", "Symbols" }
@@ -167,7 +167,7 @@ solution "efsw"
 		files { "src/test/*.cpp" }
 		includedirs { "include", "src" }
 		conf_links()
-		
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
@@ -179,7 +179,7 @@ solution "efsw"
 			flags { "Optimize" }
 			targetname "efsw-test-release"
 			conf_warnings()
-			
+
 		configuration "relwithdbginfo"
 			defines { "NDEBUG" }
 			flags { "Optimize", "Symbols" }
@@ -195,7 +195,7 @@ solution "efsw"
 		defines { "EFSW_DYNAMIC", "EFSW_EXPORTS" }
 		conf_excludes()
 		conf_links()
-		
+
 		configuration "debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
@@ -213,7 +213,7 @@ solution "efsw"
 			flags { "Optimize", "Symbols" }
 			targetname "efsw"
 			conf_warnings()
-			
+
 			if os.is("linux") or os.is("bsd") or os.is("haiku") then
 				targetextension ( ".so." .. efsw_version )
 				postbuildcommands { "sh ../../project/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version .. " " .. iif( _OPTIONS["strip-symbols"], "strip-symbols", "" ) }

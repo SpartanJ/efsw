@@ -73,7 +73,7 @@ end
 
 function conf_warnings()
 	if not is_vs() then
-		buildoptions{ "-Wall -Wno-long-long" }
+		buildoptions{ "-Wall -Wno-long-long -fPIC" }
 	else
 		defines { "_SCL_SECURE_NO_WARNINGS" }
 	end
