@@ -23,16 +23,16 @@ FileWatcherWin32::~FileWatcherWin32()
 {
 	mInitOK = false;
 
-	removeAllWatches();
-
 	if (mIOCP && mIOCP != INVALID_HANDLE_VALUE)
 	{
 		PostQueuedCompletionStatus(mIOCP, 0, reinterpret_cast<ULONG_PTR>(this), NULL);
 	}
 
-	CloseHandle(mIOCP);
-
 	efSAFE_DELETE( mThread );
+
+	removeAllWatches();
+
+	CloseHandle(mIOCP);
 }
 
 WatchID FileWatcherWin32::addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive)

@@ -73,7 +73,11 @@ end
 
 function conf_warnings()
 	if not is_vs() then
-		buildoptions{ "-Wall -Wno-long-long -fPIC" }
+		buildoptions{ "-Wall -Wno-long-long" }
+
+		if not os.istarget("windows") then
+			buildoptions{ "-fPIC" }
+		end
 	else
 		defines { "_SCL_SECURE_NO_WARNINGS" }
 	end
