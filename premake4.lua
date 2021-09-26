@@ -1,9 +1,10 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
+newoption { trigger = "c++11", description = "Build efsw with C++11" }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "0"
-efsw_patch_version	= "0"
+efsw_patch_version	= "1"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function get_include_paths()
@@ -123,6 +124,13 @@ solution "efsw"
 	-- Activates verbose mode
 	if _OPTIONS["verbose"] then
 		defines { "EFSW_VERBOSE" }
+	end
+
+	if _OPTIONS["c++11"] then
+		if not is_vs()
+			buildoptions { "-std=c++11" }
+		end
+		defines { "EFSW_USE_CXX11" }
 	end
 
 	if os.is("macosx") then
