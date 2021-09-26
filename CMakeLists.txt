@@ -7,6 +7,7 @@ include(GNUInstallDirs)
 find_package(Threads REQUIRED)
 
 option (VERBOSE "Build efsw with verbose mode.")
+option (CXX11 "Build efsw with C++11")
 option (BUILD_SHARED_LIBS "Build efsw as a shared library" ON)
 option (BUILD_TEST_APP "Build the test app")
 option (EFSW_INSTALL "Add efsw install targets" ON)
@@ -43,6 +44,10 @@ target_include_directories(efsw
 
 if (VERBOSE)
 	target_compile_definitions(efsw PRIVATE EFSW_VERBOSE)
+endif()
+if (CXX11)
+	target_compile_definitions(efsw PRIVATE EFSW_USE_CXX11)
+	target_compile_features(efsw PRIVATE cxx_std_11)
 endif()
 if (BUILD_SHARED_LIBS)
 	target_compile_definitions(efsw PRIVATE EFSW_DYNAMIC EFSW_EXPORTS)

@@ -18,7 +18,7 @@ FileWatcherImpl::~FileWatcherImpl()
 
 bool FileWatcherImpl::initOK()
 {
-	return mInitOK;
+	return static_cast<bool>(mInitOK);
 }
 
 bool FileWatcherImpl::linkAllowed( const std::string& curPath, const std::string& link )
