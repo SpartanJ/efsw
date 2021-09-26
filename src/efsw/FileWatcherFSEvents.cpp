@@ -86,6 +86,9 @@ FileWatcherFSEvents::~FileWatcherFSEvents()
 {
 	mInitOK = false;
 
+	if ( mRunLoopRef )
+		CFRunLoopStop( mRunLoopRef );
+
 	efSAFE_DELETE( mThread );
 
 	WatchMap::iterator iter = mWatches.begin();
@@ -229,7 +232,6 @@ void FileWatcherFSEvents::run()
 		CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
 	}
 
-	CFRunLoopStop( mRunLoopRef );
 	mRunLoopRef = NULL;
 }
 
