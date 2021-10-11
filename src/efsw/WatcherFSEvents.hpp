@@ -48,7 +48,7 @@ class WatcherFSEvents : public Watcher
 
 		void process();
 
-		FileWatcherFSEvents * FWatcher;
+		std::atomic<FileWatcherFSEvents*> FWatcher;
 
 		FSEventStreamRef FSStream;
 	protected:

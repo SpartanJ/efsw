@@ -67,7 +67,7 @@ void WatcherFSEvents::init()
 
 	FSStream = FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx, CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0.25, streamFlags );
 
-	FWatcher->mNeedInit.push_back( this );
+	FWatcher.load()->mNeedInit.push_back( this );
 
 	CFRelease( CFDirectoryArray );
 	CFRelease( CFDirectory );
@@ -75,7 +75,7 @@ void WatcherFSEvents::init()
 
 void WatcherFSEvents::initAsync()
 {
-	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher->mRunLoopRef, kCFRunLoopDefaultMode );
+	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher.load()->mRunLoopRef, kCFRunLoopDefaultMode );
 	FSEventStreamStart( FSStream );
 	initializedAsync = true;
 }

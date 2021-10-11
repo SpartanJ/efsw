@@ -79,7 +79,7 @@ class FileWatcherFSEvents : public FileWatcherImpl
 										const FSEventStreamEventId eventIds[]
 		);
 		
-		CFRunLoopRef mRunLoopRef;
+		std::atomic<CFRunLoopRef> mRunLoopRef;
 		
 		/// Vector of WatcherWin32 pointers
 		WatchMap mWatches;
