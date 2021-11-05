@@ -117,7 +117,7 @@ Kqueue implementation is limited by the maximum number of file descriptors allow
 
 OS X will use only Kqueue if the OS X version is below 10.5. This implementation needs to be compiled separately from the OS X >= 10.5 implementation, since there's no way to compile FSEvents backend in OS X below 10.5.
 
-FSEvents for OS X Lion and beyond in some cases will generate more actions that in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
+FSEvents for OS X Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
 
 Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
 
