@@ -22,8 +22,8 @@ Entropia File System Watcher ![efsw](https://web.ensoft.dev/efsw/efsw-logo.svg)
 * OS-independent generic watcher
 (polling the disk for directory snapshots and comparing them periodically)
 
-If any of the backend fails to start by any reason, it will fallback to the OS-independent implementation.
-This should never happen, except for the Kqueue implementation, see `Platform limitations and clarifications`.
+If any of the backend fails to start for any reason, it will fallback to the OS-independent implementation.
+This should never happen, except for the Kqueue implementation; see `Platform limitations and clarifications`.
 
 **Code License**
 --------------
@@ -90,7 +90,7 @@ None :)
 ------------
 To generate project files you will need to [download and install](http://industriousone.com/premake/download) [Premake](http://industriousone.com/what-premake)
 
-Then you can generate the project for your platform just going to the project directory where the premake4.lua file is located and then execute:
+Then you can generate the project for your platform by just going to the project directory where the premake4.lua file is located and executing:
 
 `premake4 gmake` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release` ( it will generate the static lib, the shared lib and the test application ).
 
@@ -102,7 +102,7 @@ or
 
 `premake4 xcode4` to generate Xcode 4 project.
 
-There is also a cmake file that I don't oficially support but it works just fine, provided by [Mohammed Nafees](https://github.com/mnafees) and improved by [Eugene Shalygin](https://github.com/zeule).
+There is also a cmake file that I don't officially support but it works just fine, provided by [Mohammed Nafees](https://github.com/mnafees) and improved by [Eugene Shalygin](https://github.com/zeule).
 
 **Platform limitations and clarifications**
 -------------------------------------------
@@ -113,17 +113,17 @@ handleFileAction returns UTF-8 strings in all platforms.
 
 Windows and FSEvents Mac OS X implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
 
-Kqueue implementation is limited by the maximun number of file descriptors allowed per process by the OS, in the case of reaching the file descriptors limit ( in BSD around 18000 and in OS X around 10240 ) it will fallback to the generic file watcher.
+Kqueue implementation is limited by the maximum number of file descriptors allowed per process by the OS. In the case of reaching the file descriptors limit ( in BSD around 18000 and in OS X around 10240 ), it will fallback to the generic file watcher.
 
-OS X will only use Kqueue if OS X version is below to 10.5, and this implementation needs to be compiled separately from the OS X >= 10.5 implementation. Since there's no way to compile FSEvents backend in OS X below 10.5.
+OS X will use only Kqueue if the OS X version is below 10.5. This implementation needs to be compiled separately from the OS X >= 10.5 implementation, since there's no way to compile FSEvents backend in OS X below 10.5.
 
-FSEvents for OS X Lion and beyond in some cases will generate more actions that in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved, in some cases i need to guess/aproximate the order of them.
+FSEvents for OS X Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
 
 Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
 
-Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in support older kernels, since i don't see the point. If someone needs this open an issue in the issue tracker and i may consider implenent a dnotify backend.
+Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 
-OS-independent watcher, Kqueue and FSEvents for OS X below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for this backends.
+OS-independent watcher, Kqueue and FSEvents for OS X below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.
 
 **Useful information**
 --------------------
