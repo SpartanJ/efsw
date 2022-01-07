@@ -54,6 +54,7 @@ class FileWatcherInotify : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+		Mutex mRealWatchesLock;
 
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherInotify * parent = NULL );
 
