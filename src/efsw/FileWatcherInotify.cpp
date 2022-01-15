@@ -47,9 +47,12 @@ FileWatcherInotify::~FileWatcherInotify()
 {
 	mInitOK = false;
 
+	Lock initLock( mInitLock );
+
 	efSAFE_DELETE( mThread );
 
 	Lock l( mWatchesLock );
+	Lock l2( mRealWatchesLock );
 	WatchMap::iterator iter = mWatches.begin();
 	WatchMap::iterator end = mWatches.end();
 
@@ -69,6 +72,9 @@ FileWatcherInotify::~FileWatcherInotify()
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive )
 {
+	if ( !mInitOK )
+		return Errors::Log::createLastError( Errors::Unspecified, directory );
+	Lock initLock( mInitLock );
 	return addWatch( directory, watcher, recursive, NULL );
 }
 
@@ -166,6 +172,9 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 		for ( ; it != files.end(); ++it )
 		{
+			if ( !mInitOK )
+				break;
+
 			const FileInfo& cfi = it->second;
 
 			if ( cfi.isDirectory() && cfi.isReadable() )
@@ -233,6 +242,9 @@ void FileWatcherInotify::removeWatchLocked(WatchID watchid)
 
 void FileWatcherInotify::removeWatch(const std::string& directory)
 {
+	if ( !mInitOK )
+		return;
+	Lock initLock( mInitLock );
 	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 
@@ -295,6 +307,9 @@ void FileWatcherInotify::removeWatch(const std::string& directory)
 
 void FileWatcherInotify::removeWatch( WatchID watchid )
 {
+	if ( !mInitOK )
+		return;
+	Lock initLock( mInitLock );
 	Lock lock( mWatchesLock );
 
 	WatchMap::iterator iter = mWatches.find( watchid );
@@ -512,10 +527,12 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename, unsigned long action, std::string )
 {
-	if ( !watch || !watch->Listener )
+	if ( !watch || !watch->Listener || !mInitOK )
 	{
 		return;
 	}
+
+	Lock initLock( mInitLock );
 
 	std::string fpath( watch->Directory + filename );
 
