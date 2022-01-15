@@ -127,7 +127,7 @@ solution "efsw"
 	end
 
 	if _OPTIONS["c++11"] then
-		if not is_vs()
+		if not is_vs() then
 			buildoptions { "-std=c++11" }
 		end
 		defines { "EFSW_USE_CXX11" }
