@@ -193,6 +193,15 @@ void FileWatcherInotify::removeWatchLocked(WatchID watchid)
 
 	WatcherInotify * watch = iter->second;
 
+	for ( std::vector<WatcherInotify*>::iterator itm = mMovedOutsideWatches.begin(); mMovedOutsideWatches.end() != itm; ++itm )
+	{
+		if ( *itm == watch )
+		{
+			mMovedOutsideWatches.erase( itm );
+			break;
+		}
+	}
+
 	if ( watch->Recursive )
 	{
 		WatchMap::iterator it = mWatches.begin();
@@ -356,7 +365,6 @@ void FileWatcherInotify::run()
 	char* buff = new char[BUFF_SIZE];
 	memset(buff, 0, BUFF_SIZE);
 	WatchMap::iterator wit;
-	std::list<WatcherInotify*> movedOutsideWatches;
 
 	WatcherInotify *currentMoveFrom = NULL;
 	u_int32_t currentMoveCookie = -1;
@@ -417,7 +425,7 @@ void FileWatcherInotify::run()
 								/// if the IN_MOVED_TO event is also fired
 								if ( currentMoveFrom )
 								{
-									movedOutsideWatches.push_back(currentMoveFrom);
+									mMovedOutsideWatches.push_back(currentMoveFrom);
 								}
 
 								currentMoveFrom = NULL;
@@ -434,17 +442,17 @@ void FileWatcherInotify::run()
 			// If last event is IN_MOVED_FROM, we assume no IN_MOVED_TO
 			if ( currentMoveFrom )
 			{
-				movedOutsideWatches.push_back(currentMoveFrom);
+				mMovedOutsideWatches.push_back(currentMoveFrom);
 			}
 
 			currentMoveFrom = NULL;
 			currentMoveCookie = -1;
 		}
 
-		if ( !movedOutsideWatches.empty() )
+		if ( !mMovedOutsideWatches.empty() )
 		{
 			/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
-			for ( std::list<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
+			for ( std::vector<WatcherInotify*>::iterator it = mMovedOutsideWatches.begin(); it != mMovedOutsideWatches.end(); ++it )
 			{
 				Watcher * watch = (*it);
 
@@ -488,7 +496,7 @@ void FileWatcherInotify::run()
 				}
 			}
 
-			movedOutsideWatches.clear();
+			mMovedOutsideWatches.clear();
 		}
 	} while( mInitOK );
 
