@@ -575,7 +575,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it )
 			{
-				if ( it->second->Directory == opath && it->second->DirInfo.Inode == FileInfo( opath ).Inode )
+				if ( it->second->Directory == opath )
 				{
 					it->second->Directory	= fpath;
 					it->second->DirInfo		= FileInfo( fpath );
