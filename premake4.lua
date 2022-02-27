@@ -1,10 +1,11 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
-newoption { trigger = "c++11", description = "Build efsw with C++11" }
+newoption { trigger = "no-atomics", description = "Build efsw without atomics." }
+newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer." }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "0"
-efsw_patch_version	= "1"
+efsw_patch_version	= "2"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function get_include_paths()
@@ -26,10 +27,8 @@ function get_include_paths()
 		return paths
 	end
 
-	local include_paths = { }
 	local file = io.popen( "echo | gcc -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/'", 'r' )
-
-	include_paths = _insert_include_paths( file )
+	local include_paths = _insert_include_paths( file )
 
 	if next(include_paths) == nil then
 		file = io.popen( "echo | clang++ -Wp,-v -x c++ - -fsyntax-only 2>&1 | grep -v '#' | grep '/' | grep -v 'nonexistent'", 'r' )
@@ -82,6 +81,14 @@ function conf_warnings()
 	else
 		defines { "_SCL_SECURE_NO_WARNINGS" }
 	end
+
+	if _OPTIONS["thread-sanitizer"] then
+		buildoptions { "-fsanitize=thread" }
+		linkoptions { "-fsanitize=thread" }
+		if not os.is("macosx") then
+			links { "tsan" }
+		end
+	end
 end
 
 function conf_links()
@@ -126,7 +133,7 @@ solution "efsw"
 		defines { "EFSW_VERBOSE" }
 	end
 
-	if _OPTIONS["c++11"] then
+	if not _OPTIONS["no-atomics"] then
 		if not is_vs() then
 			buildoptions { "-std=c++11" }
 		end
