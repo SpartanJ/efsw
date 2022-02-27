@@ -85,7 +85,9 @@ function conf_warnings()
 	if _OPTIONS["thread-sanitizer"] then
 		buildoptions { "-fsanitize=thread" }
 		linkoptions { "-fsanitize=thread" }
-		links { "tsan" }
+		if not os.istarget("macosx") then
+			links { "tsan" }
+		end
 	end
 end
 
