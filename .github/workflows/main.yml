@@ -32,7 +32,7 @@ jobs:
         ./premake5 --verbose gmake2
         make -C make/macosx/ -j`nproc` all
   Windows:
-    runs-on: windows-latest
+    runs-on: windows-2019
     env:
       MSBUILD_PATH: C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\
     steps:
