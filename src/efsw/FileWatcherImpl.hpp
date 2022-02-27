@@ -6,7 +6,7 @@
 #include <efsw/Watcher.hpp>
 #include <efsw/Thread.hpp>
 #include <efsw/Mutex.hpp>
-#include <efsw/AtomicBool.hpp>
+#include <efsw/Atomic.hpp>
 
 namespace efsw {
 

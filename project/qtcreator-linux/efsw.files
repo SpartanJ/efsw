@@ -1,7 +1,7 @@
 ../../CMakeLists.txt
 ../../include/efsw/efsw.hpp
 ../../premake5.lua
-../../src/efsw/AtomicBool.hpp
+../../src/efsw/Atomic.hpp
 ../../src/efsw/FileWatcher.cpp
 ../../src/efsw/FileWatcherInotify.cpp
 ../../src/efsw/FileWatcherKqueue.cpp
