@@ -7,6 +7,7 @@
 
 #include <efsw/WatcherInotify.hpp>
 #include <map>
+#include <vector>
 
 namespace efsw
 {
@@ -54,6 +55,9 @@ class FileWatcherInotify : public FileWatcherImpl
 		Thread * mThread;
 
 		Mutex mWatchesLock;
+		Mutex mRealWatchesLock;
+		Mutex mInitLock;
+		std::vector<WatcherInotify*> mMovedOutsideWatches;
 
 		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive, WatcherInotify * parent = NULL );
 

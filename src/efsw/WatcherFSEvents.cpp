@@ -54,7 +54,7 @@ void WatcherFSEvents::init()
 	}
 	else
 	{
-		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher, Recursive );
+		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive );
 	}
 	
 	FSEventStreamContext ctx;
@@ -66,8 +66,9 @@ void WatcherFSEvents::init()
 	ctx.copyDescription = NULL;
 
 	FSStream = FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx, CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0.25, streamFlags );
-
-	FWatcher->mNeedInit.push_back( this );
+	FWatcher.load()->mNeedInitMutex.lock();
+	FWatcher.load()->mNeedInit.push_back( this );
+	FWatcher.load()->mNeedInitMutex.unlock();
 
 	CFRelease( CFDirectoryArray );
 	CFRelease( CFDirectory );
@@ -75,7 +76,7 @@ void WatcherFSEvents::init()
 
 void WatcherFSEvents::initAsync()
 {
-	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher->mRunLoopRef, kCFRunLoopDefaultMode );
+	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher.load()->mRunLoopRef.load(), kCFRunLoopDefaultMode );
 	FSEventStreamStart( FSStream );
 	initializedAsync = true;
 }

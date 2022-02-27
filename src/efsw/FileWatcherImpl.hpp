@@ -46,7 +46,7 @@ class FileWatcherImpl
 		virtual bool pathInWatches( const std::string& path ) = 0;
 
 		FileWatcher *	mFileWatcher;
-		AtomicBool		mInitOK;
+		Atomic<bool>	mInitOK;
 		bool			mIsGeneric;
 };
 

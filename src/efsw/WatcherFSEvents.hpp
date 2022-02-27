@@ -48,15 +48,14 @@ class WatcherFSEvents : public Watcher
 
 		void process();
 
-		FileWatcherFSEvents * FWatcher;
-
+		Atomic<FileWatcherFSEvents *> FWatcher;
 		FSEventStreamRef FSStream;
 	protected:
 		void handleAddModDel( const Uint32 &flags, const std::string &path, std::string &dirPath, std::string &filePath );
 
 		WatcherGeneric * WatcherGen;
 
-		bool initializedAsync;
+		Atomic<bool> initializedAsync;
 
 		std::set<std::string> DirsChanged;
 

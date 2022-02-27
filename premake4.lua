@@ -1,7 +1,7 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
-newoption { trigger = "no-atomics", description = "Build efsw without atomics" }
-newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer" }
+newoption { trigger = "no-atomics", description = "Build efsw without atomics." }
+newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer." }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "0"
@@ -85,7 +85,9 @@ function conf_warnings()
 	if _OPTIONS["thread-sanitizer"] then
 		buildoptions { "-fsanitize=thread" }
 		linkoptions { "-fsanitize=thread" }
-		links { "tsan" }
+		if not os.is("macosx") then
+			links { "tsan" }
+		end
 	end
 end
 

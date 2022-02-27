@@ -86,8 +86,8 @@ FileWatcherFSEvents::~FileWatcherFSEvents()
 {
 	mInitOK = false;
 
-	if ( mRunLoopRef )
-		CFRunLoopStop( mRunLoopRef );
+	if ( mRunLoopRef.load() )
+		CFRunLoopStop( mRunLoopRef.load() );
 
 	efSAFE_DELETE( mThread );
 
@@ -106,7 +106,7 @@ FileWatcherFSEvents::~FileWatcherFSEvents()
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive )
 {
 	/// Wait to the RunLoopRef to be ready
-	while ( NULL == mRunLoopRef )
+	while ( NULL == mRunLoopRef.load() )
 	{
 		System::sleep( 1 );
 	}
@@ -219,15 +219,19 @@ void FileWatcherFSEvents::run()
 	
 	while ( mInitOK )
 	{
+		mNeedInitMutex.lock();
+
 		if ( !mNeedInit.empty() )
 		{
-			for ( std::list<WatcherFSEvents*>::iterator it = mNeedInit.begin(); it != mNeedInit.end(); ++it )
+			for ( std::vector<WatcherFSEvents*>::iterator it = mNeedInit.begin(); it != mNeedInit.end(); ++it )
 			{
 				(*it)->initAsync();
 			}
 
 			mNeedInit.clear();
 		}
+
+		mNeedInitMutex.unlock();
 
 		CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
 	}

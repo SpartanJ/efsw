@@ -9,13 +9,14 @@
 
 namespace efsw {
 
-class AtomicBool
+template <typename T>
+class Atomic
 {
 	public:
-		explicit AtomicBool(bool set = false)
+		explicit Atomic(T set = false)
 			: set_(set) {}
 
-		AtomicBool& operator= (bool set) {
+		Atomic& operator= (T set) {
 #ifdef EFSW_USE_CXX11
 			set_.store(set, std::memory_order_release);
 #else
@@ -24,7 +25,15 @@ class AtomicBool
 			return *this;
 		}
 
-		explicit operator bool() const {
+		explicit operator T() const {
+#ifdef EFSW_USE_CXX11
+			return set_.load(std::memory_order_acquire);
+#else
+			return set_;
+#endif
+		}
+
+		T load() const {
 #ifdef EFSW_USE_CXX11
 			return set_.load(std::memory_order_acquire);
 #else
@@ -34,9 +43,9 @@ class AtomicBool
 
 	private:
 #ifdef EFSW_USE_CXX11
-		std::atomic<bool> set_;
+		std::atomic<T> set_;
 #else
-		volatile bool set_;
+		volatile T set_;
 #endif
 };
 
