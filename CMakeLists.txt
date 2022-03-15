@@ -147,7 +147,6 @@ if(EFSW_INSTALL)
   install (
   	FILES
   		include/efsw/efsw.h include/efsw/efsw.hpp
-  		src/efsw/base.hpp src/efsw/System.hpp src/efsw/FileSystem.hpp
   	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
   )
 
