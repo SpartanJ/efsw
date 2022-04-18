@@ -451,8 +451,11 @@ void FileWatcherInotify::run()
 
 		if ( !mMovedOutsideWatches.empty() )
 		{
+			// We need to make a copy since the element mMovedOutsideWatches could be modified during the iteration.
+			std::vector<WatcherInotify*> movedOutsideWatches( mMovedOutsideWatches);
+
 			/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
-			for ( std::vector<WatcherInotify*>::iterator it = mMovedOutsideWatches.begin(); it != mMovedOutsideWatches.end(); ++it )
+			for ( std::vector<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
 			{
 				Watcher * watch = (*it);
 
