@@ -596,8 +596,11 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 				{
 					it->second->Directory	= fpath;
 					it->second->DirInfo		= FileInfo( fpath );
-
-					break;
+				}
+				else if ( -1 != String::strStartsWith( opath, it->second->Directory ) )
+				{
+					it->second->Directory			= fpath + it->second->Directory.substr( opath.size() );
+					it->second->DirInfo.Filepath	= it->second->Directory;
 				}
 			}
 		}
