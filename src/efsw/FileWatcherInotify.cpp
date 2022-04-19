@@ -193,9 +193,9 @@ void FileWatcherInotify::removeWatchLocked(WatchID watchid)
 
 	WatcherInotify * watch = iter->second;
 
-	for ( std::vector<WatcherInotify*>::iterator itm = mMovedOutsideWatches.begin(); mMovedOutsideWatches.end() != itm; ++itm )
+	for ( std::vector<std::pair<WatcherInotify*, std::string>>::iterator itm = mMovedOutsideWatches.begin(); mMovedOutsideWatches.end() != itm; ++itm )
 	{
-		if ( *itm == watch )
+		if ( itm->first == watch )
 		{
 			mMovedOutsideWatches.erase( itm );
 			break;
@@ -368,6 +368,8 @@ void FileWatcherInotify::run()
 
 	WatcherInotify *currentMoveFrom = NULL;
 	u_int32_t currentMoveCookie = -1;
+	bool lastWasMovedFrom = false;
+	std::string prevOldFileName;
 
 	do
 	{
@@ -416,6 +418,13 @@ void FileWatcherInotify::run()
 							else
 							if ( pevent->mask & IN_MOVED_FROM )
 							{
+								// Previous event was moved from and current event is moved from
+								// Treat it as a DELETE or moved ouside watches
+								if ( lastWasMovedFrom && currentMoveFrom )
+								{
+									mMovedOutsideWatches.push_back(std::make_pair(currentMoveFrom, prevOldFileName));
+								}
+
 								currentMoveFrom = wit->second;
 								currentMoveCookie = pevent->cookie;
 							}
@@ -425,13 +434,17 @@ void FileWatcherInotify::run()
 								/// if the IN_MOVED_TO event is also fired
 								if ( currentMoveFrom )
 								{
-									mMovedOutsideWatches.push_back(currentMoveFrom);
+									mMovedOutsideWatches.push_back(std::make_pair(currentMoveFrom, prevOldFileName));
 								}
 
 								currentMoveFrom = NULL;
 								currentMoveCookie = -1;
 							}
 						}
+
+						lastWasMovedFrom = ( pevent->mask & IN_MOVED_FROM ) != 0;
+						if ( pevent->mask & IN_MOVED_FROM )
+							prevOldFileName = std::string((char*)pevent->name);
 					}
 
 					i += sizeof(struct inotify_event) + pevent->len;
@@ -442,7 +455,7 @@ void FileWatcherInotify::run()
 			// If last event is IN_MOVED_FROM, we assume no IN_MOVED_TO
 			if ( currentMoveFrom )
 			{
-				mMovedOutsideWatches.push_back(currentMoveFrom);
+				mMovedOutsideWatches.push_back(std::make_pair(currentMoveFrom, currentMoveFrom->OldFileName));
 			}
 
 			currentMoveFrom = NULL;
@@ -452,12 +465,13 @@ void FileWatcherInotify::run()
 		if ( !mMovedOutsideWatches.empty() )
 		{
 			// We need to make a copy since the element mMovedOutsideWatches could be modified during the iteration.
-			std::vector<WatcherInotify*> movedOutsideWatches( mMovedOutsideWatches);
+			std::vector<std::pair<WatcherInotify*, std::string>> movedOutsideWatches( mMovedOutsideWatches);
 
 			/// In case that the IN_MOVED_TO is never fired means that the file was moved to other folder
-			for ( std::vector<WatcherInotify*>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
+			for ( std::vector<std::pair<WatcherInotify*, std::string>>::iterator it = movedOutsideWatches.begin(); it != movedOutsideWatches.end(); ++it )
 			{
-				Watcher * watch = (*it);
+				Watcher * watch = (*it).first;
+				const std::string& oldFileName = (*it).second;
 
 				/// Check if the file move was a folder already being watched
 				std::list<Watcher*> eraseWatches;
@@ -470,7 +484,7 @@ void FileWatcherInotify::run()
 						Watcher * oldWatch = wit->second;
 
 						if ( oldWatch != watch &&
-							-1 != String::strStartsWith( watch->Directory + watch->OldFileName + "/", oldWatch->Directory ) )
+							-1 != String::strStartsWith( watch->Directory + oldFileName + "/", oldWatch->Directory ) )
 						{
 							eraseWatches.push_back( oldWatch );
 						}
@@ -482,7 +496,7 @@ void FileWatcherInotify::run()
 
 				if ( eraseWatches.empty() )
 				{
-					handleAction( watch, watch->OldFileName, IN_DELETE );
+					handleAction( watch, oldFileName, IN_DELETE );
 				}
 				else
 				{
