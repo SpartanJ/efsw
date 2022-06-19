@@ -233,7 +233,11 @@ void FileWatcherFSEvents::run()
 
 		mNeedInitMutex.unlock();
 
-		CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
+		if ( mWatches.empty() ) {
+			System::sleep( 100 );
+		} else {
+			CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
+		}
 	}
 
 	mRunLoopRef = NULL;
