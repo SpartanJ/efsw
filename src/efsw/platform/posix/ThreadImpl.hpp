@@ -13,22 +13,23 @@ class Thread;
 
 namespace Platform {
 
-class ThreadImpl
-{
-	public:
-		ThreadImpl( Thread * owner );
-		
-		void wait();
-		
-		void terminate();
-	protected:
-		static void *	entryPoint( void* userData );
+class ThreadImpl {
+  public:
+	ThreadImpl( Thread* owner );
 
-		pthread_t		mThread;
-		bool			mIsActive;
+	void wait();
+
+	void terminate();
+
+  protected:
+	static void* entryPoint( void* userData );
+
+	pthread_t mThread;
+	bool mIsActive;
 };
 
-}}
+} // namespace Platform
+} // namespace efsw
 
 #endif
 

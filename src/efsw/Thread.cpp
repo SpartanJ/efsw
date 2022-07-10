@@ -3,49 +3,38 @@
 
 namespace efsw {
 
-Thread::Thread() :
-	mThreadImpl(NULL),
-	mEntryPoint(NULL)
-{
-}
+Thread::Thread() : mThreadImpl( NULL ), mEntryPoint( NULL ) {}
 
-Thread::~Thread()
-{
+Thread::~Thread() {
 	wait();
 
 	efSAFE_DELETE( mEntryPoint );
 }
 
-void Thread::launch()
-{
+void Thread::launch() {
 	wait();
 
 	mThreadImpl = new Platform::ThreadImpl( this );
 }
 
-void Thread::wait()
-{
-	if ( mThreadImpl )
-	{
+void Thread::wait() {
+	if ( mThreadImpl ) {
 		mThreadImpl->wait();
 
 		efSAFE_DELETE( mThreadImpl );
 	}
 }
 
-void Thread::terminate()
-{
-	if ( mThreadImpl )
-	{
+void Thread::terminate() {
+	if ( mThreadImpl ) {
 		mThreadImpl->terminate();
 
 		efSAFE_DELETE( mThreadImpl );
 	}
 }
 
-void Thread::run()
-{
+void Thread::run() {
 	mEntryPoint->run();
 }
 
-}
+} // namespace efsw

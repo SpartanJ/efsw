@@ -5,10 +5,10 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
-#include <efsw/WatcherGeneric.hpp>
-#include <efsw/FileInfo.hpp>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <efsw/FileInfo.hpp>
+#include <efsw/WatcherGeneric.hpp>
 #include <set>
 #include <vector>
 
@@ -16,53 +16,50 @@ namespace efsw {
 
 class FileWatcherFSEvents;
 
-class FSEvent
-{
-	public:
-		FSEvent( std::string path, long flags, Uint64 id ) :
-			Path( path ),
-			Flags( flags ),
-			Id ( id )
-		{
-		}
+class FSEvent {
+  public:
+	FSEvent( std::string path, long flags, Uint64 id ) : Path( path ), Flags( flags ), Id( id ) {}
 
-		std::string Path;
-		long Flags;
-		Uint64 Id;
+	std::string Path;
+	long Flags;
+	Uint64 Id;
 };
 
-class WatcherFSEvents : public Watcher
-{
-	public:
-		WatcherFSEvents();
-		
-		WatcherFSEvents( WatchID id, std::string directory, FileWatchListener * listener, bool recursive, WatcherFSEvents * parent = NULL );
-		
-		~WatcherFSEvents();
+class WatcherFSEvents : public Watcher {
+  public:
+	WatcherFSEvents();
 
-		void init();
+	WatcherFSEvents( WatchID id, std::string directory, FileWatchListener* listener, bool recursive,
+					 WatcherFSEvents* parent = NULL );
 
-		void initAsync();
+	~WatcherFSEvents();
 
-		void handleActions( std::vector<FSEvent> & events );
+	void init();
 
-		void process();
+	void initAsync();
 
-		Atomic<FileWatcherFSEvents *> FWatcher;
-		FSEventStreamRef FSStream;
-	protected:
-		void handleAddModDel( const Uint32 &flags, const std::string &path, std::string &dirPath, std::string &filePath );
+	void handleActions( std::vector<FSEvent>& events );
 
-		WatcherGeneric * WatcherGen;
+	void process();
 
-		Atomic<bool> initializedAsync;
+	Atomic<FileWatcherFSEvents*> FWatcher;
+	FSEventStreamRef FSStream;
 
-		std::set<std::string> DirsChanged;
+  protected:
+	void handleAddModDel( const Uint32& flags, const std::string& path, std::string& dirPath,
+						  std::string& filePath );
 
-		void sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename, Action action, std::string oldFilename = "" );
+	WatcherGeneric* WatcherGen;
+
+	Atomic<bool> initializedAsync;
+
+	std::set<std::string> DirsChanged;
+
+	void sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename,
+						 Action action, std::string oldFilename = "" );
 };
 
-}
+} // namespace efsw
 
 #endif
 

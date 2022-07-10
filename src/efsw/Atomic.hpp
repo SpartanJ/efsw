@@ -9,47 +9,43 @@
 
 namespace efsw {
 
-template <typename T>
-class Atomic
-{
-	public:
-		explicit Atomic(T set = false)
-			: set_(set) {}
+template <typename T> class Atomic {
+  public:
+	explicit Atomic( T set = false ) : set_( set ) {}
 
-		Atomic& operator= (T set) {
+	Atomic& operator=( T set ) {
 #ifdef EFSW_USE_CXX11
-			set_.store(set, std::memory_order_release);
+		set_.store( set, std::memory_order_release );
 #else
-			set_ = set;
+		set_ = set;
 #endif
-			return *this;
-		}
+		return *this;
+	}
 
-		explicit operator T() const {
+	explicit operator T() const {
 #ifdef EFSW_USE_CXX11
-			return set_.load(std::memory_order_acquire);
+		return set_.load( std::memory_order_acquire );
 #else
-			return set_;
+		return set_;
 #endif
-		}
+	}
 
-		T load() const {
+	T load() const {
 #ifdef EFSW_USE_CXX11
-			return set_.load(std::memory_order_acquire);
+		return set_.load( std::memory_order_acquire );
 #else
-			return set_;
+		return set_;
 #endif
-		}
+	}
 
-	private:
+  private:
 #ifdef EFSW_USE_CXX11
-		std::atomic<T> set_;
+	std::atomic<T> set_;
 #else
-		volatile T set_;
+	volatile T set_;
 #endif
 };
 
-}
+} // namespace efsw
 
 #endif
-

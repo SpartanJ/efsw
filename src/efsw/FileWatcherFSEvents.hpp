@@ -8,98 +8,95 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
 #include <efsw/WatcherFSEvents.hpp>
-#include <map>
 #include <list>
+#include <map>
 #include <vector>
 
-namespace efsw
-{
+namespace efsw {
 
 /* OSX < 10.7 has no file events */
 /* So i declare the events constants */
-enum FSEventEvents
-{
-	efswFSEventStreamCreateFlagFileEvents			= 0x00000010,
-	efswFSEventStreamEventFlagItemCreated			= 0x00000100,
-	efswFSEventStreamEventFlagItemRemoved			= 0x00000200,
-	efswFSEventStreamEventFlagItemInodeMetaMod		= 0x00000400,
-	efswFSEventStreamEventFlagItemRenamed			= 0x00000800,
-	efswFSEventStreamEventFlagItemModified			= 0x00001000,
-	efswFSEventStreamEventFlagItemFinderInfoMod		= 0x00002000,
-	efswFSEventStreamEventFlagItemChangeOwner		= 0x00004000,
-	efswFSEventStreamEventFlagItemXattrMod			= 0x00008000,
-	efswFSEventStreamEventFlagItemIsFile			= 0x00010000,
-	efswFSEventStreamEventFlagItemIsDir				= 0x00020000,
-	efswFSEventStreamEventFlagItemIsSymlink			= 0x00040000,
-	efswFSEventsModified							= efswFSEventStreamEventFlagItemFinderInfoMod	|
-													  efswFSEventStreamEventFlagItemModified		|
-													  efswFSEventStreamEventFlagItemInodeMetaMod
+enum FSEventEvents {
+	efswFSEventStreamCreateFlagFileEvents = 0x00000010,
+	efswFSEventStreamEventFlagItemCreated = 0x00000100,
+	efswFSEventStreamEventFlagItemRemoved = 0x00000200,
+	efswFSEventStreamEventFlagItemInodeMetaMod = 0x00000400,
+	efswFSEventStreamEventFlagItemRenamed = 0x00000800,
+	efswFSEventStreamEventFlagItemModified = 0x00001000,
+	efswFSEventStreamEventFlagItemFinderInfoMod = 0x00002000,
+	efswFSEventStreamEventFlagItemChangeOwner = 0x00004000,
+	efswFSEventStreamEventFlagItemXattrMod = 0x00008000,
+	efswFSEventStreamEventFlagItemIsFile = 0x00010000,
+	efswFSEventStreamEventFlagItemIsDir = 0x00020000,
+	efswFSEventStreamEventFlagItemIsSymlink = 0x00040000,
+	efswFSEventsModified = efswFSEventStreamEventFlagItemFinderInfoMod |
+						   efswFSEventStreamEventFlagItemModified |
+						   efswFSEventStreamEventFlagItemInodeMetaMod
 };
 
 /// Implementation for Win32 based on ReadDirectoryChangesW.
 /// @class FileWatcherFSEvents
-class FileWatcherFSEvents : public FileWatcherImpl
-{
+class FileWatcherFSEvents : public FileWatcherImpl {
 	friend class WatcherFSEvents;
-	public:
-		/// @return If FSEvents supports file-level notifications ( true if OS X >= 10.7 )
-		static bool isGranular();
-		
-		/// type for a map from WatchID to WatcherWin32 pointer
-		typedef std::map<WatchID, WatcherFSEvents*> WatchMap;
 
-		FileWatcherFSEvents( FileWatcher * parent );
+  public:
+	/// @return If FSEvents supports file-level notifications ( true if OS X >= 10.7 )
+	static bool isGranular();
 
-		virtual ~FileWatcherFSEvents();
+	/// type for a map from WatchID to WatcherWin32 pointer
+	typedef std::map<WatchID, WatcherFSEvents*> WatchMap;
 
-		/// Add a directory watch
-		/// On error returns WatchID with Error type.
-		WatchID addWatch(const std::string& directory, FileWatchListener* watcher, bool recursive);
+	FileWatcherFSEvents( FileWatcher* parent );
 
-		/// Remove a directory watch. This is a brute force lazy search O(nlogn).
-		void removeWatch(const std::string& directory);
+	virtual ~FileWatcherFSEvents();
 
-		/// Remove a directory watch. This is a map lookup O(logn).
-		void removeWatch(WatchID watchid);
+	/// Add a directory watch
+	/// On error returns WatchID with Error type.
+	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive );
 
-		/// Updates the watcher. Must be called often.
-		void watch();
+	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
+	void removeWatch( const std::string& directory );
 
-		/// Handles the action
-		void handleAction(Watcher* watch, const std::string& filename, unsigned long action, std::string oldFilename = "");
+	/// Remove a directory watch. This is a map lookup O(logn).
+	void removeWatch( WatchID watchid );
 
-		/// @return Returns a list of the directories that are being watched
-		std::list<std::string> directories();
-	protected:
-		static void FSEventCallback(	ConstFSEventStreamRef streamRef,
-										void *userData, 
-										size_t numEvents, 
-										void *eventPaths, 
-										const FSEventStreamEventFlags eventFlags[], 
-										const FSEventStreamEventId eventIds[]
-		);
+	/// Updates the watcher. Must be called often.
+	void watch();
 
-		Atomic<CFRunLoopRef> mRunLoopRef;
+	/// Handles the action
+	void handleAction( Watcher* watch, const std::string& filename, unsigned long action,
+					   std::string oldFilename = "" );
 
-		/// Vector of WatcherWin32 pointers
-		WatchMap mWatches;
-		
-		/// The last watchid
-		WatchID mLastWatchID;
+	/// @return Returns a list of the directories that are being watched
+	std::list<std::string> directories();
 
-		Thread * mThread;
+  protected:
+	static void FSEventCallback( ConstFSEventStreamRef streamRef, void* userData, size_t numEvents,
+								 void* eventPaths, const FSEventStreamEventFlags eventFlags[],
+								 const FSEventStreamEventId eventIds[] );
 
-		Mutex mWatchesLock;
+	Atomic<CFRunLoopRef> mRunLoopRef;
 
-		bool pathInWatches( const std::string& path );
+	/// Vector of WatcherWin32 pointers
+	WatchMap mWatches;
 
-		std::vector<WatcherFSEvents*> mNeedInit;
-		Mutex mNeedInitMutex;
-	private:
-		void run();
+	/// The last watchid
+	WatchID mLastWatchID;
+
+	Thread* mThread;
+
+	Mutex mWatchesLock;
+
+	bool pathInWatches( const std::string& path );
+
+	std::vector<WatcherFSEvents*> mNeedInit;
+	Mutex mNeedInitMutex;
+
+  private:
+	void run();
 };
 
-}
+} // namespace efsw
 
 #endif
 
