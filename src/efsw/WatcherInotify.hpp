@@ -16,6 +16,7 @@ class WatcherInotify : public Watcher
 		bool inParentTree( WatcherInotify * parent );
 
 		WatcherInotify * Parent;
+		WatchID	InotifyID;
 
 		FileInfo DirInfo;
 };

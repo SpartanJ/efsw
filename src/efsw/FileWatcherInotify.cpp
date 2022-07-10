@@ -149,7 +149,8 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	WatcherInotify * pWatch	= new WatcherInotify();
 	pWatch->Listener	= watcher;
-	pWatch->ID			= wd;
+	pWatch->ID			= parent ? parent->ID : wd;
+	pWatch->InotifyID	= wd;
 	pWatch->Directory	= dir;
 	pWatch->Recursive	= recursive;
 	pWatch->Parent		= parent;
@@ -162,7 +163,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	if ( NULL == pWatch->Parent )
 	{
 		Lock l( mRealWatchesLock );
-		mRealWatches[ pWatch->ID ] = pWatch;
+		mRealWatches[ pWatch->InotifyID ] = pWatch;
 	}
 
 	if ( pWatch->Recursive )
@@ -213,7 +214,7 @@ void FileWatcherInotify::removeWatchLocked(WatchID watchid)
 				 it->second->inParentTree( watch )
 			)
 			{
-				eraseWatches.push_back( it->second->ID );
+				eraseWatches.push_back( it->second->InotifyID );
 			}
 		}
 
@@ -227,7 +228,7 @@ void FileWatcherInotify::removeWatchLocked(WatchID watchid)
 
 	if ( NULL == watch->Parent )
 	{
-		WatchMap::iterator eraseit = mRealWatches.find( watch->ID );
+		WatchMap::iterator eraseit = mRealWatches.find( watch->InotifyID );
 
 		if ( eraseit != mRealWatches.end() )
 		{
@@ -274,7 +275,7 @@ void FileWatcherInotify::removeWatch(const std::string& directory)
 				{
 					if ( it->second->inParentTree( watch ) )
 					{
-						eraseWatches.push_back( it->second->ID );
+						eraseWatches.push_back( it->second->InotifyID );
 					}
 				}
 
@@ -288,7 +289,7 @@ void FileWatcherInotify::removeWatch(const std::string& directory)
 
 			if ( NULL == watch->Parent )
 			{
-				WatchMap::iterator eraseit = mRealWatches.find( watch->ID );
+				WatchMap::iterator eraseit = mRealWatches.find( watch->InotifyID );
 
 				if ( eraseit != mRealWatches.end() )
 				{
@@ -296,15 +297,15 @@ void FileWatcherInotify::removeWatch(const std::string& directory)
 				}
 			}
 
-			int err = inotify_rm_watch(mFD, watch->ID);
+			int err = inotify_rm_watch(mFD, watch->InotifyID);
 
 			if ( err < 0 )
 			{
-				efDEBUG( "Error removing watch %d: %s\n", watch->ID, strerror(errno) );
+				efDEBUG( "Error removing watch %d: %s\n", watch->InotifyID, strerror(errno) );
 			}
 			else
 			{
-				efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(), watch->ID );
+				efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(), watch->InotifyID );
 			}
 
 			efSAFE_DELETE( watch );
@@ -632,7 +633,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			{
 				if ( it->second->Directory == fpath )
 				{
-					removeWatchLocked( it->second->ID );
+					removeWatchLocked( it->second->InotifyID );
 					break;
 				}
 			}
