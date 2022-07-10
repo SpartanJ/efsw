@@ -66,9 +66,11 @@ void DirWatcherGeneric::resetDirectory( std::string directory ) {
 				  directory.at( directory.size() - 1 ) == FileSystem::getOSSlash() ) ) ) {
 			/// Get the real directory
 			if ( NULL != Parent ) {
+				std::string parentPath( Parent->DirSnap.DirectoryInfo.Filepath );
+				FileSystem::dirAddSlashAtEnd( parentPath );
 				FileSystem::dirAddSlashAtEnd( directory );
 
-				dir = Parent->DirSnap.DirectoryInfo.Filepath + directory;
+				dir = parentPath + directory;
 			} else {
 				efDEBUG( "resetDirectory(): Parent is NULL. Fatal error." );
 			}
@@ -265,7 +267,9 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 	DirWatcherGeneric* dw = NULL;
 
 	/// Check if the directory is a symbolic link
-	std::string dir( DirSnap.DirectoryInfo.Filepath + newdir );
+	std::string parentPath( DirSnap.DirectoryInfo.Filepath );
+	FileSystem::dirAddSlashAtEnd( parentPath );
+	std::string dir( parentPath + newdir );
 
 	FileSystem::dirAddSlashAtEnd( dir );
 
