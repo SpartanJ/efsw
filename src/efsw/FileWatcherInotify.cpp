@@ -402,6 +402,22 @@ void FileWatcherInotify::run() {
 			for ( std::vector<std::pair<WatcherInotify*, std::string>>::iterator it =
 					  movedOutsideWatches.begin();
 				  it != movedOutsideWatches.end(); ++it ) {
+
+				// Skip if the watch has already being removed
+				if ( mMovedOutsideWatches.size() != movedOutsideWatches.size() ) {
+					bool found = false;
+					for ( std::vector<std::pair<WatcherInotify*, std::string>>::iterator itm =
+							  mMovedOutsideWatches.begin();
+						  mMovedOutsideWatches.end() != itm; ++itm ) {
+						if ( itm->first == it->first ) {
+							found = true;
+							break;
+						}
+					}
+					if ( !found )
+						continue;
+				}
+
 				Watcher* watch = ( *it ).first;
 				const std::string& oldFileName = ( *it ).second;
 
