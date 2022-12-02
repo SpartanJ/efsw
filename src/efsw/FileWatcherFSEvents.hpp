@@ -11,6 +11,10 @@
 #include <list>
 #include <map>
 #include <vector>
+#ifdef EFSW_USE_CXX11
+#include <condition_variable>
+#include <mutex>
+#endif
 
 namespace efsw {
 
@@ -91,6 +95,11 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 
 	std::vector<WatcherFSEvents*> mNeedInit;
 	Mutex mNeedInitMutex;
+
+#ifdef EFSW_USE_CXX11
+	std::mutex mWatchesMutex;
+	std::condition_variable mWatchCond;
+#endif
 
   private:
 	void run();

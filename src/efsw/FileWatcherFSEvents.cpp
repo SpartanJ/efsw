@@ -72,6 +72,10 @@ FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
 FileWatcherFSEvents::~FileWatcherFSEvents() {
 	mInitOK = false;
 
+#ifdef EFSW_USE_CXX11
+	mWatchCond.notify_all();
+#endif
+
 	if ( mRunLoopRef.load() )
 		CFRunLoopStop( mRunLoopRef.load() );
 
@@ -84,8 +88,6 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 
 		efSAFE_DELETE( watch );
 	}
-
-	mWatches.clear();
 }
 
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher,
@@ -138,9 +140,14 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 
 	pWatch->init();
 
-	Lock lock( mWatchesLock );
-	mWatches.insert( std::make_pair( mLastWatchID, pWatch ) );
+	{
+		Lock lock( mWatchesLock );
+		mWatches.insert( std::make_pair( mLastWatchID, pWatch ) );
+	}
 
+#ifdef EFSW_USE_CXX11
+	mWatchCond.notify_all();
+#endif
 	return pWatch->ID;
 }
 
@@ -198,8 +205,23 @@ void FileWatcherFSEvents::run() {
 
 		mNeedInitMutex.unlock();
 
-		if ( mWatches.empty() ) {
-			System::sleep( 100 );
+		bool isEmpty = true;
+
+		{
+			Lock lock( mWatchesLock );
+			isEmpty = mWatches.empty();
+		}
+
+		if ( isEmpty ) {
+#ifdef EFSW_USE_CXX11
+			std::unique_lock<std::mutex> lk( mWatchesMutex );
+			mWatchCond.wait( lk, [this] {
+				Lock lock( mWatchesLock );
+				return !mInitOK || !mWatches.empty();
+			} );
+#else
+			System::sleep( 1 );
+#endif
 		} else {
 			CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
 		}

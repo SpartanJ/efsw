@@ -98,11 +98,11 @@ int main( int argc, char** argv ) {
 
 		std::cout << "CurPath: " << CurPath.c_str() << std::endl;
 
+			 /// starts watching
+		fileWatcher.watch();
+
 		/// add a watch to the system
 		handleWatchID( fileWatcher.addWatch( CurPath + "test", ul, true ) );
-
-		/// starts watching
-		fileWatcher.watch();
 
 		/// adds another watch after started watching...
 		efsw::System::sleep( 100 );
