@@ -11,7 +11,7 @@
 #include <list>
 #include <map>
 #include <vector>
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 #include <condition_variable>
 #include <mutex>
 #endif
@@ -96,7 +96,7 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	std::vector<WatcherFSEvents*> mNeedInit;
 	Mutex mNeedInitMutex;
 
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 	std::mutex mWatchesMutex;
 	std::condition_variable mWatchCond;
 #endif

@@ -1,6 +1,6 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
-newoption { trigger = "no-atomics", description = "Build efsw without atomics" }
+newoption { trigger = "legacy", description = "Build efsw with cpp legacy support (before C++11)." }
 newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer" }
 
 efsw_major_version	= "1"
@@ -134,9 +134,10 @@ workspace "efsw"
 		defines { "EFSW_VERBOSE" }
 	end
 
-	if not _OPTIONS["no-atomics"] then
+	if not _OPTIONS["legacy"] then
 		cppdialect "C++11"
-		defines { "EFSW_USE_CXX11" }
+	else
+		defines { "EFSW_LEGACY_CPP" }
 	end
 
 	objdir("obj/" .. os.target() .. "/")

@@ -72,7 +72,7 @@ FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
 FileWatcherFSEvents::~FileWatcherFSEvents() {
 	mInitOK = false;
 
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 	mWatchCond.notify_all();
 #endif
 
@@ -145,7 +145,7 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 		mWatches.insert( std::make_pair( mLastWatchID, pWatch ) );
 	}
 
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 	mWatchCond.notify_all();
 #endif
 	return pWatch->ID;
@@ -213,7 +213,7 @@ void FileWatcherFSEvents::run() {
 		}
 
 		if ( isEmpty ) {
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 			std::unique_lock<std::mutex> lk( mWatchesMutex );
 			mWatchCond.wait( lk, [this] {
 				Lock lock( mWatchesLock );

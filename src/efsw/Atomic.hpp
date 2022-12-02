@@ -3,7 +3,7 @@
 
 #include <efsw/base.hpp>
 
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 #include <atomic>
 #endif
 
@@ -14,7 +14,7 @@ template <typename T> class Atomic {
 	explicit Atomic( T set = false ) : set_( set ) {}
 
 	Atomic& operator=( T set ) {
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 		set_.store( set, std::memory_order_release );
 #else
 		set_ = set;
@@ -23,7 +23,7 @@ template <typename T> class Atomic {
 	}
 
 	explicit operator T() const {
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 		return set_.load( std::memory_order_acquire );
 #else
 		return set_;
@@ -31,7 +31,7 @@ template <typename T> class Atomic {
 	}
 
 	T load() const {
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 		return set_.load( std::memory_order_acquire );
 #else
 		return set_;
@@ -39,7 +39,7 @@ template <typename T> class Atomic {
 	}
 
   private:
-#ifdef EFSW_USE_CXX11
+#ifndef EFSW_LEGACY_CPP
 	std::atomic<T> set_;
 #else
 	volatile T set_;
