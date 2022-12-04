@@ -39,7 +39,7 @@ void WatcherFSEvents::init() {
 	Uint32 streamFlags = kFSEventStreamCreateFlagNone;
 
 	if ( FileWatcherFSEvents::isGranular() ) {
-		streamFlags = efswFSEventStreamCreateFlagFileEvents;
+		streamFlags = efswFSEventStreamCreateFlagFileEvents | efswFSEventStreamCreateFlagNoDefer;
 	} else {
 		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive );
 	}
@@ -54,7 +54,7 @@ void WatcherFSEvents::init() {
 
 	FSStream =
 		FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx,
-							 CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0.25, streamFlags );
+							 CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0., streamFlags );
 	FWatcher.load()->mNeedInitMutex.lock();
 	FWatcher.load()->mNeedInit.push_back( this );
 	FWatcher.load()->mNeedInitMutex.unlock();
