@@ -34,37 +34,41 @@ This should never happen, except for the Kqueue implementation; see `Platform li
 
 ```c++
 // Inherits from the abstract listener class, and implements the the file action handler
-class UpdateListener : public efsw::FileWatchListener
-{
-public:
-	void handleFileAction( efsw::WatchID watchid, const std::string& dir, const std::string& filename, efsw::Action action, std::string oldFilename ) override
-	{
-		switch( action )
-		{
-		case efsw::Actions::Add:
-			std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Added" << std::endl;
-			break;
-		case efsw::Actions::Delete:
-			std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Delete" << std::endl;
-			break;
-		case efsw::Actions::Modified:
-			std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Modified" << std::endl;
-			break;
-		case efsw::Actions::Moved:
-				std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Moved from (" << oldFilename << ")" << std::endl;
-			break;
-		default:
-			std::cout << "Should never happen!" << std::endl;
+class UpdateListener : public efsw::FileWatchListener {
+  public:
+	void handleFileAction( efsw::WatchID watchid, const std::string& dir,
+						   const std::string& filename, efsw::Action action,
+						   std::string oldFilename ) override {
+		switch ( action ) {
+			case efsw::Actions::Add:
+				std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Added"
+						  << std::endl;
+				break;
+			case efsw::Actions::Delete:
+				std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Delete"
+						  << std::endl;
+				break;
+			case efsw::Actions::Modified:
+				std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Modified"
+						  << std::endl;
+				break;
+			case efsw::Actions::Moved:
+				std::cout << "DIR (" << dir << ") FILE (" << filename << ") has event Moved from ("
+						  << oldFilename << ")" << std::endl;
+				break;
+			default:
+				std::cout << "Should never happen!" << std::endl;
 		}
 	}
 };
 
 // Create the file system watcher instance
-// efsw::FileWatcher allow a first boolean parameter that indicates if it should start with the generic file watcher instead of the platform specific backend
-efsw::FileWatcher * fileWatcher = new efsw::FileWatcher();
+// efsw::FileWatcher allow a first boolean parameter that indicates if it should start with the
+// generic file watcher instead of the platform specific backend
+efsw::FileWatcher* fileWatcher = new efsw::FileWatcher();
 
 // Create the instance of your efsw::FileWatcherListener implementation
-UpdateListener * listener = new UpdateListener();
+UpdateListener* listener = new UpdateListener();
 
 // Add a folder to watch, and get the efsw::WatchID
 // It will watch the /tmp folder recursively ( the third parameter indicates that is recursive )
@@ -78,7 +82,8 @@ efsw::WatchID watchID2 = fileWatcher->addWatch( "/usr", listener, false );
 fileWatcher->watch();
 
 // Remove the second watcher added
-// You can also call removeWatch by passing the watch path ( it must end with an slash or backslash in windows, since that's how internally it's saved )
+// You can also call removeWatch by passing the watch path ( it must end with an slash or backslash
+// in windows, since that's how internally it's saved )
 fileWatcher->removeWatch( watchID2 );
 ```
 
@@ -94,7 +99,7 @@ Then you can generate the project for your platform by just going to the project
 
 `premake4 gmake` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release` ( it will generate the static lib, the shared lib and the test application ).
 
-or 
+or
 
 `premake4 vs2010` to generate Visual Studio 2010 project.
 
