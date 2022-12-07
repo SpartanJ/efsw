@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
 
 project (efsw)
 
+set(ESFW_MAIN_PROJECT OFF)
+if ((CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR) AND (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME))
+	set(ESFW_MAIN_PROJECT ON)
+endif()
+
 include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
@@ -9,8 +14,8 @@ find_package(Threads REQUIRED)
 option (VERBOSE "Build efsw with verbose mode.")
 option (LEGACY "Build efsw with cpp legacy support (before C++11).")
 option (BUILD_SHARED_LIBS "Build efsw as a shared library" ON)
-option (BUILD_TEST_APP "Build the test app")
-option (EFSW_INSTALL "Add efsw install targets" ON)
+option (BUILD_TEST_APP "Build the test app" ${ESFW_MAIN_PROJECT})
+option (EFSW_INSTALL "Add efsw install targets" ${ESFW_MAIN_PROJECT})
 
 add_library(efsw)
 
@@ -139,20 +144,20 @@ configure_package_config_file(
 export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
 
 if(EFSW_INSTALL)
-  install(TARGETS efsw EXPORT efswExport
-  	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  )
+	install(TARGETS efsw EXPORT efswExport
+		LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	)
 
-  install (
-  	FILES
-  		include/efsw/efsw.h include/efsw/efsw.hpp
-  	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
-  )
+	install (
+		FILES
+			include/efsw/efsw.h include/efsw/efsw.hpp
+		DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
+	)
 
-  install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
-  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
+	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
 endif()
 
 if (BUILD_TEST_APP)
