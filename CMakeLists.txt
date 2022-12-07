@@ -144,20 +144,20 @@ configure_package_config_file(
 export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
 
 if(EFSW_INSTALL)
-install(TARGETS efsw EXPORT efswExport
-	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+	install(TARGETS efsw EXPORT efswExport
+		LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	)
 
-install (
-	FILES
-		include/efsw/efsw.h include/efsw/efsw.hpp
-	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
-)
+	install (
+		FILES
+			include/efsw/efsw.h include/efsw/efsw.hpp
+		DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
+	)
 
-install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
+	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
 endif()
 
 if (BUILD_TEST_APP)
