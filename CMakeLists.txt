@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
 
 project (efsw)
 
+set(ESFW_MAIN_PROJECT FALSE)
+if ((CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR) AND (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME))
+  set(ESFW_MAIN_PROJECT TRUE)
+endif()
+
 include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
@@ -124,35 +129,37 @@ elseif (NOT (${CMAKE_SYSTEM_NAME} MATCHES "Haiku") AND NOT WIN32)
 	target_link_libraries(efsw PRIVATE Threads::Threads)
 endif()
 
-include(CMakePackageConfigHelpers)
+if (ESFW_MAIN_PROJECT)
+	include(CMakePackageConfigHelpers)
 
-set(packageDestDir "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+	set(packageDestDir "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
 
-configure_package_config_file(
-	${CMAKE_CURRENT_SOURCE_DIR}/efswConfig.cmake.in
-	${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake
-	INSTALL_DESTINATION "${packageDestDir}"
-	NO_SET_AND_CHECK_MACRO
-	NO_CHECK_REQUIRED_COMPONENTS_MACRO
-)
+	configure_package_config_file(
+		${CMAKE_CURRENT_SOURCE_DIR}/efswConfig.cmake.in
+		${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake
+		INSTALL_DESTINATION "${packageDestDir}"
+		NO_SET_AND_CHECK_MACRO
+		NO_CHECK_REQUIRED_COMPONENTS_MACRO
+	)
 
-export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
+	export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
 
-if(EFSW_INSTALL)
-  install(TARGETS efsw EXPORT efswExport
-  	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  )
+	if(EFSW_INSTALL)
+	install(TARGETS efsw EXPORT efswExport
+		LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+		RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+	)
 
-  install (
-  	FILES
-  		include/efsw/efsw.h include/efsw/efsw.hpp
-  	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
-  )
+	install (
+		FILES
+			include/efsw/efsw.h include/efsw/efsw.hpp
+		DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
+	)
 
-  install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
-  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
+	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
+	endif()
 endif()
 
 if (BUILD_TEST_APP)
