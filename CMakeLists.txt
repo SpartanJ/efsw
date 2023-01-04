@@ -116,11 +116,7 @@ else ()
 	target_compile_options(efsw PRIVATE -Wall -Wno-long-long -fPIC)
 endif()
 
-if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
-	target_compile_definitions(efsw PRIVATE DEBUG)
-elseif (${CMAKE_BUILD_TYPE} MATCHES "Release")
-	target_compile_definitions(efsw PRIVATE NDEBUG)
-endif()
+target_compile_definitions(efsw PRIVATE $<IF:$<CONFIG:Debug>,DEBUG,NDEBUG>)
 
 if (APPLE)
 	set(MAC_LIBS "-framework CoreFoundation" "-framework CoreServices")
