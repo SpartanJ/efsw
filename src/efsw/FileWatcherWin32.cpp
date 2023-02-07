@@ -191,7 +191,8 @@ void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename
 				watch->OldFileName.substr( 0, watch->OldFileName.find_last_of( "/\\" ) );
 
 			if ( sepPos != std::string::npos ) {
-				folderPath += filename.substr( 0, sepPos );
+				folderPath +=
+					filename.substr( 0, sepPos + 1 < filename.size() ? sepPos + 1 : sepPos );
 				realFilename = filename.substr( sepPos + 1 );
 			}
 
