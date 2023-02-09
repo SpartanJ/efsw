@@ -11,7 +11,6 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 		return;
 	}
 
-	char szFile[MAX_PATH];
 	PFILE_NOTIFY_INFORMATION pNotify;
 	WatcherStructWin32* tWatch = (WatcherStructWin32*)lpOverlapped;
 	WatcherWin32* pWatch = tWatch->Watch;
@@ -22,13 +21,17 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 
 		pNotify = (PFILE_NOTIFY_INFORMATION)&pWatch->Buffer[offset];
 		offset += pNotify->NextEntryOffset;
+		int count =
+			WideCharToMultiByte( CP_UTF8, 0, pNotify->FileName,
+								 pNotify->FileNameLength / sizeof( WCHAR ), NULL, 0, NULL, NULL );
+		if ( count == 0 )
+			continue;
 
-		int count = WideCharToMultiByte( CP_UTF8, 0, pNotify->FileName,
-										 pNotify->FileNameLength / sizeof( WCHAR ), szFile,
-										 MAX_PATH - 1, NULL, NULL );
-		szFile[count] = TEXT( '\0' );
+		std::string nfile( count, '\0' );
 
-		std::string nfile( szFile );
+		count = WideCharToMultiByte( CP_UTF8, 0, pNotify->FileName,
+									 pNotify->FileNameLength / sizeof( WCHAR ), &nfile[0], count,
+									 NULL, NULL );
 
 		if ( FILE_ACTION_MODIFIED == pNotify->Action ) {
 			FileInfo fifile( std::string( pWatch->DirName ) + nfile );
