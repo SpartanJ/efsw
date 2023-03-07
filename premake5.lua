@@ -121,7 +121,7 @@ workspace "efsw"
 	location("./make/" .. os.target() .. "/")
 	targetdir("./bin")
 	configurations { "debug", "release", "relwithdbginfo" }
-	platforms { "x86_64", "x86" }
+	platforms { "x86_64", "x86", "ARM", "ARM64" }
 
 	if os.istarget("windows") then
 		osfiles = "src/efsw/platform/win/*.cpp"
@@ -147,6 +147,12 @@ workspace "efsw"
 
 	filter "platforms:x86_64"
 		architecture "x86_64"
+
+	filter "platforms:arm"
+		architecture "ARM"
+
+	filter "platforms:arm64"
+		architecture "ARM64"
 
 	project "efsw-static-lib"
 		kind "StaticLib"
