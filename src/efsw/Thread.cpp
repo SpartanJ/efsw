@@ -14,7 +14,8 @@ Thread::~Thread() {
 void Thread::launch() {
 	wait();
 
-	mThreadImpl = new Platform::ThreadImpl( this );
+	mThreadImpl = new Platform::ThreadImpl();
+	mThreadImpl->create( this );
 }
 
 void Thread::wait() {

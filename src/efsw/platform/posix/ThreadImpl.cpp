@@ -9,10 +9,12 @@
 
 namespace efsw { namespace Platform {
 
-ThreadImpl::ThreadImpl( Thread* owner ) : mIsActive( false ) {
-	mIsActive = pthread_create( &mThread, NULL, &ThreadImpl::entryPoint, owner ) == 0;
+ThreadImpl::ThreadImpl() : mIsActive( false ) {}
 
-	if ( !mIsActive ) {
+void ThreadImpl::create( Thread* owner ) {
+	bool created = pthread_create( &mThread, NULL, &ThreadImpl::entryPoint, owner ) == 0;
+
+	if ( !created ) {
 		efDEBUG( "Failed to create thread\n" );
 	}
 }
@@ -43,6 +45,7 @@ void ThreadImpl::terminate() {
 void* ThreadImpl::entryPoint( void* userData ) {
 	// The Thread instance is stored in the user data
 	Thread* owner = static_cast<Thread*>( userData );
+	owner->mThreadImpl->mIsActive = true;
 
 // Tell the thread to handle cancel requests immediatly
 #ifdef PTHREAD_CANCEL_ASYNCHRONOUS
