@@ -16,9 +16,9 @@ namespace Platform {
 
 class ThreadImpl {
   public:
-	ThreadImpl();
+	explicit ThreadImpl( efsw::Thread* owner );
 
-	void create( efsw::Thread* owner );
+	~ThreadImpl();
 
 	void wait();
 

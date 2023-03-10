@@ -8,9 +8,7 @@
 
 namespace efsw { namespace Platform {
 
-ThreadImpl::ThreadImpl() {}
-
-void ThreadImpl::create(  Thread* owner  ) {
+ThreadImpl::ThreadImpl( efsw::Thread* owner ) {
 	mThread = reinterpret_cast<HANDLE>(
 		_beginthreadex( NULL, 0, &ThreadImpl::entryPoint, owner, 0, &mThreadId ) );
 
