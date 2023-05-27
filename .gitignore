@@ -9,3 +9,8 @@ CMakeFiles/
 /Makefile
 *.DS_Store
 .qtc_clangd
+.cmake
+*.so
+*.a
+*.dylib
+*.lib
