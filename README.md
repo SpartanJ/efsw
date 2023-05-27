@@ -93,19 +93,19 @@ None :)
 
 **Compiling**
 ------------
-To generate project files you will need to [download and install](http://industriousone.com/premake/download) [Premake](http://industriousone.com/what-premake)
+To generate project files you will need to [download and install](https://premake.github.io/download) [Premake](https://premake.github.io/docs/What-Is-Premake)
 
 Then you can generate the project for your platform by just going to the project directory where the premake4.lua file is located and executing:
 
-`premake4 gmake` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release` ( it will generate the static lib, the shared lib and the test application ).
+`premake5 gmake2` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release_x86_64` ( it will generate the static lib, the shared lib and the test application ).
 
 or
 
-`premake4 vs2010` to generate Visual Studio 2010 project.
+`premake5 vs2022` to generate Visual Studio 2022 project.
 
 or
 
-`premake4 xcode4` to generate Xcode 4 project.
+`premake5 xcode4` to generate Xcode 4 project.
 
 There is also a cmake file that I don't officially support but it works just fine, provided by [Mohammed Nafees](https://github.com/mnafees) and improved by [Eugene Shalygin](https://github.com/zeule).
 
