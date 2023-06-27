@@ -30,7 +30,7 @@ FileWatcherWin32::~FileWatcherWin32() {
 }
 
 WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListener* watcher,
-									bool recursive ) {
+									bool recursive, const std::vector<WatcherOption> &options ) {
 	std::string dir( directory );
 
 	FileInfo fi( dir );
@@ -51,11 +51,8 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 
 	WatchID watchid = ++mLastWatchID;
 
-	WatcherStructWin32* watch = CreateWatch(
-		String::fromUtf8( dir ).toWideString().c_str(), recursive,
-		FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME |
-			FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_SIZE,
-		mIOCP );
+	WatcherStructWin32* watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), 
+											 recursive, options, mIOCP );
 
 	if ( NULL == watch ) {
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );

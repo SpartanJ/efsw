@@ -91,7 +91,7 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 }
 
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher,
-									   bool recursive ) {
+									   bool recursive, const std::vector<WatcherOption> &options ) {
 	/// Wait to the RunLoopRef to be ready
 	while ( NULL == mRunLoopRef.load() ) {
 		System::sleep( 1 );

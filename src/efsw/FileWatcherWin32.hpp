@@ -25,7 +25,8 @@ class FileWatcherWin32 : public FileWatcherImpl {
 
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
-	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive );
+	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
+					  const std::vector<WatcherOption> &options );
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
 	void removeWatch( const std::string& directory );

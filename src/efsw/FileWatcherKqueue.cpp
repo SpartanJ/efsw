@@ -45,7 +45,7 @@ FileWatcherKqueue::~FileWatcherKqueue() {
 }
 
 WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
-									 bool recursive ) {
+									 bool recursive, const std::vector<WatcherOption> &options ) {
 	static bool s_ug = false;
 
 	std::string dir( directory );
