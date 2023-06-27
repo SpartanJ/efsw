@@ -19,7 +19,7 @@ class FileWatcherImpl {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	virtual WatchID addWatch( const std::string& directory, FileWatchListener* watcher,
-							  bool recursive ) = 0;
+							  bool recursive, const std::vector<WatcherOption> &options = {} ) = 0;
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
 	virtual void removeWatch( const std::string& directory ) = 0;

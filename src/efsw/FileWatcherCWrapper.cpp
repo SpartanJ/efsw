@@ -71,6 +71,10 @@ const char* efsw_getlasterror() {
 	return log_str.c_str();
 }
 
+EFSW_API void efsw_clearlasterror() {
+	efsw::Errors::Log::clearLastError();
+}
+
 efsw_watchid efsw_addwatch( efsw_watcher watcher, const char* directory,
 							efsw_pfn_fileaction_callback callback_fn, int recursive, void* param ) {
 	Watcher_CAPI* callback = find_callback( watcher, callback_fn );

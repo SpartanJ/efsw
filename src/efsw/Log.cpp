@@ -2,10 +2,20 @@
 
 namespace efsw { namespace Errors {
 
-static std::string LastError;
+static std::string LastError = "";
+static Error LastErrorCode = NoError;
 
 std::string Log::getLastErrorLog() {
 	return LastError;
+}
+
+Error Log::getLastErrorCode() {
+	return LastErrorCode;
+}
+
+void Log::clearLastError() {
+	LastErrorCode = NoError;
+	LastError = "";
 }
 
 Error Log::createLastError( Error err, std::string log ) {

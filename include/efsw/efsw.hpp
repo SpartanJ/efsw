@@ -30,6 +30,7 @@
 
 #include <vector>
 #include <string>
+#include <vector>
 
 #if defined( _WIN32 )
 #ifdef EFSW_DYNAMIC
@@ -68,6 +69,7 @@ typedef long WatchID;
 // forward declarations
 class FileWatcherImpl;
 class FileWatchListener;
+class WatcherOption;
 
 /// Actions to listen for. Rename will send two events, one for
 /// the deletion of the old file, and one for the creation of the
@@ -90,6 +92,7 @@ typedef Actions::Action Action;
 namespace Errors {
 
 enum Error {
+	NoError = 0,
 	FileNotFound = -1,
 	FileRepeated = -2,
 	FileOutOfScope = -3,
@@ -104,12 +107,35 @@ class EFSW_API Log {
 	/// @return The last error logged
 	static std::string getLastErrorLog();
 
+	/// @return The code of the last error logged
+	static Error getLastErrorCode();
+
+	/// Reset last error
+	static void clearLastError();
+
 	/// Creates an error of the type specified
 	static Error createLastError( Error err, std::string log );
 };
 
 } // namespace Errors
 typedef Errors::Error Error;
+
+/// Optional file watcher settings.
+namespace Options {
+enum Option {
+	/// For Windows, the default buffer size of 63*1024 bytes sometimes is not enough and
+	/// file system events may be dropped. For that, using a different (bigger) buffer size
+	/// can be defined here, but note that this does not work for network drives,
+	/// because a buffer larger than 64K will fail the folder being watched, see
+	/// http://msdn.microsoft.com/en-us/library/windows/desktop/aa365465(v=vs.85).aspx)
+	WinBufferSize = 1,
+	/// For Windows, per default all events are captured but we might only be interested
+	/// in a subset; the value of the option should be set to a bitwise or'ed set of
+	/// FILE_NOTIFY_CHANGE_* flags.
+	WinNotifyFilter = 2
+};
+}
+typedef Options::Option Option;
 
 /// Listens to files and directories and dispatches events
 /// to notify the listener of files and directories changes.
@@ -132,6 +158,15 @@ class EFSW_API FileWatcher {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive );
+
+	/// Add a directory watch, allowing customization with options
+	/// @param directory The folder to be watched
+	/// @param watcher The listener to receive events
+	/// @param recursive Set this to true to include subdirectories
+	/// @param options Allows customization of a watcher
+	/// @return Returns the watch id for the directory or, on error, a WatchID with Error type.
+	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive, 
+					  const std::vector<WatcherOption> &options );
 
 	/// Remove a directory watch. This is a brute force search O(nlogn).
 	void removeWatch( const std::string& directory );
@@ -188,6 +223,15 @@ class FileWatchListener {
 	virtual void handleFileAction( WatchID watchid, const std::string& dir,
 								   const std::string& filename, Action action,
 								   std::string oldFilename = "" ) = 0;
+};
+
+/// Basic interface for listening for file events.
+/// @class WatcherOption
+class WatcherOption {
+  public:
+	WatcherOption(Option option, int value) : mOption(option), mValue(value) {};
+	Option mOption;
+	int mValue;
 };
 
 } // namespace efsw
