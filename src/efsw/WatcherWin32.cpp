@@ -61,8 +61,8 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 
 /// Refreshes the directory monitoring.
 bool RefreshWatch( WatcherStructWin32* pWatch ) {
-	bool bRet = ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer,
-		sizeof( pWatch->Watch->Buffer ), pWatch->Watch->Recursive,
+	bool bRet = ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer.data(),
+		pWatch->Watch->Buffer.size(), pWatch->Watch->Recursive,
 		pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped,	NULL ) != 0;
 
 	if ( !bRet ) {
