@@ -99,7 +99,8 @@ enum Error {
 	FileNotReadable = -4,
 	FileRemote = -5, /** Directory in remote file system ( create a generic FileWatcher instance to
 						watch this directory ). */
-	Unspecified = -6
+	WinReadDirectoryChangesFailed = -6,
+	Unspecified = -7
 };
 
 class EFSW_API Log {
