@@ -47,21 +47,18 @@ class WatcherWin32 : public Watcher {
 	WatcherWin32(DWORD dwBufferSize) :
 		Struct( NULL ),
 		DirHandle( NULL ),
+		Buffer(),
 		lParam( 0 ),
 		NotifyFilter( 0 ),
 		StopNow( false ),
 		Watch( NULL ),
 		DirName( NULL ) {
-			Buffer = new BYTE[dwBufferSize];
+			Buffer.resize(dwBufferSize);
 		}
-
-	virtual ~WatcherWin32() {
-		delete Buffer;
-	}
 
 	WatcherStructWin32* Struct;
 	HANDLE DirHandle;
-	BYTE* Buffer;
+	std::vector<BYTE> Buffer;
 	LPARAM lParam;
 	DWORD NotifyFilter;
 	bool StopNow;
