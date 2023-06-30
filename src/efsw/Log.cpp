@@ -42,7 +42,7 @@ Error Log::createLastError( Error err, std::string log ) {
 			LastError = log;
 	}
 
-	efDEBUG( "%s\n", LastError );
+	efDEBUG( "%s\n", LastError.c_str() );
 	return err;
 }
 
