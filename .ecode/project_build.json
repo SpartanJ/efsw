@@ -1,0 +1,170 @@
+{
+  "linux-debug": {
+    "build": [
+      {
+        "args": " --thread-sanitizer --verbose gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/linux",
+        "command": "make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "preset": "generic",
+        "relative_file_paths": true
+      }
+    }
+  },
+  "linux-release": {
+    "build": [
+      {
+        "args": "gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/linux  -e config=release_x86_64",
+        "command": "make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "preset": "generic",
+        "relative_file_paths": true
+      }
+    }
+  },
+  "linux-relwithdbginfo": {
+    "build": [
+      {
+        "args": "gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/linux  -e config=relwithdbginfo_x86_64",
+        "command": "make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "preset": "generic",
+        "relative_file_paths": true
+      }
+    }
+  },
+  "mingw-debug": {
+    "build": [
+      {
+        "args": "--os=windows gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/windows",
+        "command": "mingw64-make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "relative_file_paths": true
+      }
+    }
+  },
+  "mingw-release": {
+    "build": [
+      {
+        "args": "--os=windows gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/windows -e config=release_x86_64",
+        "command": "mingw64-make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "relative_file_paths": true
+      }
+    }
+  }
+}

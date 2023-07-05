@@ -127,8 +127,8 @@ void FileWatcherGeneric::handleAction( Watcher*, const std::string&, unsigned lo
 	/// Not used
 }
 
-std::list<std::string> FileWatcherGeneric::directories() {
-	std::list<std::string> dirs;
+std::vector<std::string> FileWatcherGeneric::directories() {
+	std::vector<std::string> dirs;
 
 	Lock lock( mWatchesLock );
 

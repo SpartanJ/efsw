@@ -96,7 +96,7 @@ void FileWatcher::watch() {
 	mImpl->watch();
 }
 
-std::list<std::string> FileWatcher::directories() {
+std::vector<std::string> FileWatcher::directories() {
 	return mImpl->directories();
 }
 

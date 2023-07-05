@@ -28,7 +28,7 @@
 #ifndef ESFW_HPP
 #define ESFW_HPP
 
-#include <list>
+#include <vector>
 #include <string>
 
 #if defined( _WIN32 )
@@ -143,7 +143,7 @@ class EFSW_API FileWatcher {
 	void watch();
 
 	/// @return Returns a list of the directories that are being watched
-	std::list<std::string> directories();
+	std::vector<std::string> directories();
 
 	/** Allow recursive watchers to follow symbolic links to other directories
 	 * followSymlinks is disabled by default
