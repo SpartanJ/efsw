@@ -77,6 +77,13 @@ EFSW_API void efsw_clearlasterror() {
 
 efsw_watchid efsw_addwatch( efsw_watcher watcher, const char* directory,
 							efsw_pfn_fileaction_callback callback_fn, int recursive, void* param ) {
+	return efsw_addwatch_withoptions( watcher, directory, callback_fn, recursive, 0, 0, param );
+}
+
+efsw_watchid  efsw_addwatch_withoptions(efsw_watcher watcher, const char* directory,
+										efsw_pfn_fileaction_callback callback_fn, int recursive,
+										efsw_watcher_option *options, int options_number,
+										void* param) {
 	Watcher_CAPI* callback = find_callback( watcher, callback_fn );
 
 	if ( callback == NULL ) {
@@ -84,8 +91,15 @@ efsw_watchid efsw_addwatch( efsw_watcher watcher, const char* directory,
 		g_callbacks.push_back( callback );
 	}
 
+	std::vector<efsw::WatcherOption> watcher_options{};
+	for ( int i = 0; i < options_number; i++ ) {
+		efsw_watcher_option* option = &options[i];
+		watcher_options.emplace_back( efsw::WatcherOption{
+			static_cast<efsw::Option>(option->option), option->value } );
+	}
+
 	return ( (efsw::FileWatcher*)watcher )
-		->addWatch( std::string( directory ), callback, TOBOOL( recursive ) );
+		->addWatch( std::string( directory ), callback, TOBOOL( recursive ), watcher_options );
 }
 
 void efsw_removewatch( efsw_watcher watcher, const char* directory ) {

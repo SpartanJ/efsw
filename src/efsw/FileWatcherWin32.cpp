@@ -51,8 +51,14 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 
 	WatchID watchid = ++mLastWatchID;
 
+	DWORD bufferSize = static_cast<DWORD>( getOptionValue(options, Option::WinBufferSize, 63 * 1024) );
+	DWORD notifyFilter = static_cast<DWORD>( getOptionValue(options, Option::WinNotifyFilter, 
+		FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_LAST_WRITE |
+		FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+		FILE_NOTIFY_CHANGE_SIZE) );
+
 	WatcherStructWin32* watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), 
-											 recursive, options, mIOCP );
+											 recursive, bufferSize, notifyFilter, mIOCP );
 
 	if ( NULL == watch ) {
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );

@@ -40,7 +40,7 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 void DestroyWatch( WatcherStructWin32* pWatch );
 
 WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
-							     const std::vector<WatcherOption> &options, HANDLE iocp );
+							     DWORD bufferSize, DWORD notifyFilter, HANDLE iocp );
 
 class WatcherWin32 : public Watcher {
   public:

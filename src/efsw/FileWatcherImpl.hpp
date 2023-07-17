@@ -47,9 +47,14 @@ class FileWatcherImpl {
 	/// Search if a directory already exists in the watches
 	virtual bool pathInWatches( const std::string& path ) = 0;
 
+
 	FileWatcher* mFileWatcher;
 	Atomic<bool> mInitOK;
 	bool mIsGeneric;
+
+protected:
+	int getOptionValue( const std::vector<WatcherOption> &options,
+						Option option, int defaultValue );
 };
 
 } // namespace efsw

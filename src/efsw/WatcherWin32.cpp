@@ -67,7 +67,7 @@ bool RefreshWatch( WatcherStructWin32* pWatch ) {
 
 	if ( !bRet ) {
 		std::string error = std::to_string( GetLastError() );
-		Errors::Log::createLastError( Errors::WinReadDirectoryChangesFailed, error );
+		Errors::Log::createLastError( Errors::WatcherFailed, error );
 	}
 
 	return bRet;
@@ -85,30 +85,15 @@ void DestroyWatch( WatcherStructWin32* pWatch ) {
 	}
 }
 
-DWORD GetOptionValue(const std::vector<WatcherOption> &options, Option option,
-					 DWORD dwDefaultValue) {
-	auto iter = std::find_if( options.begin(), options.end(),
-							  [option](const WatcherOption &item) { 
-								return item.mOption == option; 
-							});
-	return (iter == options.end()) ? dwDefaultValue : iter->mValue;
-}
-
 /// Starts monitoring a directory.
 WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
-								 const std::vector<WatcherOption> &options, HANDLE iocp ) {
-	DWORD BufferSize = GetOptionValue(options, Option::WinBufferSize, 63 * 1024);
-	DWORD NotifyFilter = GetOptionValue(options, Option::WinNotifyFilter,
-		FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_LAST_WRITE |
-		FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-		FILE_NOTIFY_CHANGE_SIZE);
-
+								 DWORD bufferSize, DWORD notifyFilter, HANDLE iocp ) {
 	WatcherStructWin32* tWatch;
 	size_t ptrsize = sizeof( *tWatch );
 	tWatch = static_cast<WatcherStructWin32*>(
 		HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, ptrsize ) );
 
-	WatcherWin32* pWatch = new WatcherWin32(BufferSize);
+	WatcherWin32* pWatch = new WatcherWin32(bufferSize);
 	tWatch->Watch = pWatch;
 
 	pWatch->DirHandle = CreateFileW(
@@ -117,7 +102,7 @@ WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
 
 	if ( pWatch->DirHandle != INVALID_HANDLE_VALUE &&
 		 CreateIoCompletionPort( pWatch->DirHandle, iocp, 0, 1 ) ) {
-		pWatch->NotifyFilter = NotifyFilter;
+		pWatch->NotifyFilter = notifyFilter;
 		pWatch->Recursive = recursive;
 
 		if ( RefreshWatch( tWatch ) ) {

@@ -34,8 +34,8 @@ Error Log::createLastError( Error err, std::string log ) {
 			LastError =
 				"File is located in a remote file system, use a generic watcher. ( " + log + " )";
 			break;
-		case WinReadDirectoryChangesFailed:
-			LastError = "ReadDirectoryChanges failed ( " + log + " )";
+		case WatcherFailed:
+			LastError = "File system watcher failed ( " + log + " )";
 			break;
 		case Unspecified:
 		default:
