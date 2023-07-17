@@ -44,7 +44,7 @@ void DirectorySnapshot::initFiles() {
 	Files = FileSystem::filesInfoFromPath( DirectoryInfo.Filepath );
 
 	FileInfoMap::iterator it = Files.begin();
-	std::list<std::string> eraseFiles;
+	std::vector<std::string> eraseFiles;
 
 	/// Remove all non regular files and non directories
 	for ( ; it != Files.end(); it++ ) {
@@ -53,7 +53,7 @@ void DirectorySnapshot::initFiles() {
 		}
 	}
 
-	for ( std::list<std::string>::iterator eit = eraseFiles.begin(); eit != eraseFiles.end();
+	for ( std::vector<std::string>::iterator eit = eraseFiles.begin(); eit != eraseFiles.end();
 		  eit++ ) {
 		Files.erase( *eit );
 	}

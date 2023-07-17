@@ -38,7 +38,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 					   std::string oldFilename = "" );
 
 	/// @return Returns a list of the directories that are being watched
-	std::list<std::string> directories();
+	std::vector<std::string> directories();
 
   protected:
 	/// Map of WatchID to WatchStruct pointers
@@ -54,7 +54,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 
 	Mutex mWatchesLock;
 
-	std::list<WatchID> mRemoveList;
+	std::vector<WatchID> mRemoveList;
 
 	long mFileDescriptorCount;
 

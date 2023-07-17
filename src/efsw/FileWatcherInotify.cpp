@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <efsw/FileWatcherInotify.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
@@ -26,7 +27,7 @@
 namespace efsw {
 
 FileWatcherInotify::FileWatcherInotify( FileWatcher* parent ) :
-	FileWatcherImpl( parent ), mFD( -1 ), mThread( NULL ), mIsTakingAction(false) {
+	FileWatcherImpl( parent ), mFD( -1 ), mThread( NULL ), mIsTakingAction( false ) {
 	mFD = inotify_init();
 
 	if ( mFD < 0 ) {
@@ -40,10 +41,10 @@ FileWatcherInotify::~FileWatcherInotify() {
 	mInitOK = false;
 	// There is deadlock when release FileWatcherInotify instance since its handAction
 	// function is still running and hangs in requiring lock without init lock captured.
-	while (mIsTakingAction) {
+	while ( mIsTakingAction ) {
 		// It'd use condition-wait instead of sleep. Actually efsw has no such
 		// implementation so we just skip and sleep while for that to avoid deadlock.
-		usleep(1000);
+		usleep( 1000 );
 	};
 	Lock initLock( mInitLock );
 
@@ -182,7 +183,7 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 
 	if ( watch->Recursive ) {
 		WatchMap::iterator it = mWatches.begin();
-		std::list<WatchID> eraseWatches;
+		std::vector<WatchID> eraseWatches;
 
 		for ( ; it != mWatches.end(); ++it ) {
 			if ( it->second != watch && it->second->inParentTree( watch ) ) {
@@ -190,7 +191,7 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 			}
 		}
 
-		for ( std::list<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end();
+		for ( std::vector<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end();
 			  ++eit ) {
 			removeWatch( *eit );
 		}
@@ -232,7 +233,7 @@ void FileWatcherInotify::removeWatch( const std::string& directory ) {
 
 			if ( watch->Recursive ) {
 				WatchMap::iterator it = mWatches.begin();
-				std::list<WatchID> eraseWatches;
+				std::vector<WatchID> eraseWatches;
 
 				for ( ; it != mWatches.end(); ++it ) {
 					if ( it->second->inParentTree( watch ) ) {
@@ -240,7 +241,7 @@ void FileWatcherInotify::removeWatch( const std::string& directory ) {
 					}
 				}
 
-				for ( std::list<WatchID>::iterator eit = eraseWatches.begin();
+				for ( std::vector<WatchID>::iterator eit = eraseWatches.begin();
 					  eit != eraseWatches.end(); ++eit ) {
 					removeWatchLocked( *eit );
 				}
@@ -429,7 +430,7 @@ void FileWatcherInotify::run() {
 				const std::string& oldFileName = ( *it ).second;
 
 				/// Check if the file move was a folder already being watched
-				std::list<Watcher*> eraseWatches;
+				std::vector<Watcher*> eraseWatches;
 
 				{
 					Lock lock( mWatchesLock );
@@ -446,12 +447,15 @@ void FileWatcherInotify::run() {
 				}
 
 				/// Remove invalid watches
-				eraseWatches.sort();
+				std::stable_sort( eraseWatches.begin(), eraseWatches.end(),
+								  []( const Watcher* left, const Watcher* right ) {
+									  return left->Directory < right->Directory;
+								  } );
 
 				if ( eraseWatches.empty() ) {
 					handleAction( watch, oldFileName, IN_DELETE );
 				} else {
-					for ( std::list<Watcher*>::reverse_iterator eit = eraseWatches.rbegin();
+					for ( std::vector<Watcher*>::reverse_iterator eit = eraseWatches.rbegin();
 						  eit != eraseWatches.rend(); ++eit ) {
 						Watcher* rmWatch = *eit;
 
@@ -573,8 +577,8 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	mIsTakingAction = false;
 }
 
-std::list<std::string> FileWatcherInotify::directories() {
-	std::list<std::string> dirs;
+std::vector<std::string> FileWatcherInotify::directories() {
+	std::vector<std::string> dirs;
 
 	Lock l( mRealWatchesLock );
 

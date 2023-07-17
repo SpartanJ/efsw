@@ -4,7 +4,8 @@
 #include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileWatcherImpl.hpp>
 #include <efsw/WatcherGeneric.hpp>
-#include <list>
+#include <vector>
+#include <vector>
 #include <vector>
 
 namespace efsw {
@@ -13,7 +14,7 @@ namespace efsw {
 /// @class FileWatcherGeneric
 class FileWatcherGeneric : public FileWatcherImpl {
   public:
-	typedef std::list<WatcherGeneric*> WatchList;
+	typedef std::vector<WatcherGeneric*> WatchList;
 
 	FileWatcherGeneric( FileWatcher* parent );
 
@@ -38,7 +39,7 @@ class FileWatcherGeneric : public FileWatcherImpl {
 					   std::string oldFilename = "" );
 
 	/// @return Returns a list of the directories that are being watched
-	std::list<std::string> directories();
+	std::vector<std::string> directories();
 
   protected:
 	Thread* mThread;

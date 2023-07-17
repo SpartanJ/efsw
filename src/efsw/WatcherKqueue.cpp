@@ -139,7 +139,7 @@ void WatcherKqueue::addAll() {
 void WatcherKqueue::removeAll() {
 	efDEBUG( "removeAll(): Removing all child watchers\n" );
 
-	std::list<WatchID> erase;
+	std::vector<WatchID> erase;
 
 	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); it++ ) {
 		efDEBUG( "removeAll(): Removed child watcher %s\n", it->second->Directory.c_str() );
@@ -147,7 +147,7 @@ void WatcherKqueue::removeAll() {
 		erase.push_back( it->second->ID );
 	}
 
-	for ( std::list<WatchID>::iterator eit = erase.begin(); eit != erase.end(); eit++ ) {
+	for ( std::vector<WatchID>::iterator eit = erase.begin(); eit != erase.end(); eit++ ) {
 		removeWatch( *eit );
 	}
 }

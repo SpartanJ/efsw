@@ -235,8 +235,8 @@ void FileWatcherFSEvents::handleAction( Watcher* watch, const std::string& filen
 	/// Not used
 }
 
-std::list<std::string> FileWatcherFSEvents::directories() {
-	std::list<std::string> dirs;
+std::vector<std::string> FileWatcherFSEvents::directories() {
+	std::vector<std::string> dirs;
 
 	Lock lock( mWatchesLock );
 

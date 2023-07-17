@@ -1,0 +1,16 @@
+-Wno-documentation-unknown-command
+-Wno-unknown-warning-option
+-Wno-unknown-pragmas
+-std=c++11
+-fsyntax-only
+-Isrc
+-Iinclude
+-fmessage-length=0
+-fdiagnostics-show-note-include-stack
+-fretain-comments-from-system-headers
+-fmacro-backtrace-limit=0
+-ferror-limit=1000
+-Wall
+-Wextra
+-x
+c++-header

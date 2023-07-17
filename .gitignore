@@ -16,3 +16,4 @@ CMakeFiles/
 *.a
 *.dylib
 *.lib
+/.cache

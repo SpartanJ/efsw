@@ -35,7 +35,7 @@ class FileWatcherImpl {
 							   std::string oldFilename = "" ) = 0;
 
 	/// @return Returns a list of the directories that are being watched
-	virtual std::list<std::string> directories() = 0;
+	virtual std::vector<std::string> directories() = 0;
 
 	/// @return true if the backend init successfully
 	virtual bool initOK();

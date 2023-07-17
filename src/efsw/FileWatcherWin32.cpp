@@ -234,8 +234,8 @@ void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename
 	watch->Listener->handleFileAction( watch->ID, folderPath, realFilename, fwAction );
 }
 
-std::list<std::string> FileWatcherWin32::directories() {
-	std::list<std::string> dirs;
+std::vector<std::string> FileWatcherWin32::directories() {
+	std::vector<std::string> dirs;
 
 	Lock lock( mWatchesLock );
 

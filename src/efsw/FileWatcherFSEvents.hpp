@@ -8,7 +8,6 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
 #include <efsw/WatcherFSEvents.hpp>
-#include <list>
 #include <map>
 #include <vector>
 #ifndef EFSW_LEGACY_CPP
@@ -74,7 +73,7 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 					   std::string oldFilename = "" );
 
 	/// @return Returns a list of the directories that are being watched
-	std::list<std::string> directories();
+	std::vector<std::string> directories();
 
   protected:
 	static void FSEventCallback( ConstFSEventStreamRef streamRef, void* userData, size_t numEvents,

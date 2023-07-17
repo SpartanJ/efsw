@@ -42,7 +42,7 @@ class FileWatcherWin32 : public FileWatcherImpl {
 					   std::string oldFilename = "" );
 
 	/// @return Returns a list of the directories that are being watched
-	std::list<std::string> directories();
+	std::vector<std::string> directories();
 
   protected:
 	HANDLE mIOCP;
