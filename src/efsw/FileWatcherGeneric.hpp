@@ -6,6 +6,7 @@
 #include <efsw/WatcherGeneric.hpp>
 #include <vector>
 #include <vector>
+#include <vector>
 
 namespace efsw {
 
