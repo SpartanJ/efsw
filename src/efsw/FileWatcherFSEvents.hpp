@@ -7,6 +7,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <dispatch/dispatch.h>
 #include <efsw/WatcherFSEvents.hpp>
 #include <map>
 #include <vector>

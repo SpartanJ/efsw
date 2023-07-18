@@ -52,9 +52,14 @@ void WatcherFSEvents::init() {
 	ctx.release = NULL;
 	ctx.copyDescription = NULL;
 
+	dispatch_queue_t queue = dispatch_queue_create(NULL, NULL);
+
 	FSStream =
 		FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx,
 							 CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0., streamFlags );
+
+	FSEventStreamSetDispatchQueue(FSStream, queue);
+
 	FWatcher.load()->mNeedInitMutex.lock();
 	FWatcher.load()->mNeedInit.push_back( this );
 	FWatcher.load()->mNeedInitMutex.unlock();
@@ -64,8 +69,6 @@ void WatcherFSEvents::init() {
 }
 
 void WatcherFSEvents::initAsync() {
-	FSEventStreamScheduleWithRunLoop( FSStream, FWatcher.load()->mRunLoopRef.load(),
-									  kCFRunLoopDefaultMode );
 	FSEventStreamStart( FSStream );
 	initializedAsync = true;
 }
