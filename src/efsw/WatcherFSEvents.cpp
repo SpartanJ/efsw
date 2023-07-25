@@ -8,22 +8,18 @@
 namespace efsw {
 
 WatcherFSEvents::WatcherFSEvents() :
-	Watcher(), FWatcher( NULL ), FSStream( NULL ), WatcherGen( NULL ), initializedAsync( false ) {}
+	Watcher(), FWatcher( NULL ), FSStream( NULL ), WatcherGen( NULL ) {}
 
 WatcherFSEvents::WatcherFSEvents( WatchID id, std::string directory, FileWatchListener* listener,
 								  bool recursive, WatcherFSEvents* parent ) :
 	Watcher( id, directory, listener, recursive ),
 	FWatcher( NULL ),
 	FSStream( NULL ),
-	WatcherGen( NULL ),
-	initializedAsync( false ) {}
+	WatcherGen( NULL ) {}
 
 WatcherFSEvents::~WatcherFSEvents() {
 	if ( NULL != FSStream ) {
-		if ( initializedAsync ) {
-			FSEventStreamStop( FSStream );
-		}
-
+		FSEventStreamStop( FSStream );
 		FSEventStreamInvalidate( FSStream );
 		FSEventStreamRelease( FSStream );
 	}
@@ -60,17 +56,10 @@ void WatcherFSEvents::init() {
 
 	FSEventStreamSetDispatchQueue(FSStream, queue);
 
-	FWatcher.load()->mNeedInitMutex.lock();
-	FWatcher.load()->mNeedInit.push_back( this );
-	FWatcher.load()->mNeedInitMutex.unlock();
+	FSEventStreamStart( FSStream );
 
 	CFRelease( CFDirectoryArray );
 	CFRelease( CFDirectory );
-}
-
-void WatcherFSEvents::initAsync() {
-	FSEventStreamStart( FSStream );
-	initializedAsync = true;
 }
 
 void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,

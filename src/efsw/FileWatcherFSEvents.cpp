@@ -63,7 +63,7 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef streamRef, void
 }
 
 FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
-	FileWatcherImpl( parent ), mRunLoopRef( NULL ), mLastWatchID( 0 ), mThread( NULL ) {
+	FileWatcherImpl( parent ), mLastWatchID( 0 ) {
 	mInitOK = true;
 
 	watch();
@@ -76,11 +76,6 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 	mWatchCond.notify_all();
 #endif
 
-	if ( mRunLoopRef.load() )
-		CFRunLoopStop( mRunLoopRef.load() );
-
-	efSAFE_DELETE( mThread );
-
 	WatchMap::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
@@ -92,11 +87,6 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher,
 									   bool recursive ) {
-	/// Wait to the RunLoopRef to be ready
-	while ( NULL == mRunLoopRef.load() ) {
-		System::sleep( 1 );
-	}
-
 	std::string dir( directory );
 
 	FileInfo fi( dir );
@@ -181,54 +171,7 @@ void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
 	efSAFE_DELETE( watch );
 }
 
-void FileWatcherFSEvents::watch() {
-	if ( NULL == mThread ) {
-		mThread = new Thread( &FileWatcherFSEvents::run, this );
-		mThread->launch();
-	}
-}
-
-void FileWatcherFSEvents::run() {
-	mRunLoopRef = CFRunLoopGetCurrent();
-
-	while ( mInitOK ) {
-		mNeedInitMutex.lock();
-
-		if ( !mNeedInit.empty() ) {
-			for ( std::vector<WatcherFSEvents*>::iterator it = mNeedInit.begin();
-				  it != mNeedInit.end(); ++it ) {
-				( *it )->initAsync();
-			}
-
-			mNeedInit.clear();
-		}
-
-		mNeedInitMutex.unlock();
-
-		bool isEmpty = true;
-
-		{
-			Lock lock( mWatchesLock );
-			isEmpty = mWatches.empty();
-		}
-
-		if ( isEmpty ) {
-#ifndef EFSW_LEGACY_CPP
-			std::unique_lock<std::mutex> lk( mWatchesMutex );
-			mWatchCond.wait( lk, [this] {
-				Lock lock( mWatchesLock );
-				return !mInitOK || !mWatches.empty();
-			} );
-#else
-			System::sleep( 1 );
-#endif
-		} else {
-			CFRunLoopRunInMode( kCFRunLoopDefaultMode, 0.5, kCFRunLoopRunTimedOut );
-		}
-	}
-
-	mRunLoopRef = NULL;
-}
+void FileWatcherFSEvents::watch() {}
 
 void FileWatcherFSEvents::handleAction( Watcher* watch, const std::string& filename,
 										unsigned long action, std::string oldFilename ) {
