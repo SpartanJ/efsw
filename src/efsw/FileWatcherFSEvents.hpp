@@ -7,6 +7,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <dispatch/dispatch.h>
 #include <efsw/WatcherFSEvents.hpp>
 #include <map>
 #include <vector>
@@ -80,30 +81,21 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 								 void* eventPaths, const FSEventStreamEventFlags eventFlags[],
 								 const FSEventStreamEventId eventIds[] );
 
-	Atomic<CFRunLoopRef> mRunLoopRef;
-
 	/// Vector of WatcherWin32 pointers
 	WatchMap mWatches;
 
 	/// The last watchid
 	WatchID mLastWatchID;
 
-	Thread* mThread;
-
 	Mutex mWatchesLock;
 
 	bool pathInWatches( const std::string& path );
-
-	std::vector<WatcherFSEvents*> mNeedInit;
-	Mutex mNeedInitMutex;
 
 #ifndef EFSW_LEGACY_CPP
 	std::mutex mWatchesMutex;
 	std::condition_variable mWatchCond;
 #endif
 
-  private:
-	void run();
 };
 
 } // namespace efsw

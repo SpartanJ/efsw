@@ -36,8 +36,6 @@ class WatcherFSEvents : public Watcher {
 
 	void init();
 
-	void initAsync();
-
 	void handleActions( std::vector<FSEvent>& events );
 
 	void process();
@@ -50,8 +48,6 @@ class WatcherFSEvents : public Watcher {
 						  std::string& filePath );
 
 	WatcherGeneric* WatcherGen;
-
-	Atomic<bool> initializedAsync;
 
 	std::set<std::string> DirsChanged;
 
