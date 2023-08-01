@@ -12,6 +12,13 @@
 	#include <unistd.h>
 #endif
 
+const char PATH_SEPARATOR =
+#ifdef _WIN32
+	'\\';
+#else
+	'/';
+#endif
+
 bool STOP = false;
 
 void sigend( int sig ) {
@@ -115,14 +122,14 @@ int main( int argc, char** argv ) {
 
 		/// add a watch to the system
 		char path1[256];
-		sprintf(path1, "%s\\test", cwd );
+		sprintf(path1, "%s%ctest", cwd, PATH_SEPARATOR );
 		handleWatchID( efsw_addwatch_withoptions( fileWatcher, path1, handleFileAction, true, 0, 0, 0 ) );
 
 		/// adds another watch after started watching...
 		sleepMsecs( 100 );
 
 		char path2[256];
-		sprintf(path2, "%s\\test2", cwd );
+		sprintf(path2, "%s%ctest2", cwd, PATH_SEPARATOR );
 		efsw_watchid watchID = handleWatchID(
 			efsw_addwatch_withoptions( fileWatcher, path2, handleFileAction, true, 0, 0, 0 ) );
 
