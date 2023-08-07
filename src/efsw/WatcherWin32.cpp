@@ -1,7 +1,10 @@
+#include <efsw/Debug.hpp>
 #include <efsw/String.hpp>
 #include <efsw/WatcherWin32.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+
+#include <algorithm>
 
 namespace efsw {
 
@@ -58,10 +61,16 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 
 /// Refreshes the directory monitoring.
 bool RefreshWatch( WatcherStructWin32* pWatch ) {
-	return ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer,
-								  sizeof( pWatch->Watch->Buffer ), pWatch->Watch->Recursive,
-								  pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped,
-								  NULL ) != 0;
+	bool bRet = ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer.data(),
+		pWatch->Watch->Buffer.size(), pWatch->Watch->Recursive,
+		pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped,	NULL ) != 0;
+
+	if ( !bRet ) {
+		std::string error = std::to_string( GetLastError() );
+		Errors::Log::createLastError( Errors::WatcherFailed, error );
+	}
+
+	return bRet;
 }
 
 /// Stops monitoring a directory.
@@ -77,14 +86,14 @@ void DestroyWatch( WatcherStructWin32* pWatch ) {
 }
 
 /// Starts monitoring a directory.
-WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive, DWORD NotifyFilter,
-								 HANDLE iocp ) {
+WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
+								 DWORD bufferSize, DWORD notifyFilter, HANDLE iocp ) {
 	WatcherStructWin32* tWatch;
 	size_t ptrsize = sizeof( *tWatch );
 	tWatch = static_cast<WatcherStructWin32*>(
 		HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, ptrsize ) );
 
-	WatcherWin32* pWatch = new WatcherWin32();
+	WatcherWin32* pWatch = new WatcherWin32(bufferSize);
 	tWatch->Watch = pWatch;
 
 	pWatch->DirHandle = CreateFileW(
@@ -93,7 +102,7 @@ WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive, DWORD Noti
 
 	if ( pWatch->DirHandle != INVALID_HANDLE_VALUE &&
 		 CreateIoCompletionPort( pWatch->DirHandle, iocp, 0, 1 ) ) {
-		pWatch->NotifyFilter = NotifyFilter;
+		pWatch->NotifyFilter = notifyFilter;
 		pWatch->Recursive = recursive;
 
 		if ( RefreshWatch( tWatch ) ) {

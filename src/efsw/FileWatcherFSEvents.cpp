@@ -86,7 +86,7 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 }
 
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher,
-									   bool recursive ) {
+									   bool recursive, const std::vector<WatcherOption> &options ) {
 	std::string dir( directory );
 
 	FileInfo fi( dir );

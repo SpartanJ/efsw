@@ -78,6 +78,10 @@ efsw::WatchID watchID = fileWatcher->addWatch( "/tmp", listener, true );
 // Adds another directory to watch. This time as non-recursive.
 efsw::WatchID watchID2 = fileWatcher->addWatch( "/usr", listener, false );
 
+// For Windows, adds another watch, specifying to use a bigger buffer, to not miss events
+// (do not use for network locations, see efsw.hpp for details).
+efsw::WatchID watchID3 = fileWatcher->addWatch( "c:\\temp", listener, true, { (BufferSize, 128*1024) } );
+
 // Start watching asynchronously the directories
 fileWatcher->watch();
 

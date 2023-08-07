@@ -199,6 +199,11 @@ if(EFSW_INSTALL)
 endif()
 
 if(BUILD_TEST_APP)
+	# C++ test application
 	add_executable(efsw-test src/test/efsw-test.cpp)
 	target_link_libraries(efsw-test efsw-static)
+
+	# C test application
+	add_executable(efsw-test-stdc src/test/efsw-test.c)
+	target_link_libraries(efsw-test-stdc efsw-static)
 endif()

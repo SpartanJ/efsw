@@ -69,7 +69,7 @@ FileWatcherInotify::~FileWatcherInotify() {
 }
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive ) {
+									  bool recursive, const std::vector<WatcherOption> &options ) {
 	if ( !mInitOK )
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
