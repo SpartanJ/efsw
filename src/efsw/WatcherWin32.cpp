@@ -10,7 +10,8 @@ namespace efsw {
 
 /// Unpacks events and passes them to a user defined callback.
 void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped ) {
-	if ( dwNumberOfBytesTransfered == 0 || NULL == lpOverlapped ) {
+
+	if ( NULL == lpOverlapped ) {
 		return;
 	}
 
@@ -18,6 +19,14 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 	WatcherStructWin32* tWatch = (WatcherStructWin32*)lpOverlapped;
 	WatcherWin32* pWatch = tWatch->Watch;
 	size_t offset = 0;
+
+	if ( dwNumberOfBytesTransfered == 0 ) {
+		if ( nullptr != pWatch && !pWatch->StopNow ) {
+			RefreshWatch( tWatch );
+		} else {
+			return;
+		}
+	}
 
 	do {
 		bool skip = false;
