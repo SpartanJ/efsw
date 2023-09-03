@@ -22,7 +22,7 @@ bool FileWatcherImpl::linkAllowed( const std::string& curPath, const std::string
 
 int FileWatcherImpl::getOptionValue( const std::vector<WatcherOption> &options,
 									 Option option, int defaultValue) {
-	for ( int i = 0; i < options.size(); i++ ) {
+	for ( size_t i = 0; i < options.size(); i++ ) {
 		if (options[i].mOption == option) {
 			return options[i].mValue;
 		}
