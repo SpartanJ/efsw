@@ -66,7 +66,7 @@ void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 									  const std::string& filename, Action action,
 									  std::string oldFilename ) {
 	Listener->handleFileAction( watchid, FileSystem::precomposeFileName( dir ),
-								FileSystem::precomposeFileName( filename ), action, oldFilename );
+								FileSystem::precomposeFileName( filename ), action, FileSystem::precomposeFileName( oldFilename ) );
 }
 
 void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& path,
