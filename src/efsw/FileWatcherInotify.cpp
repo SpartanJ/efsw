@@ -69,7 +69,7 @@ FileWatcherInotify::~FileWatcherInotify() {
 }
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption> &options ) {
+									  bool recursive, const std::vector<WatcherOption>& ) {
 	if ( !mInitOK )
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
@@ -141,6 +141,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	{
 		Lock lock( mWatchesLock );
 		mWatches.insert( std::make_pair( wd, pWatch ) );
+		mWatchesRef[pWatch->Directory] = wd;
 	}
 
 	if ( NULL == pWatch->Parent ) {
@@ -169,6 +170,8 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 	WatchMap::iterator iter = mWatches.find( watchid );
+	if ( iter == mWatches.end() )
+		return;
 
 	WatcherInotify* watch = iter->second;
 
@@ -181,15 +184,13 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 		}
 	}
 
-	if ( watch->Recursive ) {
+	if ( watch->Recursive && NULL == watch->Parent ) {
 		WatchMap::iterator it = mWatches.begin();
 		std::vector<WatchID> eraseWatches;
 
-		for ( ; it != mWatches.end(); ++it ) {
-			if ( it->second != watch && it->second->inParentTree( watch ) ) {
+		for ( ; it != mWatches.end(); ++it )
+			if ( it->second != watch && it->second->inParentTree( watch ) )
 				eraseWatches.push_back( it->second->InotifyID );
-			}
-		}
 
 		for ( std::vector<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end();
 			  ++eit ) {
@@ -197,6 +198,7 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 		}
 	}
 
+	mWatchesRef.erase( watch->Directory );
 	mWatches.erase( iter );
 
 	if ( NULL == watch->Parent ) {
@@ -225,52 +227,11 @@ void FileWatcherInotify::removeWatch( const std::string& directory ) {
 	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 
-	WatchMap::iterator iter = mWatches.begin();
+	std::unordered_map<std::string, WatchID>::iterator ref = mWatchesRef.find( directory );
+	if ( ref == mWatchesRef.end() )
+		return;
 
-	for ( ; iter != mWatches.end(); ++iter ) {
-		if ( directory == iter->second->Directory ) {
-			WatcherInotify* watch = iter->second;
-
-			if ( watch->Recursive ) {
-				WatchMap::iterator it = mWatches.begin();
-				std::vector<WatchID> eraseWatches;
-
-				for ( ; it != mWatches.end(); ++it ) {
-					if ( it->second->inParentTree( watch ) ) {
-						eraseWatches.push_back( it->second->InotifyID );
-					}
-				}
-
-				for ( std::vector<WatchID>::iterator eit = eraseWatches.begin();
-					  eit != eraseWatches.end(); ++eit ) {
-					removeWatchLocked( *eit );
-				}
-			}
-
-			mWatches.erase( iter );
-
-			if ( NULL == watch->Parent ) {
-				WatchMap::iterator eraseit = mRealWatches.find( watch->InotifyID );
-
-				if ( eraseit != mRealWatches.end() ) {
-					mRealWatches.erase( eraseit );
-				}
-			}
-
-			int err = inotify_rm_watch( mFD, watch->InotifyID );
-
-			if ( err < 0 ) {
-				efDEBUG( "Error removing watch %d: %s\n", watch->InotifyID, strerror( errno ) );
-			} else {
-				efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(),
-						 watch->InotifyID );
-			}
-
-			efSAFE_DELETE( watch );
-
-			break;
-		}
-	}
+	removeWatchLocked( ref->second );
 }
 
 void FileWatcherInotify::removeWatch( WatchID watchid ) {
@@ -278,13 +239,6 @@ void FileWatcherInotify::removeWatch( WatchID watchid ) {
 		return;
 	Lock initLock( mInitLock );
 	Lock lock( mWatchesLock );
-
-	WatchMap::iterator iter = mWatches.find( watchid );
-
-	if ( iter == mWatches.end() ) {
-		return;
-	}
-
 	removeWatchLocked( watchid );
 }
 
@@ -303,10 +257,8 @@ Watcher* FileWatcherInotify::watcherContainsDirectory( std::string dir ) {
 
 	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		Watcher* watcher = it->second;
-
-		if ( watcher->Directory == watcherPath ) {
+		if ( watcher->Directory == watcherPath )
 			return watcher;
-		}
 	}
 
 	return NULL;
@@ -584,9 +536,8 @@ std::vector<std::string> FileWatcherInotify::directories() {
 
 	WatchMap::iterator it = mRealWatches.begin();
 
-	for ( ; it != mRealWatches.end(); ++it ) {
+	for ( ; it != mRealWatches.end(); ++it )
 		dirs.push_back( it->second->Directory );
-	}
 
 	return dirs;
 }
@@ -597,11 +548,9 @@ bool FileWatcherInotify::pathInWatches( const std::string& path ) {
 	/// Search in the real watches, since it must allow adding a watch already watched as a subdir
 	WatchMap::iterator it = mRealWatches.begin();
 
-	for ( ; it != mRealWatches.end(); ++it ) {
-		if ( it->second->Directory == path ) {
+	for ( ; it != mRealWatches.end(); ++it )
+		if ( it->second->Directory == path )
 			return true;
-		}
-	}
 
 	return false;
 }

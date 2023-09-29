@@ -7,6 +7,7 @@
 
 #include <efsw/WatcherInotify.hpp>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace efsw {
@@ -25,7 +26,7 @@ class FileWatcherInotify : public FileWatcherImpl {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
-					  const std::vector<WatcherOption> &options );
+					  const std::vector<WatcherOption>& options );
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
 	void removeWatch( const std::string& directory );
@@ -49,6 +50,8 @@ class FileWatcherInotify : public FileWatcherImpl {
 
 	/// User added watches
 	WatchMap mRealWatches;
+
+	std::unordered_map<std::string, WatchID> mWatchesRef;
 
 	/// inotify file descriptor
 	int mFD;
