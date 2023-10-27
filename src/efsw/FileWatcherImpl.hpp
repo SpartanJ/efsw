@@ -19,7 +19,7 @@ class FileWatcherImpl {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	virtual WatchID addWatch( const std::string& directory, FileWatchListener* watcher,
-							  bool recursive, const std::vector<WatcherOption> &options = {} ) = 0;
+							  bool recursive, const std::vector<WatcherOption>& options = {} ) = 0;
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
 	virtual void removeWatch( const std::string& directory ) = 0;
@@ -47,14 +47,16 @@ class FileWatcherImpl {
 	/// Search if a directory already exists in the watches
 	virtual bool pathInWatches( const std::string& path ) = 0;
 
+  protected:
+	friend class FileWatcher;
+	friend class DirWatcherGeneric;
 
 	FileWatcher* mFileWatcher;
 	Atomic<bool> mInitOK;
 	bool mIsGeneric;
 
-protected:
-	int getOptionValue( const std::vector<WatcherOption> &options,
-						Option option, int defaultValue );
+	int getOptionValue( const std::vector<WatcherOption>& options, Option option,
+						int defaultValue );
 };
 
 } // namespace efsw

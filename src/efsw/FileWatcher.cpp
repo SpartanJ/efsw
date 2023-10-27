@@ -68,16 +68,16 @@ FileWatcher::~FileWatcher() {
 }
 
 WatchID FileWatcher::addWatch( const std::string& directory, FileWatchListener* watcher ) {
-	return addWatch(directory, watcher, false, {});
+	return addWatch( directory, watcher, false, {} );
 }
 
 WatchID FileWatcher::addWatch( const std::string& directory, FileWatchListener* watcher,
 							   bool recursive ) {
-	return addWatch(directory, watcher, recursive, {});
+	return addWatch( directory, watcher, recursive, {} );
 }
 
 WatchID FileWatcher::addWatch( const std::string& directory, FileWatchListener* watcher,
-							   bool recursive, const std::vector<WatcherOption> &options ) {
+							   bool recursive, const std::vector<WatcherOption>& options ) {
 	if ( mImpl->mIsGeneric || !FileSystem::isRemoteFS( directory ) ) {
 		return mImpl->addWatch( directory, watcher, recursive, options );
 	} else {

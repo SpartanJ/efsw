@@ -183,6 +183,8 @@ std::vector<std::string> FileWatcherFSEvents::directories() {
 
 	Lock lock( mWatchesLock );
 
+	dirs.reserve( mWatches.size() );
+
 	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		dirs.push_back( std::string( it->second->Directory ) );
 	}

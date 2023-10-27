@@ -534,6 +534,8 @@ std::vector<std::string> FileWatcherInotify::directories() {
 
 	Lock l( mRealWatchesLock );
 
+	dirs.reserve( mRealWatches.size() );
+
 	WatchMap::iterator it = mRealWatches.begin();
 
 	for ( ; it != mRealWatches.end(); ++it )
