@@ -72,9 +72,7 @@ FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
 FileWatcherFSEvents::~FileWatcherFSEvents() {
 	mInitOK = false;
 
-#ifndef EFSW_LEGACY_CPP
 	mWatchCond.notify_all();
-#endif
 
 	WatchMap::iterator iter = mWatches.begin();
 
@@ -135,9 +133,7 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 		mWatches.insert( std::make_pair( mLastWatchID, pWatch ) );
 	}
 
-#ifndef EFSW_LEGACY_CPP
 	mWatchCond.notify_all();
-#endif
 	return pWatch->ID;
 }
 
