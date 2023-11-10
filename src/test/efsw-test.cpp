@@ -33,7 +33,7 @@ class UpdateListener : public efsw::FileWatchListener {
 
 	void handleFileAction( efsw::WatchID watchid, const std::string& dir,
 						   const std::string& filename, efsw::Action action,
-						   std::string oldFilename = "" ) {
+						   std::string oldFilename = "" ) override {
 		std::cout << "Watch ID " << watchid << " DIR ("
 				  << dir + ") FILE (" +
 						 ( oldFilename.empty() ? "" : "from file " + oldFilename + " to " ) +

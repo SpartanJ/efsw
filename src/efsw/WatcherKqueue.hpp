@@ -49,7 +49,7 @@ class WatcherKqueue : public Watcher {
 
 	WatchID watchingDirectory( std::string dir );
 
-	void watch();
+	void watch() override;
 
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
 					  WatcherKqueue* parent );

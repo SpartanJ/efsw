@@ -17,7 +17,7 @@ class WatcherGeneric : public Watcher {
 
 	~WatcherGeneric();
 
-	void watch();
+	void watch() override;
 
 	void watchDir( std::string dir );
 
