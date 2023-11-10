@@ -1,6 +1,5 @@
 newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
-newoption { trigger = "legacy", description = "Build efsw with cpp legacy support (before C++11)." }
 newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer." }
 
 efsw_major_version	= "1"
@@ -133,12 +132,8 @@ solution "efsw"
 		defines { "EFSW_VERBOSE" }
 	end
 
-	if not _OPTIONS["legacy"] then
-		if not is_vs() then
-			buildoptions { "-std=c++11" }
-		end
-	else
-		defines { "EFSW_LEGACY_CPP" }
+	if not is_vs() then
+		buildoptions { "-std=c++11" }
 	end
 
 	if os.is("macosx") then

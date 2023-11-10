@@ -11,10 +11,8 @@
 #include <efsw/WatcherFSEvents.hpp>
 #include <map>
 #include <vector>
-#ifndef EFSW_LEGACY_CPP
 #include <condition_variable>
 #include <mutex>
-#endif
 
 namespace efsw {
 
@@ -91,10 +89,8 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 
 	bool pathInWatches( const std::string& path );
 
-#ifndef EFSW_LEGACY_CPP
 	std::mutex mWatchesMutex;
 	std::condition_variable mWatchCond;
-#endif
 
 };
 
