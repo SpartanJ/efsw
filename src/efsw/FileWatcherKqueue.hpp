@@ -22,23 +22,23 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
-					  const std::vector<WatcherOption> &options );
+					  const std::vector<WatcherOption> &options ) override;
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
-	void removeWatch( const std::string& directory );
+	void removeWatch( const std::string& directory ) override;
 
 	/// Remove a directory watch. This is a map lookup O(logn).
-	void removeWatch( WatchID watchid );
+	void removeWatch( WatchID watchid ) override;
 
 	/// Updates the watcher. Must be called often.
-	void watch();
+	void watch() override;
 
 	/// Handles the action
 	void handleAction( Watcher* watch, const std::string& filename, unsigned long action,
-					   std::string oldFilename = "" );
+					   std::string oldFilename = "" ) override;
 
 	/// @return Returns a list of the directories that are being watched
-	std::vector<std::string> directories();
+	std::vector<std::string> directories() override;
 
   protected:
 	/// Map of WatchID to WatchStruct pointers
@@ -62,7 +62,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 
 	bool isAddingWatcher() const;
 
-	bool pathInWatches( const std::string& path );
+	bool pathInWatches( const std::string& path ) override;
 
 	void addFD();
 

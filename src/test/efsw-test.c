@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -74,7 +75,7 @@ efsw_watchid handleWatchID( efsw_watchid watchid ) {
 			break;
 		}
 		default: {
-			printf( "Added WatchID: %d\n", watchid );
+			printf( "Added WatchID: %ld\n", watchid );
 		}
 	}
 

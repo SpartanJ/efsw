@@ -436,7 +436,6 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath, boo
 
 WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
 								 bool recursive, WatcherKqueue* parent ) {
-	static long s_fc = 0;
 	static bool s_ug = false;
 
 	std::string dir( directory );
@@ -478,8 +477,6 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 		watch->addAll();
 
-		s_fc++;
-
 		// if failed to open the directory... erase the watcher
 		if ( !watch->initOK() ) {
 			int le = watch->lastErrno();
@@ -502,9 +499,8 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 		}
 	} else {
 		if ( !s_ug ) {
-			efDEBUG( "Started using WatcherGeneric, reached file descriptors limit: %ld. Folders "
-					 "added: %ld\n",
-					 mWatcher->mFileDescriptorCount, s_fc );
+			efDEBUG( "Started using WatcherGeneric, reached file descriptors limit: %ld.\n",
+					 mWatcher->mFileDescriptorCount );
 			s_ug = true;
 		}
 

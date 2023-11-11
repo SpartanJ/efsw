@@ -1,5 +1,6 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/platform/platformimpl.hpp>
+#include <cstring>
 
 #if EFSW_OS == EFSW_OS_MACOSX
 #include <CoreFoundation/CoreFoundation.h>
@@ -91,13 +92,30 @@ std::string FileSystem::precomposeFileName( const std::string& name ) {
 
 	CFStringNormalize( cfMutable, kCFStringNormalizationFormC );
 
-	char c_str[255 + 1];
-	CFStringGetCString( cfMutable, c_str, sizeof( c_str ) - 1, kCFStringEncodingUTF8 );
+	const char* c_str = CFStringGetCStringPtr( cfMutable, kCFStringEncodingUTF8 );
+	if ( c_str != NULL ) {
+		std::string result( c_str );
+		CFRelease( cfStringRef );
+		CFRelease( cfMutable );
+		return result;
+	}
+	CFIndex length = CFStringGetLength( cfMutable );
+	CFIndex maxSize = CFStringGetMaximumSizeForEncoding( length, kCFStringEncodingUTF8 );
+	if ( maxSize == kCFNotFound ) {
+		CFRelease( cfStringRef );
+		CFRelease( cfMutable );
+		return std::string();
+	}
 
-	CFRelease( cfStringRef );
-	CFRelease( cfMutable );
-
-	return std::string( c_str );
+	std::string result( maxSize, '\0' );
+	if ( CFStringGetCString( cfMutable, &result[0], result.size(), kCFStringEncodingUTF8 ) ) {
+		result.resize( std::strlen( result.c_str() ) );
+		CFRelease( cfStringRef );
+		CFRelease( cfMutable );
+	} else {
+		result.clear();
+	}
+	return result;
 #else
 	return name;
 #endif
