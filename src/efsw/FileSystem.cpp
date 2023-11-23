@@ -1,6 +1,6 @@
+#include <cstring>
 #include <efsw/FileSystem.hpp>
 #include <efsw/platform/platformimpl.hpp>
-#include <cstring>
 
 #if EFSW_OS == EFSW_OS_MACOSX
 #include <CoreFoundation/CoreFoundation.h>
@@ -107,7 +107,7 @@ std::string FileSystem::precomposeFileName( const std::string& name ) {
 		return std::string();
 	}
 
-	std::string result( maxSize, '\0' );
+	std::string result( maxSize + 1, '\0' );
 	if ( CFStringGetCString( cfMutable, &result[0], result.size(), kCFStringEncodingUTF8 ) ) {
 		result.resize( std::strlen( result.c_str() ) );
 		CFRelease( cfStringRef );
