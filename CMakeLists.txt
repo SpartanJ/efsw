@@ -123,7 +123,8 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 	)
 endif()
 
-if(MSVC)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" OR
+	(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
 	target_compile_definitions(efsw PRIVATE _SCL_SECURE_NO_WARNINGS)
 else()
 	target_compile_options(efsw PRIVATE -Wall -Wno-long-long -fPIC)
