@@ -98,10 +98,6 @@ if(APPLE)
 		src/efsw/WatcherFSEvents.cpp
 		src/efsw/WatcherKqueue.cpp
 	)
-
-	if(NOT CMAKE_SYSTEM_VERSION GREATER 9)
-		target_compile_definitions(efsw PRIVATE EFSW_FSEVENTS_NOT_SUPPORTED)
-	endif()
 elseif(WIN32)
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/FileWatcherWin32.cpp
