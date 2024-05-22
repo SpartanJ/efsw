@@ -92,10 +92,6 @@ if(APPLE)
 		src/efsw/WatcherFSEvents.cpp
 		src/efsw/WatcherKqueue.cpp
 	)
-
-	if(NOT CMAKE_SYSTEM_VERSION GREATER 9)
-		target_compile_definitions(efsw PRIVATE EFSW_FSEVENTS_NOT_SUPPORTED)
-	endif()
 elseif(WIN32)
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/FileWatcherWin32.cpp
@@ -117,7 +113,8 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 	)
 endif()
 
-if(MSVC)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" OR
+	(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
 	target_compile_definitions(efsw PRIVATE _SCL_SECURE_NO_WARNINGS)
 else()
 	target_compile_options(efsw PRIVATE -Wall -Wno-long-long -fPIC)
