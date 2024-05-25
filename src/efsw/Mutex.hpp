@@ -4,7 +4,7 @@
 #include <mutex>
 
 namespace efsw {
-	using Mutex = std::mutex;
+	using Mutex = std::recursive_mutex;
 } // namespace efsw
 
 #endif
