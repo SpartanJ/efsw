@@ -1,0 +1,112 @@
+# Bazel build
+# C/C++ documentation: https://docs.bazel.build/versions/master/be/c-cpp.html
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "msvc-cl",
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "msvc-cl"},
+)
+
+config_setting(
+    name = "clang-cl",
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "opt",
+    values = {"compilation_mode": "opt"},
+)
+
+cc_library(
+    name = "efsw",
+    srcs = [
+               "src/efsw/Debug.cpp",
+               "src/efsw/DirectorySnapshot.cpp",
+               "src/efsw/DirectorySnapshotDiff.cpp",
+               "src/efsw/DirWatcherGeneric.cpp",
+               "src/efsw/FileInfo.cpp",
+               "src/efsw/FileSystem.cpp",
+               "src/efsw/FileWatcher.cpp",
+               "src/efsw/FileWatcherCWrapper.cpp",
+               "src/efsw/FileWatcherGeneric.cpp",
+               "src/efsw/FileWatcherImpl.cpp",
+               "src/efsw/Log.cpp",
+               "src/efsw/Mutex.cpp",
+               "src/efsw/String.cpp",
+               "src/efsw/System.cpp",
+               "src/efsw/Thread.cpp",
+               "src/efsw/Watcher.cpp",
+               "src/efsw/WatcherGeneric.cpp",
+               "src/efsw/platform/platformimpl.hpp",
+               "src/efsw/Utf.inl",
+           ] + select({
+               "@bazel_tools//src/conditions:windows": glob([
+                   "src/efsw/platform/win/*.cpp",
+               ]) + [
+                   "src/efsw/FileWatcherWin32.cpp",
+                   "src/efsw/WatcherWin32.cpp",
+               ],
+               "//conditions:default": glob([
+                   "src/efsw/platform/posix/*.cpp",
+               ]),
+           }) +
+           select({
+               "@bazel_tools//src/conditions:darwin": [
+                   "src/efsw/FileWatcherFSEvents.cpp",
+                   "src/efsw/FileWatcherKqueue.cpp",
+                   "src/efsw/WatcherFSEvents.cpp",
+                   "src/efsw/WatcherKqueue.cpp",
+               ],
+               "@bazel_tools//src/conditions:linux_x86_64": [
+                   "src/efsw/FileWatcherInotify.cpp",
+                   "src/efsw/WatcherInotify.cpp",
+               ],
+               "//conditions:default": [],
+           }),
+    hdrs = glob([
+        "src/efsw/*.h",
+        "src/efsw/platform/*.hpp",
+        "src/efsw/platform/posix/*.hpp",
+        "src/efsw/platform/win/*.hpp",
+        "src/efsw/*.hpp",
+    ]),
+    linkopts = [
+        "-lpthread",
+    ],
+    includes = [
+        "src/efsw",
+    ],
+    linkstatic = True,
+    strip_include_prefix = "src",
+    deps = [
+        ":efsw_header",
+    ],
+)
+
+cc_library(
+    name = "efsw_header",
+    srcs = [
+        "include/efsw/efsw.h",
+        "include/efsw/efsw.hpp",
+    ],
+    hdrs = glob([
+        "include/*.h",
+        "include/*.hpp",
+    ]),
+    includes = [
+        "include",
+    ],
+    linkstatic = True,
+    strip_include_prefix = "include",
+)
+
+cc_test(
+    name = "efsw_test",
+    srcs = ["src/test/efsw-test.cpp",
+    ],
+    deps = [
+        ":efsw",
+    ],
+)
