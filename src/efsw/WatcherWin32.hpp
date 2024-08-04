@@ -65,6 +65,7 @@ class WatcherWin32 : public Watcher {
 	FileWatcherImpl* Watch;
 	char* DirName;
 	sLastModifiedEvent LastModifiedEvent;
+	std::vector<std::pair<std::string, LARGE_INTEGER>> OldFiles;
 };
 
 } // namespace efsw

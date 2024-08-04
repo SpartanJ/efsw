@@ -26,7 +26,8 @@ FileWatcherWin32::~FileWatcherWin32() {
 
 	removeAllWatches();
 
-	CloseHandle( mIOCP );
+	if ( mIOCP )
+		CloseHandle( mIOCP );
 }
 
 WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListener* watcher,

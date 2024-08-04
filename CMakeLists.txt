@@ -103,7 +103,8 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 		src/efsw/WatcherInotify.cpp
 	)
 
-	if(NOT EXISTS "/usr/include/sys/inotify.h" AND NOT EXISTS "/usr/local/include/sys/inotify.h")
+	find_path(EFSW_INOTIFY_H NAMES sys/inotify.h NO_CACHE)
+	if(EFSW_INOTIFY_H STREQUAL "EFSW_INOTIFY_H-NOTFOUND")
 		target_compile_definitions(efsw PRIVATE EFSW_INOTIFY_NOSYS)
 	endif()
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
@@ -151,7 +152,9 @@ configure_package_config_file(
 )
 
 export(TARGETS efsw NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
-export(TARGETS efsw-static NAMESPACE efsw:: FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}-staticTargets.cmake)
+if(BUILD_STATIC_LIBS)
+	export(TARGETS efsw-static NAMESPACE efsw:: APPEND FILE ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Targets.cmake)
+endif()
 
 if(EFSW_INSTALL)
 	install(TARGETS efsw EXPORT efswExport
@@ -166,25 +169,16 @@ if(EFSW_INSTALL)
 		DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
 	)
 
-	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
-	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
-
-	if(BUILD_SHARED_LIBS)
+	if(BUILD_STATIC_LIBS)
 		install(TARGETS efsw-static EXPORT efswExport
 			LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 			ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 			RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 		)
-
-		install(
-			FILES
-			include/efsw/efsw.h include/efsw/efsw.hpp
-			DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
-		)
-
-		install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}-staticTargets.cmake)
-		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
 	endif()
+
+	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake DESTINATION "${packageDestDir}")
 endif()
 
 if(BUILD_TEST_APP)
