@@ -215,17 +215,14 @@ void DestroyWatch( WatcherStructWin32* pWatch ) {
 		CloseHandle( pWatch->Watch->DirHandle );
 		efSAFE_DELETE_ARRAY( pWatch->Watch->DirName );
 		efSAFE_DELETE( pWatch->Watch );
+		efSAFE_DELETE( pWatch );
 	}
 }
 
 /// Starts monitoring a directory.
 WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
 								 DWORD bufferSize, DWORD notifyFilter, HANDLE iocp ) {
-	WatcherStructWin32* tWatch;
-	size_t ptrsize = sizeof( *tWatch );
-	tWatch = static_cast<WatcherStructWin32*>(
-		HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, ptrsize ) );
-
+	WatcherStructWin32* tWatch = new WatcherStructWin32();
 	WatcherWin32* pWatch = new WatcherWin32(bufferSize);
 	if (tWatch)
 		tWatch->Watch = pWatch;
@@ -246,7 +243,7 @@ WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
 
 	CloseHandle( pWatch->DirHandle );
 	efSAFE_DELETE( pWatch->Watch );
-	HeapFree( GetProcessHeap(), 0, tWatch );
+	efSAFE_DELETE( tWatch );
 	return NULL;
 }
 
