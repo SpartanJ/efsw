@@ -144,7 +144,8 @@ void FileWatcherWin32::run() {
 					break;
 				} else {
 					Lock lock( mWatchesLock );
-					WatchCallback( numOfBytes, ov );
+					if (mWatches.find( (WatcherStructWin32*)ov ) != mWatches.end())
+						WatchCallback( numOfBytes, ov );
 				}
 			}
 		} else {
