@@ -169,7 +169,7 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 	}
 
 	// Fork watch depending on the Windows API supported
-	if ( pReadDirectoryChangesExW ) {
+	if ( pWatch->Extended ) {
 		WatchCallbackEx( pWatch );
 	} else {
 		WatchCallbackOld( pWatch );
@@ -181,21 +181,32 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 }
 
 /// Refreshes the directory monitoring.
-bool RefreshWatch( WatcherStructWin32* pWatch ) {
+RefreshResult RefreshWatch( WatcherStructWin32* pWatch ) {
 	initReadDirectoryChangesEx();
 	
 	bool bRet = false;
+	RefreshResult ret = RefreshResult::Failed;
+	pWatch->Watch->Extended = false;
 
 	if ( pReadDirectoryChangesExW ) {
 		bRet = pReadDirectoryChangesExW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer.data(),
 									  (DWORD)pWatch->Watch->Buffer.size(), pWatch->Watch->Recursive,
 									  pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped,
 										 NULL, EFSW_ReadDirectoryNotifyExtendedInformation ) != 0;
-	} else {
+		if ( bRet ) {
+			ret = RefreshResult::SucessEx;
+			pWatch->Watch->Extended = true;
+		}
+	}
+	
+	if ( !bRet ) {
 		bRet = ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer.data(),
 									  (DWORD)pWatch->Watch->Buffer.size(), pWatch->Watch->Recursive,
 									  pWatch->Watch->NotifyFilter, NULL, &pWatch->Overlapped,
 									  NULL ) != 0;
+
+		if ( bRet )
+			ret = RefreshResult::Success;
 	}
 
 	if ( !bRet ) {
@@ -203,7 +214,7 @@ bool RefreshWatch( WatcherStructWin32* pWatch ) {
 		Errors::Log::createLastError( Errors::WatcherFailed, error );
 	}
 
-	return bRet;
+	return ret;
 }
 
 /// Stops monitoring a directory.
