@@ -17,3 +17,5 @@ CMakeFiles/
 *.dylib
 *.lib
 /.cache
+/efsw-test
+/efsw-test-stdc
