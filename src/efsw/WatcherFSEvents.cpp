@@ -142,7 +142,8 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 
 					if ( event.Path != nEvent.Path ) {
 						if ( dirPath == newDir ) {
-							if ( !FileInfo::exists( event.Path ) ) {
+							if ( !FileInfo::exists( event.Path ) ||
+								 0 == strcasecmp( event.Path.c_str(), nEvent.Path.c_str() ) ) {
 								sendFileAction( ID, dirPath, newFilepath, Actions::Moved,
 												filePath );
 							} else {
