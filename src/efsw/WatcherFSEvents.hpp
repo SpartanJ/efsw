@@ -18,11 +18,13 @@ class FileWatcherFSEvents;
 
 class FSEvent {
   public:
-	FSEvent( std::string path, long flags, Uint64 id ) : Path( path ), Flags( flags ), Id( id ) {}
+	FSEvent( std::string path, long flags, Uint64 id, Uint64 inode = 0 ) :
+		Path( path ), Flags( flags ), Id( id ), inode( inode ) {}
 
 	std::string Path;
 	long Flags;
 	Uint64 Id;
+	Uint64 inode{ 0 };
 };
 
 class WatcherFSEvents : public Watcher {

@@ -3,7 +3,6 @@
 
 #include <efsw/FileInfo.hpp>
 #include <efsw/base.hpp>
-#include <map>
 
 namespace efsw {
 

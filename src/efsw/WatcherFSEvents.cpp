@@ -35,7 +35,9 @@ void WatcherFSEvents::init() {
 	Uint32 streamFlags = kFSEventStreamCreateFlagNone;
 
 	if ( FileWatcherFSEvents::isGranular() ) {
-		streamFlags = efswFSEventStreamCreateFlagFileEvents | efswFSEventStreamCreateFlagNoDefer;
+		streamFlags = efswFSEventStreamCreateFlagFileEvents | efswFSEventStreamCreateFlagNoDefer |
+					  efswFSEventStreamCreateFlagUseExtendedData |
+					  efswFSEventStreamCreateFlagUseCFTypes;
 	} else {
 		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive );
 	}
@@ -128,12 +130,12 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 			// been added modified and erased, but i can't know if first was erased and then added
 			// and modified, or added, then modified and then erased. I don't know what they were
 			// thinking by doing this...
-			efDEBUG( "Event in: %s - flags: %ld\n", event.Path.c_str(), event.Flags );
+			efDEBUG( "Event in: %s - flags: 0x%x\n", event.Path.c_str(), event.Flags );
 
 			if ( event.Flags & efswFSEventStreamEventFlagItemRenamed ) {
 				if ( ( i + 1 < esize ) &&
 					 ( events[i + 1].Flags & efswFSEventStreamEventFlagItemRenamed ) &&
-					 ( events[i + 1].Id == event.Id + 1 ) ) {
+					 ( events[i + 1].inode == event.inode ) ) {
 					FSEvent& nEvent = events[i + 1];
 					std::string newDir( FileSystem::pathRemoveFileName( nEvent.Path ) );
 					std::string newFilepath( FileSystem::fileNameFromPath( nEvent.Path ) );

@@ -41,6 +41,32 @@ bool FileWatcherFSEvents::isGranular() {
 	return getOSXReleaseNumber() >= 11;
 }
 
+static std::string convertCFStringToStdString( CFStringRef cfString ) {
+	// Try to get the C string pointer directly
+	const char* cStr = CFStringGetCStringPtr( cfString, kCFStringEncodingUTF8 );
+
+	if ( cStr ) {
+		// If the pointer is valid, directly return a std::string from it
+		return std::string( cStr );
+	} else {
+		// If not, manually convert it
+		CFIndex length = CFStringGetLength( cfString );
+		CFIndex maxSize = CFStringGetMaximumSizeForEncoding( length, kCFStringEncodingUTF8 ) +
+						  1; // +1 for null terminator
+
+		char* buffer = new char[maxSize];
+
+		if ( CFStringGetCString( cfString, buffer, maxSize, kCFStringEncodingUTF8 ) ) {
+			std::string result( buffer );
+			delete[] buffer;
+			return result;
+		} else {
+			delete[] buffer;
+			return "";
+		}
+	}
+}
+
 void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef streamRef, void* userData,
 										   size_t numEvents, void* eventPaths,
 										   const FSEventStreamEventFlags eventFlags[],
@@ -51,8 +77,21 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef streamRef, void
 	events.reserve( numEvents );
 
 	for ( size_t i = 0; i < numEvents; i++ ) {
-		events.push_back( FSEvent( std::string( ( (char**)eventPaths )[i] ), (long)eventFlags[i],
-								   (Uint64)eventIds[i] ) );
+		if ( isGranular() ) {
+			CFDictionaryRef pathInfoDict =
+				static_cast<CFDictionaryRef>( CFArrayGetValueAtIndex( (CFArrayRef)eventPaths, i ) );
+			CFStringRef path = static_cast<CFStringRef>(
+				CFDictionaryGetValue( pathInfoDict, kFSEventStreamEventExtendedDataPathKey ) );
+			CFNumberRef cfInode = static_cast<CFNumberRef>(
+				CFDictionaryGetValue( pathInfoDict, kFSEventStreamEventExtendedFileIDKey ) );
+			unsigned long inode = 0;
+			CFNumberGetValue( cfInode, kCFNumberLongType, &inode );
+			events.push_back( FSEvent( convertCFStringToStdString( path ), (long)eventFlags[i],
+									   (Uint64)eventIds[i], inode ) );
+		} else {
+			events.push_back( FSEvent( std::string( ( (char**)eventPaths )[i] ),
+									   (long)eventFlags[i], (Uint64)eventIds[i] ) );
+		}
 	}
 
 	watcher->handleActions( events );
