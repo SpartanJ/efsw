@@ -46,7 +46,7 @@ static void initReadDirectoryChangesEx() {
 		if ( !hModule )
 			return;
 
-		pReadDirectoryChangesExW = 
+		pReadDirectoryChangesExW =
 			(EFSW_LPREADDIRECTORYCHANGESEXW)GetProcAddress( hModule, "ReadDirectoryChangesExW" );
 	}
 }
@@ -183,7 +183,7 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 /// Refreshes the directory monitoring.
 RefreshResult RefreshWatch( WatcherStructWin32* pWatch ) {
 	initReadDirectoryChangesEx();
-	
+
 	bool bRet = false;
 	RefreshResult ret = RefreshResult::Failed;
 	pWatch->Watch->Extended = false;
@@ -198,7 +198,7 @@ RefreshResult RefreshWatch( WatcherStructWin32* pWatch ) {
 			pWatch->Watch->Extended = true;
 		}
 	}
-	
+
 	if ( !bRet ) {
 		bRet = ReadDirectoryChangesW( pWatch->Watch->DirHandle, pWatch->Watch->Buffer.data(),
 									  (DWORD)pWatch->Watch->Buffer.size(), pWatch->Watch->Recursive,
@@ -247,7 +247,7 @@ WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
 		pWatch->NotifyFilter = notifyFilter;
 		pWatch->Recursive = recursive;
 
-		if ( RefreshWatch( tWatch ) ) {
+		if ( RefreshResult::Failed != RefreshWatch( tWatch ) ) {
 			return tWatch;
 		}
 	}
