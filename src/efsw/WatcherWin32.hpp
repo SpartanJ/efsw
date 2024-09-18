@@ -22,7 +22,7 @@ namespace efsw {
 
 class WatcherWin32;
 
-enum RefreshResult { Success, SucessEx, Failed };
+enum RefreshResult { Failed, Success, SucessEx };
 
 /// Internal watch data
 struct WatcherStructWin32 {
