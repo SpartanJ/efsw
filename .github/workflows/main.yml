@@ -27,7 +27,7 @@ jobs:
         brew install premake
     - name: Build
       run: |
-        ./premake5 --verbose gmake2
+        premake5 --verbose gmake2
         make -C make/macosx/ -j$(sysctl -n hw.ncpu) all
   Windows:
     runs-on: windows-latest
