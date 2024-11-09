@@ -84,10 +84,13 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef streamRef, void
 				CFDictionaryGetValue( pathInfoDict, kFSEventStreamEventExtendedDataPathKey ) );
 			CFNumberRef cfInode = static_cast<CFNumberRef>(
 				CFDictionaryGetValue( pathInfoDict, kFSEventStreamEventExtendedFileIDKey ) );
-			unsigned long inode = 0;
-			CFNumberGetValue( cfInode, kCFNumberLongType, &inode );
-			events.push_back( FSEvent( convertCFStringToStdString( path ), (long)eventFlags[i],
-									   (Uint64)eventIds[i], inode ) );
+
+			if ( cfInode ) {
+				unsigned long inode = 0;
+				CFNumberGetValue( cfInode, kCFNumberLongType, &inode );
+				events.push_back( FSEvent( convertCFStringToStdString( path ), (long)eventFlags[i],
+										   (Uint64)eventIds[i], inode ) );
+			}
 		} else {
 			events.push_back( FSEvent( std::string( ( (char**)eventPaths )[i] ),
 									   (long)eventFlags[i], (Uint64)eventIds[i] ) );
