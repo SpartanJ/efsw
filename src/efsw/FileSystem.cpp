@@ -6,6 +6,13 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
+#if EFSW_OS == EFSW_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace efsw {
 
 bool FileSystem::isDirectory( const std::string& path ) {
@@ -131,6 +138,23 @@ bool FileSystem::changeWorkingDirectory( const std::string& directory ) {
 
 std::string FileSystem::getCurrentWorkingDirectory() {
 	return Platform::FileSystem::getCurrentWorkingDirectory();
+}
+
+std::string FileSystem::getRealPath( const std::string& path ) {
+	std::string realPath;
+#if defined( EFSW_PLATFORM_POSIX )
+	char dir[PATH_MAX];
+	realpath( path.c_str(), &dir[0] );
+	realPath = std::string( dir );
+#elif EFSW_OS == EFSW_OS_WIN
+	wchar_t dir[_MAX_PATH + 1];
+	GetFullPathNameW( String::fromUtf8( path ).toWideString().c_str(), _MAX_PATH, &dir[0],
+					  nullptr );
+	realPath = String( dir ).toUtf8();
+#else
+#warning FileSystem::getRealPath() not implemented on this platform.
+#endif
+	return realPath;
 }
 
 } // namespace efsw

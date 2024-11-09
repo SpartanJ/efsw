@@ -2,7 +2,7 @@
   "linux-debug": {
     "build": [
       {
-        "args": " --thread-sanitizer --verbose gmake2",
+        "args": "--thread-sanitizer --verbose gmake2",
         "command": "premake5",
         "working_dir": ""
       },
@@ -93,6 +93,74 @@
     },
     "os": [
       "linux"
+    ],
+    "output_parser": {
+      "config": {
+        "preset": "generic",
+        "relative_file_paths": true
+      }
+    }
+  },
+  "macos-debug": {
+    "build": [
+      {
+        "args": "--thread-sanitizer --verbose gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/macosx",
+        "command": "make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "macos"
+    ],
+    "output_parser": {
+      "config": {
+        "preset": "generic",
+        "relative_file_paths": true
+      }
+    }
+  },
+  "macos-release": {
+    "build": [
+      {
+        "args": "gmake2",
+        "command": "premake5",
+        "working_dir": ""
+      },
+      {
+        "args": "-j${nproc} -C make/macosx  -e config=release_arm64",
+        "command": "make",
+        "working_dir": ""
+      }
+    ],
+    "build_types": [],
+    "clean": [
+      {
+        "args": "",
+        "command": "",
+        "working_dir": ""
+      }
+    ],
+    "config": {
+      "clear_sys_env": false
+    },
+    "os": [
+      "macos"
     ],
     "output_parser": {
       "config": {
