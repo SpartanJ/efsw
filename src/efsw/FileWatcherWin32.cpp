@@ -113,7 +113,7 @@ void FileWatcherWin32::removeWatch( WatcherStructWin32* watch ) {
 
 void FileWatcherWin32::watch() {
 	if ( NULL == mThread ) {
-		mThread = new Thread( &FileWatcherWin32::run, this );
+		mThread = new Thread([this]{run();});
 		mThread->launch();
 	}
 }
