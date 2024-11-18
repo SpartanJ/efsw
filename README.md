@@ -113,6 +113,11 @@ or
 
 There is also a cmake file that I don't officially support but it works just fine, provided by [Mohammed Nafees](https://github.com/mnafees) and improved by [Eugene Shalygin](https://github.com/zeule).
 
+**Packages**
+------------
+
+Community has been kind and contributed the recipes for different popular packages systems: [Conan](https://conan.io/center/recipes/efsw), [vcpkg](https://vcpkg.io/en/package/efsw), [xmake-repo](https://github.com/xmake-io/xmake-repo/blob/dev/packages/e/efsw/xmake.lua). I don't personally maintain those packages so they could be not up to date, but they tend to be quite up to date.
+
 **Platform limitations and clarifications**
 -------------------------------------------
 
