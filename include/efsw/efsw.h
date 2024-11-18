@@ -95,7 +95,15 @@ enum efsw_option
 	/// For Windows, per default all events are captured but we might only be interested
 	/// in a subset; the value of the option should be set to a bitwise or'ed set of
 	/// FILE_NOTIFY_CHANGE_* flags.
-	EFSW_OPT_WIN_NOTIFY_FILTER = 2
+	EFSW_OPT_WIN_NOTIFY_FILTER = 2,
+	/// For macOS (FSEvents backend), per default all modified event types are capture but we might
+	// only be interested in a subset; the value of the option should be set to a set of bitwise
+	// from:
+	// kFSEventStreamEventFlagItemFinderInfoMod
+	// kFSEventStreamEventFlagItemModified
+	// kFSEventStreamEventFlagItemInodeMetaMod
+	// Default configuration will set the 3 flags
+	EFSW_OPT_MAC_MODIFIED_FILTER = 3,
 };
 
 /// Basic interface for listening for file events.
@@ -131,7 +139,7 @@ EFSW_API void efsw_clearlasterror();
 
 /// Add a directory watch
 /// On error returns WatchID with Error type.
-efsw_watchid EFSW_API efsw_addwatch(efsw_watcher watcher, const char* directory, 
+efsw_watchid EFSW_API efsw_addwatch(efsw_watcher watcher, const char* directory,
 	efsw_pfn_fileaction_callback callback_fn, int recursive, void* param);
 
 /// Add a directory watch, specifying options
