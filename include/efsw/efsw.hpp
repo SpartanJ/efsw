@@ -135,7 +135,15 @@ enum Option {
 	/// For Windows, per default all events are captured but we might only be interested
 	/// in a subset; the value of the option should be set to a bitwise or'ed set of
 	/// FILE_NOTIFY_CHANGE_* flags.
-	WinNotifyFilter = 2
+	WinNotifyFilter = 2,
+	/// For macOS (FSEvents backend), per default all modified event types are capture but we might
+	// only be interested in a subset; the value of the option should be set to a set of bitwise
+	// from:
+	// kFSEventStreamEventFlagItemFinderInfoMod
+	// kFSEventStreamEventFlagItemModified
+	// kFSEventStreamEventFlagItemInodeMetaMod
+	// Default configuration will set the 3 flags
+	MacModifiedFilter = 3,
 };
 }
 typedef Options::Option Option;
@@ -168,7 +176,7 @@ class EFSW_API FileWatcher {
 	/// @param recursive Set this to true to include subdirectories
 	/// @param options Allows customization of a watcher
 	/// @return Returns the watch id for the directory or, on error, a WatchID with Error type.
-	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive, 
+	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
 					  const std::vector<WatcherOption> &options );
 
 	/// Remove a directory watch. This is a brute force search O(nlogn).

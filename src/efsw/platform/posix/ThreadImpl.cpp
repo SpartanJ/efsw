@@ -5,7 +5,6 @@
 
 #include <cassert>
 #include <efsw/Debug.hpp>
-#include <iostream>
 
 namespace efsw { namespace Platform {
 

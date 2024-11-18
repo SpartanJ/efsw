@@ -79,7 +79,7 @@ void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& p
 		}
 	}
 
-	if ( flags & efswFSEventsModified ) {
+	if ( flags & ModifiedFlags ) {
 		sendFileAction( ID, dirPath, filePath, Actions::Modified );
 	}
 
@@ -154,7 +154,7 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 							sendFileAction( ID, dirPath, filePath, Actions::Delete );
 							sendFileAction( ID, newDir, newFilepath, Actions::Add );
 
-							if ( nEvent.Flags & efswFSEventsModified ) {
+							if ( nEvent.Flags & ModifiedFlags ) {
 								sendFileAction( ID, newDir, newFilepath, Actions::Modified );
 							}
 						}
@@ -175,7 +175,7 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 				} else if ( FileInfo::exists( event.Path ) ) {
 					sendFileAction( ID, dirPath, filePath, Actions::Add );
 
-					if ( event.Flags & efswFSEventsModified ) {
+					if ( event.Flags & ModifiedFlags ) {
 						sendFileAction( ID, dirPath, filePath, Actions::Modified );
 					}
 				} else {

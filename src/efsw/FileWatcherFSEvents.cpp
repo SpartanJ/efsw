@@ -67,7 +67,7 @@ static std::string convertCFStringToStdString( CFStringRef cfString ) {
 	}
 }
 
-void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef streamRef, void* userData,
+void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, void* userData,
 										   size_t numEvents, void* eventPaths,
 										   const FSEventStreamEventFlags eventFlags[],
 										   const FSEventStreamEventId eventIds[] ) {
@@ -126,7 +126,7 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 }
 
 WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchListener* watcher,
-									   bool recursive, const std::vector<WatcherOption> &options ) {
+									   bool recursive, const std::vector<WatcherOption>& options ) {
 	std::string dir( FileSystem::getRealPath( directory ) );
 
 	FileInfo fi( dir );
@@ -167,6 +167,8 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	pWatch->Directory = dir;
 	pWatch->Recursive = recursive;
 	pWatch->FWatcher = this;
+	pWatch->ModifiedFlags =
+		getOptionValue( options, Option::MacModifiedFilter, efswFSEventsModified );
 
 	pWatch->init();
 
@@ -211,8 +213,8 @@ void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
 
 void FileWatcherFSEvents::watch() {}
 
-void FileWatcherFSEvents::handleAction( Watcher* watch, const std::string& filename,
-										unsigned long action, std::string oldFilename ) {
+void FileWatcherFSEvents::handleAction( Watcher* /*watch*/, const std::string& /*filename*/,
+										unsigned long /*action*/, std::string /*oldFilename*/ ) {
 	/// Not used
 }
 
