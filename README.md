@@ -15,7 +15,7 @@ Entropia File System Watcher ![efsw](https://web.ensoft.dev/efsw/efsw-logo.svg)
 
 * Windows via [I/O Completion Ports](http://en.wikipedia.org/wiki/IOCP)
 
-* Mac OS X via [FSEvents](http://en.wikipedia.org/wiki/FSEvents) or [kqueue](http://en.wikipedia.org/wiki/Kqueue)
+* macOS via [FSEvents](http://en.wikipedia.org/wiki/FSEvents) or [kqueue](http://en.wikipedia.org/wiki/Kqueue)
 
 * FreeBSD/BSD via [kqueue](http://en.wikipedia.org/wiki/Kqueue)
 
@@ -120,26 +120,27 @@ Directory paths are expected to be encoded as UTF-8 strings in all platforms.
 
 handleFileAction returns UTF-8 strings in all platforms.
 
-Windows and FSEvents Mac OS X implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
+File modification events may be reported multiple times during a copy operation, typically after each write flush. This behavior is inherent to how file watchers operate and cannot be altered. If you need to open the file after receiving a modification event, it is recommended to wait for a reasonable period of time after the last event to avoid potential issues.
 
-Kqueue implementation is limited by the maximum number of file descriptors allowed per process by the OS. In the case of reaching the file descriptors limit ( in BSD around 18000 and in OS X around 10240 ), it will fallback to the generic file watcher.
+Windows and FSEvents macOS implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
 
-OS X will use only Kqueue if the OS X version is below 10.5. This implementation needs to be compiled separately from the OS X >= 10.5 implementation, since there's no way to compile FSEvents backend in OS X below 10.5.
+Kqueue implementation is limited by the maximum number of file descriptors allowed per process by the OS. In the case of reaching the file descriptors limit ( in BSD around 18000 and in macOS around 10240 ), it will fallback to the generic file watcher.
 
-FSEvents for OS X Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
+macOS will use only Kqueue if the macOS version is below 10.5. This implementation needs to be compiled separately from the macOS >= 10.5 implementation, since there's no way to compile FSEvents backend in macOS below 10.5.
+
+FSEvents for macOS Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
 
 Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
 
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 
-OS-independent watcher, Kqueue and FSEvents for OS X below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.
+OS-independent watcher, Kqueue and FSEvents for macOS below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.
 
 **Useful information**
 --------------------
 The project also comes with a C API wrapper, contributed by [Sepul Sepehr Taghdisian](https://github.com/septag).
 
 There's a string manipulation class not exposed in the efsw header ( efsw::String ) that can be used to make string encoding conversion.
-
 
 **Clarifications**
 ----------------
