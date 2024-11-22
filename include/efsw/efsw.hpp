@@ -1,7 +1,7 @@
 /**
 	@author Martín Lucas Golini
 
-	Copyright (c) 2013 Martín Lucas Golini
+	Copyright (c) 2024 Martín Lucas Golini
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,6 @@
 #ifndef ESFW_HPP
 #define ESFW_HPP
 
-#include <vector>
 #include <string>
 #include <vector>
 
@@ -137,13 +136,18 @@ enum Option {
 	/// FILE_NOTIFY_CHANGE_* flags.
 	WinNotifyFilter = 2,
 	/// For macOS (FSEvents backend), per default all modified event types are capture but we might
-	// only be interested in a subset; the value of the option should be set to a set of bitwise
-	// from:
-	// kFSEventStreamEventFlagItemFinderInfoMod
-	// kFSEventStreamEventFlagItemModified
-	// kFSEventStreamEventFlagItemInodeMetaMod
-	// Default configuration will set the 3 flags
+	/// only be interested in a subset; the value of the option should be set to a set of bitwise
+	/// from:
+	/// kFSEventStreamEventFlagItemFinderInfoMod
+	/// kFSEventStreamEventFlagItemModified
+	/// kFSEventStreamEventFlagItemInodeMetaMod
+	/// Default configuration will set the 3 flags
 	MacModifiedFilter = 3,
+	/// macOS sometimes informs incorrect or old file states that may confuse the consumer
+	/// The events sanitizer will try to sanitize incorrectly reported events in favor of reducing
+	/// the number of events reported. This will have an small performance and memory impact as a
+	/// consequence.
+	MacSanitizeEvents = 4,
 };
 }
 typedef Options::Option Option;
@@ -177,7 +181,7 @@ class EFSW_API FileWatcher {
 	/// @param options Allows customization of a watcher
 	/// @return Returns the watch id for the directory or, on error, a WatchID with Error type.
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
-					  const std::vector<WatcherOption> &options );
+					  const std::vector<WatcherOption>& options );
 
 	/// Remove a directory watch. This is a brute force search O(nlogn).
 	void removeWatch( const std::string& directory );
@@ -240,7 +244,7 @@ class FileWatchListener {
 /// @class WatcherOption
 class WatcherOption {
   public:
-	WatcherOption(Option option, int value) : mOption(option), mValue(value) {};
+	WatcherOption( Option option, int value ) : mOption( option ), mValue( value ){};
 	Option mOption;
 	int mValue;
 };

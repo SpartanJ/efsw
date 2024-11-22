@@ -169,6 +169,7 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	pWatch->FWatcher = this;
 	pWatch->ModifiedFlags =
 		getOptionValue( options, Option::MacModifiedFilter, efswFSEventsModified );
+	pWatch->SanitizeEvents = getOptionValue( options, Option::MacSanitizeEvents, 0 ) != 0;
 
 	pWatch->init();
 
