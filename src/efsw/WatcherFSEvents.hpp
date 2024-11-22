@@ -9,7 +9,7 @@
 #include <CoreServices/CoreServices.h>
 #include <efsw/FileInfo.hpp>
 #include <efsw/WatcherGeneric.hpp>
-#include <set>
+#include <unordered_set>
 #include <vector>
 
 namespace efsw {
@@ -45,17 +45,14 @@ class FSEvent {
 		Path( path ), Flags( flags ), Id( id ), inode( inode ) {}
 
 	std::string Path;
-	long Flags;
-	Uint64 Id;
+	long Flags{ 0 };
+	Uint64 Id{ 0 };
 	Uint64 inode{ 0 };
 };
 
 class WatcherFSEvents : public Watcher {
   public:
 	WatcherFSEvents();
-
-	WatcherFSEvents( WatchID id, std::string directory, FileWatchListener* listener, bool recursive,
-					 WatcherFSEvents* parent = NULL );
 
 	~WatcherFSEvents();
 
@@ -68,14 +65,16 @@ class WatcherFSEvents : public Watcher {
 	Atomic<FileWatcherFSEvents*> FWatcher;
 	FSEventStreamRef FSStream;
 	Uint64 ModifiedFlags{ efswFSEventsModified };
+	bool SanitizeEvents{ false };
 
   protected:
 	void handleAddModDel( const Uint32& flags, const std::string& path, std::string& dirPath,
-						  std::string& filePath );
+						  std::string& filePath, Uint64 inode );
 
 	WatcherGeneric* WatcherGen;
 
-	std::set<std::string> DirsChanged;
+	std::unordered_set<std::string> DirsChanged;
+	std::unordered_set<Uint64> FilesAdded;
 
 	void sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename,
 						 Action action, std::string oldFilename = "" );
