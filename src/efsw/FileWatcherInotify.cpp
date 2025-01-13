@@ -69,15 +69,17 @@ FileWatcherInotify::~FileWatcherInotify() {
 }
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption>& ) {
+									  bool recursive, const std::vector<WatcherOption>& options ) {
 	if ( !mInitOK )
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
-	return addWatch( directory, watcher, recursive, NULL );
+	bool syntheticEvents = getOptionValue( options, Options::LinuxProduceSyntheticEvents, 0 ) != 0;
+	return addWatch( directory, watcher, recursive, syntheticEvents, NULL );
 }
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, WatcherInotify* parent ) {
+									  bool recursive, bool syntheticEvents,
+									  WatcherInotify* parent, bool fromInternalEvent ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -160,7 +162,17 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 			const FileInfo& cfi = it->second;
 
 			if ( cfi.isDirectory() && cfi.isReadable() ) {
-				addWatch( cfi.Filepath, watcher, recursive, pWatch );
+				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents, pWatch );
+			}
+		}
+
+		if ( fromInternalEvent && parent != NULL && syntheticEvents ) {
+			for ( const auto& file : files ) {
+				if ( file.second.isRegularFile() ) {
+					pWatch->Listener->handleFileAction(
+						pWatch->ID, pWatch->Directory,
+						FileSystem::fileNameFromPath( file.second.Filepath ), Actions::Add );
+				}
 			}
 		}
 	}
@@ -448,8 +460,9 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 		}
 
 		if ( !found ) {
-			addWatch( fpath, watch->Listener, watch->Recursive,
-					  static_cast<WatcherInotify*>( watch ) );
+			WatcherInotify* iWatch = static_cast<WatcherInotify*>( watch );
+			addWatch( fpath, watch->Listener, watch->Recursive, iWatch->syntheticEvents,
+					  static_cast<WatcherInotify*>( watch ), true );
 		}
 	}
 }
