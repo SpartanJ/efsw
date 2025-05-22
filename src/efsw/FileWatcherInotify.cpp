@@ -139,6 +139,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	pWatch->Directory = dir;
 	pWatch->Recursive = recursive;
 	pWatch->Parent = parent;
+	pWatch->syntheticEvents = syntheticEvents;
 
 	{
 		Lock lock( mWatchesLock );
