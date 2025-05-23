@@ -31,7 +31,16 @@
         "preset": "generic",
         "relative_file_paths": true
       }
-    }
+    },
+    "run": [
+      {
+        "args": "",
+        "command": "efsw-test-debug",
+        "name": "efsw-test-debug",
+        "run_in_terminal": true,
+        "working_dir": "${project_root}/bin"
+      }
+    ]
   },
   "linux-release": {
     "build": [

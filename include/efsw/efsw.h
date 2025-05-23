@@ -106,6 +106,13 @@ enum efsw_option {
 	/// the number of events reported. This will have an small performance and memory impact as a
 	/// consequence.
 	EFSW_OPT_MAC_SANITIZE_EVENTS = 4,
+	/// Linux does not support natively recursive watchers. This means that when using recursive
+	/// watches efsw registers new watchers for each directory. If new file are created between
+	/// the time efsw takes to register the new directory those events might be missed. To avoid
+	/// missing new file notifications efsw will trigger synthetic new file events for existing
+	/// files in the new directroy watched. This might have the unintended consequence of sending
+	/// duplicated created events due to the system also emitting this event.
+	LINUX_PRODUCE_SYNTHETIC_EVENTS = 5,
 };
 
 /// Basic interface for listening for file events.
