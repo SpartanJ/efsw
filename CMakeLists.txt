@@ -47,10 +47,8 @@ set(EFSW_CPP_SOURCE
 	src/efsw/FileWatcherGeneric.cpp
 	src/efsw/FileWatcherImpl.cpp
 	src/efsw/Log.cpp
-	src/efsw/Mutex.cpp
 	src/efsw/String.cpp
 	src/efsw/System.cpp
-	src/efsw/Thread.cpp
 	src/efsw/Watcher.cpp
 	src/efsw/WatcherGeneric.cpp
 )
@@ -77,16 +75,12 @@ endif()
 if(WIN32)
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/platform/win/FileSystemImpl.cpp
-		src/efsw/platform/win/MutexImpl.cpp
 		src/efsw/platform/win/SystemImpl.cpp
-		src/efsw/platform/win/ThreadImpl.cpp
 	)
 else()
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/platform/posix/FileSystemImpl.cpp
-		src/efsw/platform/posix/MutexImpl.cpp
 		src/efsw/platform/posix/SystemImpl.cpp
-		src/efsw/platform/posix/ThreadImpl.cpp
 	)
 endif()
 
