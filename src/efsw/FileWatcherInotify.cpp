@@ -308,12 +308,9 @@ void FileWatcherInotify::run() {
 					struct inotify_event* pevent = (struct inotify_event*)&buff[i];
 
 					{
-						{
-							Lock lock( mWatchesLock );
+						Lock lock( mWatchesLock );
 
-							wit = mWatches.find( pevent->wd );
-						}
-
+						wit = mWatches.find( pevent->wd );
 						if ( wit != mWatches.end() ) {
 							handleAction( wit->second, (char*)pevent->name, pevent->mask );
 
@@ -349,6 +346,7 @@ void FileWatcherInotify::run() {
 						if ( pevent->mask & IN_MOVED_FROM )
 							prevOldFileName = std::string( (char*)pevent->name );
 					}
+
 
 					i += sizeof( struct inotify_event ) + pevent->len;
 				}
