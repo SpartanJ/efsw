@@ -154,6 +154,17 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	if ( pWatch->Recursive ) {
 		std::map<std::string, FileInfo> files = FileSystem::filesInfoFromPath( pWatch->Directory );
+
+		if ( fromInternalEvent && parent != NULL && syntheticEvents ) {
+			for ( const auto& file : files ) {
+				if ( file.second.isRegularFile() || file.second.isDirectory() || file.second.isLink() ) {
+					pWatch->Listener->handleFileAction(
+						pWatch->ID, pWatch->Directory,
+						FileSystem::fileNameFromPath( file.second.Filepath ), Actions::Add );
+				}
+			}
+		}
+
 		std::map<std::string, FileInfo>::iterator it = files.begin();
 
 		for ( ; it != files.end(); ++it ) {
@@ -163,17 +174,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 			const FileInfo& cfi = it->second;
 
 			if ( cfi.isDirectory() && cfi.isReadable() ) {
-				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents, pWatch );
-			}
-		}
-
-		if ( fromInternalEvent && parent != NULL && syntheticEvents ) {
-			for ( const auto& file : files ) {
-				if ( file.second.isRegularFile() ) {
-					pWatch->Listener->handleFileAction(
-						pWatch->ID, pWatch->Directory,
-						FileSystem::fileNameFromPath( file.second.Filepath ), Actions::Add );
-				}
+				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents, pWatch, fromInternalEvent );
 			}
 		}
 	}
