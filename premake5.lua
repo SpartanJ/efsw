@@ -3,8 +3,8 @@ newoption { trigger = "strip-symbols", description = "Strip debugging symbols in
 newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer" }
 
 efsw_major_version	= "1"
-efsw_minor_version	= "0"
-efsw_patch_version	= "2"
+efsw_minor_version	= "5"
+efsw_patch_version	= "0"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function get_include_paths()
