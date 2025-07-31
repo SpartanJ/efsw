@@ -512,7 +512,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 	std::string fpath( watch->Directory + filename );
 
-	if ( ( IN_CLOSE_WRITE & action ) || ( IN_MODIFY & action ) ) {
+	if ( IN_Q_OVERFLOW & action ) {
+		watch->Listener->handleMissedFileActions( watch->ID, watch->Directory );
+	} else if ( ( IN_CLOSE_WRITE & action ) || ( IN_MODIFY & action ) ) {
 		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
 										   Actions::Modified );
 	} else if ( IN_MOVED_TO & action ) {
