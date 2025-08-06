@@ -203,6 +203,33 @@ workspace "efsw"
 			targetname "efsw-test-reldbginfo"
 			conf_warnings()
 
+	project "efsw-test-stdc"
+		kind "ConsoleApp"
+		language "C"
+		links { "efsw-shared-lib" }
+		files { "src/test/*.c" }
+		includedirs { "include", "src" }
+		conf_links()
+
+		filter "configurations:debug"
+			defines { "DEBUG" }
+			symbols "On"
+			targetname "efsw-test-stdc-debug"
+			conf_warnings()
+
+		filter "configurations:release"
+			defines { "NDEBUG" }
+			optimize "On"
+			targetname "efsw-test-stdc-release"
+			conf_warnings()
+
+		filter "configurations:relwithdbginfo"
+			defines { "NDEBUG" }
+			symbols "On"
+			optimize "On"
+			targetname "efsw-test-stdc-reldbginfo"
+			conf_warnings()
+
 	project "efsw-shared-lib"
 		kind "SharedLib"
 		language "C++"

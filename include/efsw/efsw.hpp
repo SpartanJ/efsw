@@ -245,12 +245,12 @@ class FileWatchListener {
 	virtual void handleFileAction( WatchID watchid, const std::string& dir,
 								   const std::string& filename, Action action,
 								   std::string oldFilename = "" ) = 0;
-	
+
 	/// Handles that have missed file actions
 	/// @param watchid The watch id for the directory
 	/// @param dir The directory
 	virtual void handleMissedFileActions( WatchID /*watchid*/,
-										  const std::string& /*dir*/ ) {};
+										  const std::string& /*dir*/ ) {}
 };
 
 /// Optional, typically platform specific parameter for customization of a watcher.

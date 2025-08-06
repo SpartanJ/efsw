@@ -201,6 +201,32 @@ solution "efsw"
 			targetname "efsw-test-reldbginfo"
 			conf_warnings()
 
+	project "efsw-test-stdc"
+		kind "ConsoleApp"
+		language "C"
+		links { "efsw-shared-lib" }
+		files { "src/test/*.c" }
+		includedirs { "include", "src" }
+		conf_links()
+
+		configuration "debug"
+			defines { "DEBUG" }
+			flags { "Symbols" }
+			targetname "efsw-test-stdc-debug"
+			conf_warnings()
+
+		configuration "release"
+			defines { "NDEBUG" }
+			flags { "Optimize" }
+			targetname "efsw-test-stdc-release"
+			conf_warnings()
+
+		configuration "relwithdbginfo"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw-test-stdc-reldbginfo"
+			conf_warnings()
+
 	project "efsw-shared-lib"
 		kind "SharedLib"
 		language "C++"

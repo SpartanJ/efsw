@@ -121,6 +121,9 @@ typedef void ( *efsw_pfn_fileaction_callback )( efsw_watcher watcher, efsw_watch
 												enum efsw_action action, const char* old_filename,
 												void* param );
 
+typedef void ( *efsw_pfn_handle_missed_fileactions )( efsw_watcher watcher, efsw_watchid watchid,
+													  const char* dir );
+
 typedef struct {
 	enum efsw_option option;
 	int value;
@@ -150,10 +153,10 @@ efsw_watchid EFSW_API efsw_addwatch( efsw_watcher watcher, const char* directory
 /// Add a directory watch, specifying options
 /// @param options Pointer to an array of watcher options
 /// @param nr_options Number of options referenced by \p options
-efsw_watchid EFSW_API efsw_addwatch_withoptions( efsw_watcher watcher, const char* directory,
-												 efsw_pfn_fileaction_callback callback_fn,
-												 int recursive, efsw_watcher_option* options,
-												 int options_number, void* param );
+efsw_watchid EFSW_API efsw_addwatch_withoptions(
+	efsw_watcher watcher, const char* directory, efsw_pfn_fileaction_callback callback_fn,
+	int recursive, efsw_watcher_option* options, int options_number, void* param,
+	efsw_pfn_handle_missed_fileactions callback_fn_missed_file_actions );
 
 /// Remove a directory watch. This is a brute force search O(nlogn).
 void EFSW_API efsw_removewatch( efsw_watcher watcher, const char* directory );
