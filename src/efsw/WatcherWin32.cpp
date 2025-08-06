@@ -1,4 +1,5 @@
 #include <efsw/Debug.hpp>
+#include <efsw/FileSystem.hpp>
 #include <efsw/String.hpp>
 #include <efsw/WatcherWin32.hpp>
 
@@ -162,6 +163,10 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 
 	if ( dwNumberOfBytesTransfered == 0 ) {
 		if ( nullptr != pWatch && !pWatch->StopNow ) {
+			/// Missed file actions due to buffer overflowed
+			std::string dir = pWatch->DirName;
+			FileSystem::dirRemoveSlashAtEnd( dir );
+			pWatch->Listener->handleMissedFileActions( pWatch->ID, dir );
 			RefreshWatch( tWatch );
 		} else {
 			return;

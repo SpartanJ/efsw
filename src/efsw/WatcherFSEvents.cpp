@@ -65,6 +65,12 @@ void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 								FileSystem::precomposeFileName( oldFilename ) );
 }
 
+void WatcherFSEvents::sendMissedFileActions( WatchID watchid,
+											 const std::string& dir) {
+	Listener->handleMissedFileActions( watchid,
+									   FileSystem::precomposeFileName( dir ) );
+}
+
 void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& path,
 									   std::string& dirPath, std::string& filePath, Uint64 inode ) {
 	if ( ( flags & efswFSEventStreamEventFlagItemCreated ) && FileInfo::exists( path ) &&
@@ -97,7 +103,16 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 
 		if ( event.Flags &
 			 ( kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped |
-			   kFSEventStreamEventFlagEventIdsWrapped | kFSEventStreamEventFlagHistoryDone |
+			   kFSEventStreamEventFlagMustScanSubDirs) ) {
+			efDEBUG( "Rescan/Drop event for watch: %s - flags: 0x%x\n", Directory.c_str(), event.Flags );
+			std::string dirPath = Directory;
+			FileSystem::dirRemoveSlashAtEnd( dirPath );
+			sendMissedFileActions(ID, dirPath );
+			continue;
+		}
+
+		if ( event.Flags &
+			 ( kFSEventStreamEventFlagEventIdsWrapped | kFSEventStreamEventFlagHistoryDone |
 			   kFSEventStreamEventFlagMount | kFSEventStreamEventFlagUnmount |
 			   kFSEventStreamEventFlagRootChanged ) ) {
 			continue;
