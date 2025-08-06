@@ -122,17 +122,17 @@ int main( int argc, char** argv ) {
 
 		/// add a watch to the system
 		char path1[512];
-		snprintf(path1, sizeof(path1), "%s%ctest", cwd, PATH_SEPARATOR);
+		snprintf( path1, sizeof( path1 ), "%s%ctest", cwd, PATH_SEPARATOR );
 		handleWatchID( efsw_addwatch_withoptions( fileWatcher, path1, handleFileAction, true, 0, 0,
-												  0, nullptr ) );
+												  0, NULL ) );
 
 		/// adds another watch after started watching...
 		sleepMsecs( 100 );
 
 		char path2[512];
-		snprintf( path2, sizeof(path2), "%s%ctest2", cwd, PATH_SEPARATOR );
+		snprintf( path2, sizeof( path2 ), "%s%ctest2", cwd, PATH_SEPARATOR );
 		efsw_watchid watchID = handleWatchID( efsw_addwatch_withoptions(
-			fileWatcher, path2, handleFileAction, true, 0, 0, 0, nullptr ) );
+			fileWatcher, path2, handleFileAction, true, 0, 0, 0, NULL ) );
 
 		/// delete the watch
 		if ( watchID > 0 ) {
