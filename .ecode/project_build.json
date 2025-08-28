@@ -2,7 +2,7 @@
   "linux-debug": {
     "build": [
       {
-        "args": "--thread-sanitizer --verbose gmake2",
+        "args": "--address-sanitizer --verbose gmake2",
         "command": "premake5",
         "working_dir": ""
       },
@@ -15,8 +15,8 @@
     "build_types": [],
     "clean": [
       {
-        "args": "",
-        "command": "",
+        "args": " -C make/linux clean",
+        "command": "make",
         "working_dir": ""
       }
     ],
@@ -190,12 +190,12 @@
   "mingw-debug": {
     "build": [
       {
-        "args": "--os=windows gmake2",
+        "args": "--os=windows --cc=mingw gmake",
         "command": "premake5",
         "working_dir": ""
       },
       {
-        "args": "-j${nproc} -C make/windows",
+        "args": "-j${nproc} -C make/windows verbose=true",
         "command": "mingw64-make",
         "working_dir": ""
       }
