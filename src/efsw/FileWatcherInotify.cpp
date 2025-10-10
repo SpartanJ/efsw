@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -286,7 +287,7 @@ void FileWatcherInotify::run() {
 
 	WatcherInotify* curWatcher = NULL;
 	WatcherInotify* currentMoveFrom = NULL;
-	u_int32_t currentMoveCookie = -1;
+	uint32_t currentMoveCookie = -1;
 	bool lastWasMovedFrom = false;
 	std::string prevOldFileName;
 
