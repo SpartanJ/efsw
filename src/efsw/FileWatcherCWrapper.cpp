@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <efsw/Lock.hpp>
+#include <efsw/Mutex.hpp>
 #include <efsw/efsw.h>
 #include <efsw/efsw.hpp>
 #include <vector>
@@ -35,32 +38,26 @@ class Watcher_CAPI : public efsw::FileWatchListener {
  * globals
  */
 static std::vector<Watcher_CAPI*> g_callbacks;
+static efsw::Mutex g_callbacksMutex;
 
 Watcher_CAPI* find_callback( efsw_watcher watcher, efsw_pfn_fileaction_callback fn, void* param ) {
-	for ( std::vector<Watcher_CAPI*>::iterator i = g_callbacks.begin(); i != g_callbacks.end();
-		  ++i ) {
-		Watcher_CAPI* callback = *i;
-
+	efsw::Lock l( g_callbacksMutex );
+	for ( Watcher_CAPI* callback : g_callbacks ) {
 		if ( callback->mFn == fn && callback->mWatcher == watcher && callback->mParam == param )
-			return *i;
+			return callback;
 	}
-
 	return NULL;
 }
 
-Watcher_CAPI* remove_callback( efsw_watcher watcher ) {
-	std::vector<Watcher_CAPI*>::iterator i = g_callbacks.begin();
-
-	while ( i != g_callbacks.end() ) {
-		Watcher_CAPI* callback = *i;
-
-		if ( callback->mWatcher == watcher )
-			i = g_callbacks.erase( i );
-		else
-			++i;
+void remove_callback( efsw_watcher watcher ) {
+	efsw::Lock l( g_callbacksMutex );
+	auto found = std::find_if( g_callbacks.begin(), g_callbacks.end(),
+							   [watcher]( Watcher_CAPI* cb ) { return cb->mWatcher == watcher; } );
+	if ( found != g_callbacks.end() ) {
+		Watcher_CAPI* callback = *found;
+		delete callback;
+		g_callbacks.erase( found );
 	}
-
-	return NULL;
 }
 
 /*************************************************************************************************/
@@ -98,6 +95,7 @@ efsw_addwatch_withoptions( efsw_watcher watcher, const char* directory,
 
 	if ( callback == NULL ) {
 		callback = new Watcher_CAPI( watcher, callback_fn, param, callback_fn_missed_file_actions );
+		efsw::Lock l( g_callbacksMutex );
 		g_callbacks.push_back( callback );
 	}
 
