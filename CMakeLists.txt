@@ -102,11 +102,6 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 		src/efsw/FileWatcherInotify.cpp
 		src/efsw/WatcherInotify.cpp
 	)
-
-	find_path(EFSW_INOTIFY_H NAMES sys/inotify.h NO_CACHE)
-	if(EFSW_INOTIFY_H STREQUAL "EFSW_INOTIFY_H-NOTFOUND")
-		target_compile_definitions(efsw PRIVATE EFSW_INOTIFY_NOSYS)
-	endif()
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/FileWatcherKqueue.cpp
