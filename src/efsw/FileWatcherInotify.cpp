@@ -332,9 +332,26 @@ void FileWatcherInotify::run() {
 						if ( curWatcher ) {
 							handleAction( curWatcher, (char*)pevent->name, pevent->mask );
 
+							// Check if this is the destination of a move
 							if ( ( pevent->mask & IN_MOVED_TO ) && currentMoveFrom &&
 								 pevent->cookie == currentMoveCookie ) {
-								/// make pair success
+
+								// If the move happened between TWO DIFFERENT watched directories
+								if ( curWatcher != currentMoveFrom ) {
+									// We need to simulate a delete event, the IN_MOVED_TO will
+									// generate an add event after
+									handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
+												  IN_DELETE );
+
+									// Clear the state on the source watcher so it doesn't
+									// get processed again or stuck with stale data.
+									currentMoveFrom->OldFileName = "";
+								}
+								// Else: If curWatcher == currentMoveFrom, it's a local rename.
+								// handleAction() above already detected the OldFileName and
+								// emitted a 'Moved' event correctly.
+
+								/// Pair processed successfully
 								currentMoveFrom = NULL;
 								currentMoveCookie = -1;
 							} else if ( pevent->mask & IN_MOVED_FROM ) {
