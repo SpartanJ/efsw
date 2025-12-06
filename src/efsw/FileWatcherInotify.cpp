@@ -7,15 +7,10 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#ifdef EFSW_INOTIFY_NOSYS
-#include <efsw/inotify-nosys.h>
-#else
-#include <sys/inotify.h>
-#endif
 
 #include <efsw/Debug.hpp>
 #include <efsw/FileSystem.hpp>
@@ -131,6 +126,16 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		}
 	}
 
+	// The watch could exists if a file was moved between directories that are being watched
+	// In that case we need to remove the local watch information but *keep* the inotify watch id
+	// open, to be reused with the new watch.
+	{
+		Lock lock( mWatchesLock );
+		auto watchIdExists = mWatches.find( wd );
+		if ( watchIdExists != mWatches.end() )
+			removeWatchLocked( wd, true );
+	}
+
 	efDEBUG( "Added watch %s with id: %d\n", dir.c_str(), wd );
 
 	WatcherInotify* pWatch = new WatcherInotify();
@@ -144,7 +149,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	{
 		Lock lock( mWatchesLock );
-		mWatches.insert( std::make_pair( wd, pWatch ) );
+		mWatches[wd] = pWatch;
 		mWatchesRef[pWatch->Directory] = wd;
 	}
 
@@ -185,7 +190,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	return wd;
 }
 
-void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
+void FileWatcherInotify::removeWatchLocked( WatchID watchid, bool skipInotifyRemove ) {
 	WatchMap::iterator iter = mWatches.find( watchid );
 	if ( iter == mWatches.end() )
 		return;
@@ -226,12 +231,14 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid ) {
 		}
 	}
 
-	int err = inotify_rm_watch( mFD, watchid );
+	if ( !skipInotifyRemove ) {
+		int err = inotify_rm_watch( mFD, watchid );
 
-	if ( err < 0 ) {
-		efDEBUG( "Error removing watch %d: %s\n", watchid, strerror( errno ) );
-	} else {
-		efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(), watchid );
+		if ( err < 0 ) {
+			efDEBUG( "Error removing watch %d: %s\n", watchid, strerror( errno ) );
+		} else {
+			efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(), watchid );
+		}
 	}
 
 	efSAFE_DELETE( watch );
@@ -325,9 +332,26 @@ void FileWatcherInotify::run() {
 						if ( curWatcher ) {
 							handleAction( curWatcher, (char*)pevent->name, pevent->mask );
 
-							if ( ( pevent->mask & IN_MOVED_TO ) && curWatcher == currentMoveFrom &&
+							// Check if this is the destination of a move
+							if ( ( pevent->mask & IN_MOVED_TO ) && currentMoveFrom &&
 								 pevent->cookie == currentMoveCookie ) {
-								/// make pair success
+
+								// If the move happened between TWO DIFFERENT watched directories
+								if ( curWatcher != currentMoveFrom ) {
+									// We need to simulate a delete event, the IN_MOVED_TO will
+									// generate an add event after
+									handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
+												  IN_DELETE );
+
+									// Clear the state on the source watcher so it doesn't
+									// get processed again or stuck with stale data.
+									currentMoveFrom->OldFileName = "";
+								}
+								// Else: If curWatcher == currentMoveFrom, it's a local rename.
+								// handleAction() above already detected the OldFileName and
+								// emitted a 'Moved' event correctly.
+
+								/// Pair processed successfully
 								currentMoveFrom = NULL;
 								currentMoveCookie = -1;
 							} else if ( pevent->mask & IN_MOVED_FROM ) {
@@ -427,6 +451,12 @@ void FileWatcherInotify::run() {
 				}
 
 				Watcher* watch = it->first;
+
+				// Clear the stale OldFileName.
+				// Since this move is considered complete (moved outside),
+				// the watcher should not be waiting for a pair anymore.
+				watch->OldFileName = "";
+
 				const std::string& oldFileName = it->second;
 
 				/// Check if the file move was a folder already being watched
@@ -534,7 +564,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 											   Actions::Moved, watch->OldFileName );
 		}
 
-		if ( watch->Recursive && FileSystem::isDirectory( fpath ) ) {
+		if ( watch->Recursive && FileSystem::isDirectory( fpath ) && !watch->OldFileName.empty() ) {
 			/// Update the new directory path
 			std::string opath( watch->Directory + watch->OldFileName );
 			FileSystem::dirAddSlashAtEnd( opath );

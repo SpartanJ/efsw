@@ -73,7 +73,7 @@ class FileWatcherInotify : public FileWatcherImpl {
   private:
 	void run();
 
-	void removeWatchLocked( WatchID watchid );
+	void removeWatchLocked( WatchID watchid, bool skipInotifyRemove = false );
 
 	void checkForNewWatcher( Watcher* watch, std::string fpath );
 
