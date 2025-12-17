@@ -356,7 +356,7 @@ void FileWatcherInotify::run() {
 								currentMoveCookie = -1;
 							} else if ( pevent->mask & IN_MOVED_FROM ) {
 								// Previous event was moved from and current event is moved from
-								// Treat it as a DELETE or moved ouside watches
+								// Treat it as a DELETE or moved outside watches
 								if ( lastWasMovedFrom && currentMoveFrom ) {
 									mMovedOutsideWatches.push_back(
 										std::make_pair( currentMoveFrom, prevOldFileName ) );
@@ -401,6 +401,16 @@ void FileWatcherInotify::run() {
 					i += sizeof( struct inotify_event ) + pevent->len;
 				}
 			}
+
+			// If the last event was also IN_MODEV_FROM we didn't generate any event for that one
+			// Treat it as a DELETE or moved outside watches
+			if ( lastWasMovedFrom && currentMoveFrom ) {
+				mMovedOutsideWatches.push_back(
+					std::make_pair( currentMoveFrom, prevOldFileName ) );
+				currentMoveFrom = NULL;
+				lastWasMovedFrom = false;
+				prevOldFileName.clear();
+			}
 		} else {
 			// Here means no event received
 			// If last event is IN_MOVED_FROM, we assume no IN_MOVED_TO
@@ -409,7 +419,8 @@ void FileWatcherInotify::run() {
 						 mMovedOutsideWatches.begin(), mMovedOutsideWatches.end(),
 						 [currentMoveFrom]( const std::pair<WatcherInotify*, std::string>& moved ) {
 							 return moved.first == currentMoveFrom;
-						 } ) == mMovedOutsideWatches.end() ) {
+						 } ) == mMovedOutsideWatches.end() &&
+					 !currentMoveFrom->OldFileName.empty() ) {
 					mMovedOutsideWatches.push_back(
 						std::make_pair( currentMoveFrom, currentMoveFrom->OldFileName ) );
 				} else {
