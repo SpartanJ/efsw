@@ -97,7 +97,8 @@ elseif(WIN32)
 		src/efsw/FileWatcherWin32.cpp
 		src/efsw/WatcherWin32.cpp
 	)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR
+       ${CMAKE_SYSTEM_NAME} MATCHES "Android")
 	list(APPEND EFSW_CPP_SOURCE
 		src/efsw/FileWatcherInotify.cpp
 		src/efsw/WatcherInotify.cpp
