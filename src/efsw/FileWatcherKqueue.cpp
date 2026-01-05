@@ -129,12 +129,15 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 }
 
 void FileWatcherKqueue::removeWatch( const std::string& directory ) {
+	std::string dir( directory );
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	Lock lock( mWatchesLock );
 
 	WatchMap::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
-		if ( directory == iter->second->Directory ) {
+		if ( dir == iter->second->Directory ) {
 			removeWatch( iter->first );
 			return;
 		}
@@ -162,7 +165,7 @@ bool FileWatcherKqueue::isAddingWatcher() const {
 
 void FileWatcherKqueue::watch() {
 	if ( NULL == mThread ) {
-		mThread = new Thread([this]{run();});
+		mThread = new Thread( [this] { run(); } );
 		mThread->launch();
 	}
 }

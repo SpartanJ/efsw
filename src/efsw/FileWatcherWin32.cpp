@@ -78,12 +78,15 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 }
 
 void FileWatcherWin32::removeWatch( const std::string& directory ) {
+	std::string dir( directory );
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	Lock lock( mWatchesLock );
 
 	Watches::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
-		if ( directory == ( *iter )->Watch->DirName ) {
+		if ( dir == ( *iter )->Watch->DirName ) {
 			removeWatch( *iter );
 			break;
 		}
