@@ -93,6 +93,11 @@ enum efsw_option {
 	/// in a subset; the value of the option should be set to a bitwise or'ed set of
 	/// FILE_NOTIFY_CHANGE_* flags.
 	EFSW_OPT_WIN_NOTIFY_FILTER = 2,
+	/// For Windows, prevents the watched directory from being deleted while being monitored.
+	/// When set to 1, FILE_SHARE_DELETE is NOT used, preventing directory deletion.
+	/// When set to 0 (default), FILE_SHARE_DELETE is used, allowing directory deletion
+	/// (original behavior).
+	EFSW_OPT_WIN_PREVENT_DIRECTORY_DELETION = 3,
 	/// For macOS (FSEvents backend), per default all modified event types are capture but we might
 	// only be interested in a subset; the value of the option should be set to a set of bitwise
 	// from:
