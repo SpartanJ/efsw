@@ -57,9 +57,10 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 		FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_LAST_WRITE |
 		FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
 		FILE_NOTIFY_CHANGE_SIZE) );
+	bool preventDeletion = getOptionValue( options, Option::WinPreventDirectoryDeletion, 0 ) != 0;
 
 	WatcherStructWin32* watch = CreateWatch( String::fromUtf8( dir ).toWideString().c_str(),
-											 recursive, bufferSize, notifyFilter, mIOCP );
+											 recursive, bufferSize, notifyFilter, mIOCP, preventDeletion );
 
 	if ( NULL == watch ) {
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );

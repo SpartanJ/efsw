@@ -41,8 +41,8 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 
 void DestroyWatch( WatcherStructWin32* pWatch );
 
-WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
-							     DWORD bufferSize, DWORD notifyFilter, HANDLE iocp );
+WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive, DWORD bufferSize,
+								 DWORD notifyFilter, HANDLE iocp, bool preventDeletion );
 
 class WatcherWin32 : public Watcher {
   public:
