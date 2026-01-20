@@ -2,6 +2,7 @@
 #include <efsw/FileSystem.hpp>
 #include <efsw/platform/platformimpl.hpp>
 #include <climits>
+#include <cstdlib>
 
 #if EFSW_OS == EFSW_OS_MACOSX
 #include <CoreFoundation/CoreFoundation.h>
