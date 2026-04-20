@@ -158,7 +158,7 @@ solution "efsw"
 	project "efsw-unit_tests"
 		kind "ConsoleApp"
 		language "C++"
-		links { "efsw-shared-lib" }
+		links { "efsw-static-lib" }
 		files { "src/unit_tests/*.cpp" }
 		includedirs { "include", "src" }
 		conf_links()

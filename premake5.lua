@@ -161,7 +161,7 @@ workspace "efsw"
 		kind "ConsoleApp"
 		language "C++"
 		cppdialect "C++17"
-		links { "efsw-shared-lib" }
+		links { "efsw-static-lib" }
 		files { "src/unit_tests/*.cpp" }
 		includedirs { "include", "src" }
 		conf_links()
