@@ -56,6 +56,6 @@ jobs:
         "%MSBUILD_PATH%\MSBuild.exe" .\make\windows\efsw.sln -m /p:Platform="x64"
     - name: Run unit tests
       shell: cmd
-      working-directory: %GITHUB_WORKSPACE%
       run: |
+        cd %GITHUB_WORKSPACE%
         bin\efsw-unit_tests-debug.exe
