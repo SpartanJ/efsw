@@ -18,6 +18,9 @@ jobs:
         ./premake5 --verbose gmake2
         cd make/linux
         make all
+    - name: Run unit tests
+      run: |
+        ./bin/efsw-unit_tests-release
   MacOS:
     runs-on: macos-latest
     steps:

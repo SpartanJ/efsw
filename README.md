@@ -101,7 +101,7 @@ To generate project files you will need to [download and install](https://premak
 
 Then you can generate the project for your platform by just going to the project directory where the premake4.lua file is located and executing:
 
-`premake5 gmake2` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release_x86_64` ( it will generate the static lib, the shared lib and the test application ).
+`premake5 gmake` to generate project Makefiles, then `cd make/*YOURPLATFORM*/`, and finally `make` or `make config=release_x86_64` ( it will generate the static lib, the shared lib and the test application ).
 
 or
 
