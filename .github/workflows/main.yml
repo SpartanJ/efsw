@@ -55,5 +55,6 @@ jobs:
       run: |
         "%MSBUILD_PATH%\MSBuild.exe" .\make\windows\efsw.sln -m /p:Platform="x64"
     - name: Run unit tests
+      shell: cmd
       run: |
-        ./bin/efsw-unit_tests-debug.exe
+        bin\efsw-unit_tests-debug.exe
