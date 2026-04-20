@@ -20,7 +20,7 @@ jobs:
         make all
     - name: Run unit tests
       run: |
-        ./bin/efsw-unit_tests-release
+        ./bin/efsw-unit_tests-debug
   MacOS:
     runs-on: macos-latest
     steps:
@@ -32,6 +32,9 @@ jobs:
       run: |
         premake5 --verbose gmake2
         make -C make/macosx/ -j$(sysctl -n hw.ncpu) all
+    - name: Run unit tests
+      run: |
+        ./bin/efsw-unit_tests-debug
   Windows:
     runs-on: windows-latest
     env:
@@ -51,3 +54,6 @@ jobs:
       shell: cmd
       run: |
         "%MSBUILD_PATH%\MSBuild.exe" .\make\windows\efsw.sln -m /p:Platform="x64"
+    - name: Run unit tests
+      run: |
+        ./bin/efsw-unit_tests-debug.exe
