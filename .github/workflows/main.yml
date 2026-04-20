@@ -57,5 +57,4 @@ jobs:
     - name: Run unit tests
       shell: cmd
       run: |
-        cd %GITHUB_WORKSPACE%
-        bin\efsw-unit_tests-debug.exe
+        .\bin\efsw-unit_tests-debug.exe
