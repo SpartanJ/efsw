@@ -64,10 +64,13 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 }
 
 void FileWatcherGeneric::removeWatch( const std::string& directory ) {
+	std::string dir( directory );
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	WatchList::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); ++it ) {
-		if ( ( *it )->Directory == directory ) {
+		if ( ( *it )->Directory == dir ) {
 			WatcherGeneric* watch = ( *it );
 
 			Lock lock( mWatchesLock );

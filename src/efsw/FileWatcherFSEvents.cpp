@@ -183,12 +183,15 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 }
 
 void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
+	std::string dir( FileSystem::getRealPath( directory ) );
+	FileSystem::dirAddSlashAtEnd( dir );
+
 	Lock lock( mWatchesLock );
 
 	WatchMap::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
-		if ( directory == iter->second->Directory ) {
+		if ( dir == iter->second->Directory ) {
 			removeWatch( iter->second->ID );
 			return;
 		}

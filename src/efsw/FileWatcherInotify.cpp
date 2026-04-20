@@ -251,7 +251,10 @@ void FileWatcherInotify::removeWatch( const std::string& directory ) {
 	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 
-	std::unordered_map<std::string, WatchID>::iterator ref = mWatchesRef.find( directory );
+	std::string dir( directory );
+	FileSystem::dirAddSlashAtEnd( dir );
+
+	std::unordered_map<std::string, WatchID>::iterator ref = mWatchesRef.find( dir );
 	if ( ref == mWatchesRef.end() )
 		return;
 

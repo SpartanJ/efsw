@@ -236,16 +236,20 @@ void DestroyWatch( WatcherStructWin32* pWatch ) {
 }
 
 /// Starts monitoring a directory.
-WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive,
-								 DWORD bufferSize, DWORD notifyFilter, HANDLE iocp ) {
+WatcherStructWin32* CreateWatch( LPCWSTR szDirectory, bool recursive, DWORD bufferSize,
+								 DWORD notifyFilter, HANDLE iocp, bool preventDeletion ) {
 	WatcherStructWin32* tWatch = new WatcherStructWin32();
 	WatcherWin32* pWatch = new WatcherWin32(bufferSize);
 	if (tWatch)
 		tWatch->Watch = pWatch;
 
-	pWatch->DirHandle = CreateFileW(
-		szDirectory, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-		OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL );
+	DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+	if ( !preventDeletion ) {
+		shareMode |= FILE_SHARE_DELETE;
+	}
+
+	pWatch->DirHandle = CreateFileW( szDirectory, GENERIC_READ, shareMode, NULL, OPEN_EXISTING,
+									 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL );
 
 	if ( pWatch->DirHandle != INVALID_HANDLE_VALUE &&
 		 CreateIoCompletionPort( pWatch->DirHandle, iocp, 0, 1 ) ) {

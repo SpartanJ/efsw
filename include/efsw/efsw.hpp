@@ -135,6 +135,11 @@ enum Option {
 	/// in a subset; the value of the option should be set to a bitwise or'ed set of
 	/// FILE_NOTIFY_CHANGE_* flags.
 	WinNotifyFilter = 2,
+	/// For Windows, prevents the watched directory from being deleted while being monitored.
+	/// When set to 1, FILE_SHARE_DELETE is NOT used, preventing directory deletion.
+	/// When set to 0 (default), FILE_SHARE_DELETE is used, allowing directory deletion
+	/// (original behavior).
+	WinPreventDirectoryDeletion = 3,
 	/// For macOS (FSEvents backend), per default all modified event types are capture but we might
 	/// only be interested in a subset; the value of the option should be set to a set of bitwise
 	/// from:
@@ -152,7 +157,7 @@ enum Option {
 	/// watches efsw registers new watchers for each directory. If new file are created between
 	/// the time efsw takes to register the new directory those events might be missed. To avoid
 	/// missing new file notifications efsw will trigger synthetic created file events for existing
-	/// files in the new directroy watched. This might have the unintended consequence of sending
+	/// files in the new directory watched. This might have the unintended consequence of sending
 	/// duplicated created events due to the system also emitting this event.
 	LinuxProduceSyntheticEvents = 5,
 };
