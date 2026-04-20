@@ -157,7 +157,7 @@ enum Option {
 	/// watches efsw registers new watchers for each directory. If new file are created between
 	/// the time efsw takes to register the new directory those events might be missed. To avoid
 	/// missing new file notifications efsw will trigger synthetic created file events for existing
-	/// files in the new directroy watched. This might have the unintended consequence of sending
+	/// files in the new directory watched. This might have the unintended consequence of sending
 	/// duplicated created events due to the system also emitting this event.
 	LinuxProduceSyntheticEvents = 5,
 };
