@@ -6,7 +6,7 @@ jobs:
   Linux:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -24,7 +24,7 @@ jobs:
   MacOS:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install dependencies
       run: |
         brew install premake
@@ -40,7 +40,7 @@ jobs:
     env:
       MSBUILD_PATH: C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install dependencies
       shell: powershell
       run: |

@@ -39,6 +39,12 @@
         "command": "efsw-test-debug",
         "name": "efsw-test-debug",
         "working_dir": "${project_root}/bin"
+      },
+      {
+        "args": "",
+        "command": "efsw-unit_tests-debug",
+        "name": "efsw-unit_tests-debug",
+        "working_dir": "${project_root}/bin"
       }
     ]
   },
