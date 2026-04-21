@@ -5,28 +5,28 @@ UTEST( Moved, RenameFile ) {
     using namespace efsw_test;
 
     std::string testDir = getTemporaryDirectory();
-    ASSERT_TRUE( createDirectory( testDir ) );
+    EXPECT_TRUE( createDirectory( testDir ) );
 
     std::string oldFile = testDir + "/old_name.txt";
     std::string newFile = testDir + "/new_name.txt";
-    ASSERT_TRUE( createFile( oldFile, "test content" ) );
+    EXPECT_TRUE( createFile( oldFile, "test content" ) );
 
     TestListener listener;
     efsw::FileWatcher fileWatcher( false );
 
     efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-    ASSERT_TRUE( watchId > 0 );
+    EXPECT_TRUE( watchId > 0 );
 
     fileWatcher.watch();
 
     sleepMs( 200 );
     listener.clearEvents();
 
-ASSERT_TRUE( renameFile( oldFile, newFile ) );
+EXPECT_TRUE( renameFile( oldFile, newFile ) );
 
-    listener.waitForEvents( 1 );
+    listener.waitForActions( efsw::Actions::Moved, "new_name.txt" );
 
-    ASSERT_TRUE( listener.checkEvent( efsw::Actions::Moved, "new_name.txt", "old_name.txt" ) );
+    EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "new_name.txt", "old_name.txt" ) );
 
     fileWatcher.removeWatch( testDir );
     removeDirectory( testDir );
@@ -38,29 +38,30 @@ UTEST( Moved, MoveFileToSubdirectory ) {
     std::string testDir = getTemporaryDirectory();
     std::string subDir = testDir + "/subdir";
 
-    ASSERT_TRUE( createDirectory( testDir ) );
-    ASSERT_TRUE( createDirectory( subDir ) );
+    EXPECT_TRUE( createDirectory( testDir ) );
+    EXPECT_TRUE( createDirectory( subDir ) );
 
     std::string sourceFile = testDir + "/file.txt";
     std::string destFile = subDir + "/file.txt";
-    ASSERT_TRUE( createFile( sourceFile, "test content" ) );
+    EXPECT_TRUE( createFile( sourceFile, "test content" ) );
 
     TestListener listener;
     efsw::FileWatcher fileWatcher( false );
 
     efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-    ASSERT_TRUE( watchId > 0 );
+    EXPECT_TRUE( watchId > 0 );
 
     fileWatcher.watch();
 
     sleepMs( 200 );
     listener.clearEvents();
 
-    ASSERT_TRUE( renameFile( sourceFile, destFile ) );
+    EXPECT_TRUE( renameFile( sourceFile, destFile ) );
 
-    listener.waitForEvents( 2 );
+    listener.waitForActions( efsw::Actions::Add, "file.txt" );
+    listener.waitForActions( efsw::Actions::Delete, "file.txt" );
 
-    ASSERT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
+    EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
 
     fileWatcher.removeWatch( testDir );
     removeDirectory( testDir );
@@ -73,30 +74,31 @@ UTEST( Moved, MoveFileBetweenDirectories ) {
     std::string dir1 = testDir + "/dir1";
     std::string dir2 = testDir + "/dir2";
 
-    ASSERT_TRUE( createDirectory( testDir ) );
-    ASSERT_TRUE( createDirectory( dir1 ) );
-    ASSERT_TRUE( createDirectory( dir2 ) );
+    EXPECT_TRUE( createDirectory( testDir ) );
+    EXPECT_TRUE( createDirectory( dir1 ) );
+    EXPECT_TRUE( createDirectory( dir2 ) );
 
     std::string sourceFile = dir1 + "/file.txt";
     std::string destFile = dir2 + "/file.txt";
-    ASSERT_TRUE( createFile( sourceFile, "test content" ) );
+    EXPECT_TRUE( createFile( sourceFile, "test content" ) );
 
     TestListener listener;
     efsw::FileWatcher fileWatcher( false );
 
     efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-    ASSERT_TRUE( watchId > 0 );
+    EXPECT_TRUE( watchId > 0 );
 
     fileWatcher.watch();
 
     sleepMs( 200 );
     listener.clearEvents();
 
-    ASSERT_TRUE( renameFile( sourceFile, destFile ) );
+    EXPECT_TRUE( renameFile( sourceFile, destFile ) );
 
-    listener.waitForEvents( 2 );
+    listener.waitForActions( efsw::Actions::Add, "file.txt" );
+    listener.waitForActions( efsw::Actions::Delete, "file.txt" );
 
-    ASSERT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
+    EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
 
     fileWatcher.removeWatch( testDir );
     removeDirectory( testDir );

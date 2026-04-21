@@ -27,12 +27,6 @@ class TestListener : public efsw::FileWatchListener {
         cv.notify_one();
     }
 
-    bool waitForEvents( size_t count, int timeoutMs = 500 ) {
-        std::unique_lock<std::mutex> lock( mtx );
-        return cv.wait_for( lock, std::chrono::milliseconds( timeoutMs ),
-                            [ this, count ]() { return events.size() >= count; } );
-    }
-
     void clearEvents() {
         std::lock_guard<std::mutex> lock( mtx );
         events.clear();
@@ -130,10 +124,6 @@ inline bool renameFile( const std::string& oldPath, const std::string& newPath )
 
 inline void sleepMs( int ms ) {
     std::this_thread::sleep_for( std::chrono::milliseconds( ms ) );
-}
-
-inline void cleanupWatcher( efsw::FileWatcher& fileWatcher ) {
-    sleepMs( 200 );
 }
 
 }

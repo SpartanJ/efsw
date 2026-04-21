@@ -118,6 +118,11 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 			continue;
 		}
 
+		// Ignore events for the watched directory itself or outside of it
+		if ( event.Path.length() < Directory.length() || event.Path.find( Directory ) != 0 || event.Path == Directory ) {
+			continue;
+		}
+
 		if ( !Recursive ) {
 			/** In case that is not recursive the watcher, ignore the events from subfolders */
 			if ( event.Path.find_last_of( FileSystem::getOSSlash() ) != Directory.size() - 1 ) {

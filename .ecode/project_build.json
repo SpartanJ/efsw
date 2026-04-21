@@ -155,8 +155,15 @@
     "run": [
       {
         "args": "",
-        "command": "efsw-test-debug",
+        "command": "${project_root}/bin/efsw-test-debug",
         "name": "efsw-test",
+        "run_in_terminal": true,
+        "working_dir": "${project_root}/bin"
+      },
+      {
+        "args": "",
+        "command": "${project_root}/bin/efsw-unit_tests-debug",
+        "name": "efsw-unit_tests-debug",
         "run_in_terminal": true,
         "working_dir": "${project_root}/bin"
       }
