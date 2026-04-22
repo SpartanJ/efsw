@@ -6,7 +6,6 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
 #include <efsw/WatcherInotify.hpp>
-#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -17,7 +16,7 @@ namespace efsw {
 class FileWatcherInotify : public FileWatcherImpl {
   public:
 	/// type for a map from WatchID to WatchStruct pointer
-	typedef std::map<WatchID, WatcherInotify*> WatchMap;
+	typedef std::unordered_map<WatchID, WatcherInotify*> WatchMap;
 
 	FileWatcherInotify( FileWatcher* parent );
 

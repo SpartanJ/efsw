@@ -323,12 +323,19 @@ void FileWatcherInotify::run() {
 					{
 						curWatcher = NULL;
 
-						Lock lock( mWatchesLock );
+						{
+							// FIX: This can generate a use-after-free if the curWatcher is
+							// removed during handleAction call, but, if we lock the whole scope
+							// we can generate a dead-lock also if watcher is removed during
+							// handleAction (mInitLock is locked first there, mWatchesLock is locked
+							// by us here)
+							Lock lock( mWatchesLock );
 
-						auto wit = mWatches.find( pevent->wd );
+							auto wit = mWatches.find( pevent->wd );
 
-						if ( wit != mWatches.end() )
-							curWatcher = wit->second;
+							if ( wit != mWatches.end() )
+								curWatcher = wit->second;
+						}
 
 						if ( curWatcher ) {
 							handleAction( curWatcher, (char*)pevent->name, pevent->mask );

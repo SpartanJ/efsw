@@ -129,11 +129,7 @@ inline void sleepMs( int ms ) {
 	std::this_thread::sleep_for( std::chrono::milliseconds( ms ) );
 }
 
-#ifdef __linux
-static const std::initializer_list<bool> fileWatchers = { false, true };
-#else
 static const std::initializer_list<bool> fileWatchers = { false };
-#endif
 
 } // namespace efsw_test
 
