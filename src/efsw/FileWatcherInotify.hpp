@@ -62,6 +62,7 @@ class FileWatcherInotify : public FileWatcherImpl {
 	Mutex mInitLock;
 	bool mIsTakingAction;
 	std::vector<std::pair<WatcherInotify*, std::string>> mMovedOutsideWatches;
+	std::vector<WatcherInotify*> mDeletedWatches;
 
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
 					  bool syntheticEvents, WatcherInotify* parent = NULL,

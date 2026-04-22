@@ -58,6 +58,11 @@ FileWatcherInotify::~FileWatcherInotify() {
 
 	mWatches.clear();
 
+	for ( auto w : mDeletedWatches ) {
+		efSAFE_DELETE( w );
+	}
+	mDeletedWatches.clear();
+
 	if ( mFD != -1 ) {
 		close( mFD );
 		mFD = -1;
@@ -241,7 +246,7 @@ void FileWatcherInotify::removeWatchLocked( WatchID watchid, bool skipInotifyRem
 		}
 	}
 
-	efSAFE_DELETE( watch );
+	mDeletedWatches.push_back( watch );
 }
 
 void FileWatcherInotify::removeWatch( const std::string& directory ) {
@@ -324,11 +329,6 @@ void FileWatcherInotify::run() {
 						curWatcher = NULL;
 
 						{
-							// FIX: This can generate a use-after-free if the curWatcher is
-							// removed during handleAction call, but, if we lock the whole scope
-							// we can generate a dead-lock also if watcher is removed during
-							// handleAction (mInitLock is locked first there, mWatchesLock is locked
-							// by us here)
 							Lock lock( mWatchesLock );
 
 							auto wit = mWatches.find( pevent->wd );
@@ -519,6 +519,16 @@ void FileWatcherInotify::run() {
 			}
 
 			mMovedOutsideWatches.clear();
+		}
+
+		{
+			Lock lock( mWatchesLock );
+			if ( !mDeletedWatches.empty() ) {
+				for ( auto w : mDeletedWatches ) {
+					efSAFE_DELETE( w );
+				}
+				mDeletedWatches.clear();
+			}
 		}
 	} while ( mInitOK );
 
