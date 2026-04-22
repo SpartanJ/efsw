@@ -1,7 +1,7 @@
 /**
 	@author Martín Lucas Golini
 
-	Copyright (c) 2024 Martín Lucas Golini
+	Copyright (c) 2026 Martín Lucas Golini
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
@@ -175,6 +175,14 @@ class EFSW_API FileWatcher {
 	/// Constructor that lets you force the use of the Generic File Watcher
 	explicit FileWatcher( bool useGenericFileWatcher );
 
+	/// Constructor that lets you force the use of the Generic File Watcher
+	/// @param useGenericFileWatcher True to enable the usage of generic file watcher (polling file
+	/// watcher)
+	/// @param genericFileWatcherPollFrequencyMs Sets the polling frequency of the generic file
+	/// watcher (default polling frequency is 1000 ms / 1 second)
+	explicit FileWatcher( bool useGenericFileWatcher,
+						  unsigned int genericFileWatcherPollFrequencyMs );
+
 	virtual ~FileWatcher();
 
 	/// Add a directory watch. Same as the other addWatch, but doesn't have recursive option.
@@ -254,15 +262,14 @@ class FileWatchListener {
 	/// Handles that have missed file actions
 	/// @param watchid The watch id for the directory
 	/// @param dir The directory
-	virtual void handleMissedFileActions( WatchID /*watchid*/,
-										  const std::string& /*dir*/ ) {}
+	virtual void handleMissedFileActions( WatchID /*watchid*/, const std::string& /*dir*/ ) {}
 };
 
 /// Optional, typically platform specific parameter for customization of a watcher.
 /// @class WatcherOption
 class WatcherOption {
   public:
-	WatcherOption( Option option, int value ) : mOption( option ), mValue( value ){};
+	WatcherOption( Option option, int value ) : mOption( option ), mValue( value ) {};
 	Option mOption;
 	int mValue;
 };

@@ -6,9 +6,9 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <efsw/DirectorySnapshot.hpp>
-#include <map>
 #include <sys/event.h>
 #include <sys/types.h>
+#include <unordered_map>
 #include <vector>
 
 namespace efsw {
@@ -19,7 +19,7 @@ class WatcherKqueue;
 typedef struct kevent KEvent;
 
 /// type for a map from WatchID to WatcherKqueue pointer
-typedef std::map<WatchID, Watcher*> WatchMap;
+typedef std::unordered_map<WatchID, Watcher*> WatchMap;
 
 class WatcherKqueue : public Watcher {
   public:

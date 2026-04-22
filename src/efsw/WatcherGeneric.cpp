@@ -11,7 +11,7 @@ WatcherGeneric::WatcherGeneric( WatchID id, const std::string& directory, FileWa
 
 	DirWatch = new DirWatcherGeneric( NULL, this, directory, recursive, false );
 
-	DirWatch->addChilds( false );
+	DirWatch->addChildren( false );
 }
 
 WatcherGeneric::~WatcherGeneric() {

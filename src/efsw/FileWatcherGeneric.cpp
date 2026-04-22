@@ -5,8 +5,8 @@
 
 namespace efsw {
 
-FileWatcherGeneric::FileWatcherGeneric( FileWatcher* parent ) :
-	FileWatcherImpl( parent ), mThread( NULL ), mLastWatchID( 0 ) {
+FileWatcherGeneric::FileWatcherGeneric( FileWatcher* parent, unsigned int pollingFreq ) :
+	FileWatcherImpl( parent ), mThread( NULL ), mLastWatchID( 0 ), mPollingFreq( pollingFreq ) {
 	mInitOK = true;
 	mIsGeneric = true;
 }
@@ -25,7 +25,7 @@ FileWatcherGeneric::~FileWatcherGeneric() {
 }
 
 WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption>& options ) {
+									  bool recursive, const std::vector<WatcherOption>& ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -104,7 +104,7 @@ void FileWatcherGeneric::removeWatch( WatchID watchid ) {
 
 void FileWatcherGeneric::watch() {
 	if ( NULL == mThread ) {
-		mThread = new Thread([this]{run();});
+		mThread = new Thread( [this] { run(); } );
 		mThread->launch();
 	}
 }
@@ -122,7 +122,7 @@ void FileWatcherGeneric::run() {
 		}
 
 		if ( mInitOK )
-			System::sleep( 1000 );
+			System::sleep( mPollingFreq );
 	} while ( mInitOK );
 }
 

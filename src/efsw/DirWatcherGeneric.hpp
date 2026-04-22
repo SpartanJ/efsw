@@ -31,7 +31,7 @@ class DirWatcherGeneric {
 
 	bool pathInWatches( std::string path );
 
-	void addChilds( bool reportNewFiles = true );
+	void addChildren( bool reportNewFiles = true );
 
 	DirWatcherGeneric* findDirWatcher( std::string dir );
 

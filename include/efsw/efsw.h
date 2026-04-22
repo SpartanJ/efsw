@@ -1,7 +1,7 @@
 /**
 	@author Sepul Sepehr Taghdisian
 
-	Copyright (c) 2024 Martín Lucas Golini
+	Copyright (c) 2026 Martín Lucas Golini
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
@@ -115,9 +115,9 @@ enum efsw_option {
 	/// watches efsw registers new watchers for each directory. If new file are created between
 	/// the time efsw takes to register the new directory those events might be missed. To avoid
 	/// missing new file notifications efsw will trigger synthetic new file events for existing
-	/// files in the new directroy watched. This might have the unintended consequence of sending
+	/// files in the new directory watched. This might have the unintended consequence of sending
 	/// duplicated created events due to the system also emitting this event.
-	LINUX_PRODUCE_SYNTHETIC_EVENTS = 5,
+	EFSW_LINUX_PRODUCE_SYNTHETIC_EVENTS = 5,
 };
 
 /// Basic interface for listening for file events.
@@ -126,6 +126,7 @@ typedef void ( *efsw_pfn_fileaction_callback )( efsw_watcher watcher, efsw_watch
 												enum efsw_action action, const char* old_filename,
 												void* param );
 
+/// Handles that have missed file actions
 typedef void ( *efsw_pfn_handle_missed_fileactions )( efsw_watcher watcher, efsw_watchid watchid,
 													  const char* dir );
 
@@ -143,7 +144,7 @@ efsw_watcher EFSW_API efsw_create( int generic_mode );
 /// Release the file-watcher and unwatch any directories
 void EFSW_API efsw_release( efsw_watcher watcher );
 
-/// Retrieve last error occured by file-watcher
+/// Retrieve last error occurred by file-watcher
 EFSW_API const char* efsw_getlasterror();
 
 /// Reset file-watcher last error
