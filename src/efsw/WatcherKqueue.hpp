@@ -19,7 +19,7 @@ class WatcherKqueue;
 typedef struct kevent KEvent;
 
 /// type for a map from WatchID to WatcherKqueue pointer
-typedef std::unounordered_map<WatchID, Watcher*> WatchMap;
+typedef std::unordered_map<WatchID, Watcher*> WatchMap;
 
 class WatcherKqueue : public Watcher {
   public:
