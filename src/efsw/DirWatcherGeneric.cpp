@@ -78,6 +78,10 @@ void DirWatcherGeneric::resetDirectory( std::string directory ) {
 	}
 
 	DirSnap.setDirectoryInfo( dir );
+
+	for ( auto& child : Directories ) {
+		child.second->resetDirectory( child.first );
+	}
 }
 
 void DirWatcherGeneric::handleAction( const std::string& filename, unsigned long action,
@@ -87,7 +91,7 @@ void DirWatcherGeneric::handleAction( const std::string& filename, unsigned long
 									   oldFilename );
 }
 
-void DirWatcherGeneric::addChilds( bool reportNewFiles ) {
+void DirWatcherGeneric::addChildren( bool reportNewFiles ) {
 	if ( Recursive ) {
 		/// Create the subdirectories watchers
 		std::string dir;
@@ -129,7 +133,7 @@ void DirWatcherGeneric::addChilds( bool reportNewFiles ) {
 				Directories[dir] =
 					new DirWatcherGeneric( this, Watch, dir, Recursive, reportNewFiles );
 
-				Directories[dir]->addChilds( reportNewFiles );
+				Directories[dir]->addChildren( reportNewFiles );
 			}
 		}
 	}
@@ -309,7 +313,7 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 		/// Creates the new directory watcher of the subfolder and check for new files
 		dw = new DirWatcherGeneric( this, Watch, dir, Recursive );
 
-		dw->addChilds();
+		dw->addChildren();
 
 		dw->watch();
 

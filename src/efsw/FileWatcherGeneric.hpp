@@ -14,7 +14,7 @@ class FileWatcherGeneric : public FileWatcherImpl {
   public:
 	typedef std::vector<WatcherGeneric*> WatchList;
 
-	FileWatcherGeneric( FileWatcher* parent );
+	FileWatcherGeneric( FileWatcher* parent, unsigned int pollingFreq );
 
 	virtual ~FileWatcherGeneric();
 
@@ -49,6 +49,8 @@ class FileWatcherGeneric : public FileWatcherImpl {
 	WatchList mWatches;
 
 	Mutex mWatchesLock;
+
+	int mPollingFreq{ 1000 };
 
 	bool pathInWatches( const std::string& path ) override;
 

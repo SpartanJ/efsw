@@ -28,26 +28,18 @@
 
 namespace efsw {
 
-FileWatcher::FileWatcher() : mFollowSymlinks( false ), mOutOfScopeLinks( false ) {
-	efDEBUG( "Using backend: %s\n", BACKEND_NAME );
-
-	mImpl = new FILEWATCHER_IMPL( this );
-
-	if ( !mImpl->initOK() ) {
-		efSAFE_DELETE( mImpl );
-
-		efDEBUG( "Falled back to backend: %s\n", BACKEND_NAME );
-
-		mImpl = new FileWatcherGeneric( this );
-	}
-}
+FileWatcher::FileWatcher() : FileWatcher( false ) {}
 
 FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
+	FileWatcher( useGenericFileWatcher, 1000 ) {}
+
+FileWatcher::FileWatcher( bool useGenericFileWatcher,
+						  unsigned int genericFileWatcherPollFrequencyMs ) :
 	mFollowSymlinks( false ), mOutOfScopeLinks( false ) {
 	if ( useGenericFileWatcher ) {
 		efDEBUG( "Using backend: Generic\n" );
 
-		mImpl = new FileWatcherGeneric( this );
+		mImpl = new FileWatcherGeneric( this, genericFileWatcherPollFrequencyMs );
 	} else {
 		efDEBUG( "Using backend: %s\n", BACKEND_NAME );
 
@@ -56,9 +48,9 @@ FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
 		if ( !mImpl->initOK() ) {
 			efSAFE_DELETE( mImpl );
 
-			efDEBUG( "Falled back to backend: %s\n", BACKEND_NAME );
+			efDEBUG( "Fell back to backend: %s\n", BACKEND_NAME );
 
-			mImpl = new FileWatcherGeneric( this );
+			mImpl = new FileWatcherGeneric( this, genericFileWatcherPollFrequencyMs );
 		}
 	}
 }

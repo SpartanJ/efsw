@@ -65,10 +65,8 @@ void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 								FileSystem::precomposeFileName( oldFilename ) );
 }
 
-void WatcherFSEvents::sendMissedFileActions( WatchID watchid,
-											 const std::string& dir) {
-	Listener->handleMissedFileActions( watchid,
-									   FileSystem::precomposeFileName( dir ) );
+void WatcherFSEvents::sendMissedFileActions( WatchID watchid, const std::string& dir ) {
+	Listener->handleMissedFileActions( watchid, FileSystem::precomposeFileName( dir ) );
 }
 
 void WatcherFSEvents::handleAddModDel( const Uint32& flags, const std::string& path,
@@ -103,11 +101,12 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 
 		if ( event.Flags &
 			 ( kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped |
-			   kFSEventStreamEventFlagMustScanSubDirs) ) {
-			efDEBUG( "Rescan/Drop event for watch: %s - flags: 0x%x\n", Directory.c_str(), event.Flags );
+			   kFSEventStreamEventFlagMustScanSubDirs ) ) {
+			efDEBUG( "Rescan/Drop event for watch: %s - flags: 0x%x\n", Directory.c_str(),
+					 event.Flags );
 			std::string dirPath = Directory;
 			FileSystem::dirRemoveSlashAtEnd( dirPath );
-			sendMissedFileActions(ID, dirPath );
+			sendMissedFileActions( ID, dirPath );
 			continue;
 		}
 
@@ -119,7 +118,8 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 		}
 
 		// Ignore events for the watched directory itself or outside of it
-		if ( event.Path.length() < Directory.length() || event.Path.find( Directory ) != 0 || event.Path == Directory ) {
+		if ( event.Path.length() < Directory.length() || event.Path.find( Directory ) != 0 ||
+			 event.Path == Directory ) {
 			continue;
 		}
 
@@ -176,7 +176,8 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events ) {
 							}
 						}
 					} else {
-						handleAddModDel( nEvent.Flags, nEvent.Path, dirPath, filePath, event.inode );
+						handleAddModDel( nEvent.Flags, nEvent.Path, dirPath, filePath,
+										 event.inode );
 					}
 
 					if ( nEvent.Flags & ( efswFSEventStreamEventFlagItemCreated |

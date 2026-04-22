@@ -2,7 +2,7 @@
   "linux-debug": {
     "build": [
       {
-        "args": "--address-sanitizer --verbose gmake",
+        "args": "--verbose gmake",
         "command": "premake5",
         "working_dir": ""
       },
