@@ -210,9 +210,9 @@ void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename
 					watch->ID, folderPath, realFilename, fwAction,
 					FileSystem::fileNameFromPath( watch->OldFileName ) );
 			} else {
-				watch->Listener->handleFileAction( watch->ID,
-												   static_cast<WatcherWin32*>( watch )->DirName,
-												   filename, fwAction, watch->OldFileName );
+				FileSystem::dirAddSlashAtEnd( folderPath );
+				watch->Listener->handleFileAction( watch->ID, folderPath, realFilename, fwAction,
+												   FileSystem::fileNameFromPath( watch->OldFileName ) );
 			}
 			return;
 		}

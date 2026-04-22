@@ -323,14 +323,12 @@ void FileWatcherInotify::run() {
 					{
 						curWatcher = NULL;
 
-						{
-							Lock lock( mWatchesLock );
+						Lock lock( mWatchesLock );
 
-							auto wit = mWatches.find( pevent->wd );
+						auto wit = mWatches.find( pevent->wd );
 
-							if ( wit != mWatches.end() )
-								curWatcher = wit->second;
-						}
+						if ( wit != mWatches.end() )
+							curWatcher = wit->second;
 
 						if ( curWatcher ) {
 							handleAction( curWatcher, (char*)pevent->name, pevent->mask );

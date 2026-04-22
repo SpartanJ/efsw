@@ -157,6 +157,34 @@ workspace "efsw"
 			targetname "efsw-test-reldbginfo"
 			conf_warnings()
 
+	project "efsw-unit_tests"
+		kind "ConsoleApp"
+		language "C++"
+		cppdialect "C++17"
+		links { "efsw-static-lib" }
+		files { "src/unit_tests/*.cpp" }
+		includedirs { "include", "src" }
+		conf_links()
+
+		filter "configurations:debug"
+			defines { "DEBUG" }
+			symbols "On"
+			targetname "efsw-unit_tests-debug"
+			conf_warnings()
+
+		filter "configurations:release"
+			defines { "NDEBUG" }
+			optimize "On"
+			targetname "efsw-unit_tests-release"
+			conf_warnings()
+
+		filter "configurations:relwithdbginfo"
+			defines { "NDEBUG" }
+			symbols "On"
+			optimize "On"
+			targetname "efsw-unit_tests-reldbginfo"
+			conf_warnings()
+
 	project "efsw-test-stdc"
 		kind "ConsoleApp"
 		language "C"

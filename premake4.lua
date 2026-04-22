@@ -155,6 +155,38 @@ solution "efsw"
 			targetname "efsw-test-reldbginfo"
 			conf_warnings()
 
+	project "efsw-unit_tests"
+		kind "ConsoleApp"
+		language "C++"
+		links { "efsw-static-lib" }
+		files { "src/unit_tests/*.cpp" }
+		includedirs { "include", "src" }
+		conf_links()
+
+		if not is_vs() then
+			buildoptions{ "-std=c++17" }
+		else
+			buildoptions{ "/std:c++17", "/utf-8" }
+		end
+
+		configuration "debug"
+			defines { "DEBUG" }
+			flags { "Symbols" }
+			targetname "efsw-unit_tests-debug"
+			conf_warnings()
+
+		configuration "release"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw-unit_tests-release"
+			conf_warnings()
+
+		configuration "relwithdbginfo"
+			defines { "NDEBUG" }
+			flags { "Optimize", "Symbols" }
+			targetname "efsw-unit_tests-reldbginfo"
+			conf_warnings()
+
 	project "efsw-test-stdc"
 		kind "ConsoleApp"
 		language "C"
