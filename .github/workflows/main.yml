@@ -15,12 +15,12 @@ jobs:
         tar xvzf premake-5.0.0-beta2-linux.tar.gz
     - name: Build
       run: |
-        ./premake5 --verbose gmake2
+        ./premake5 --verbose gmake
         cd make/linux
-        make all
+        make -e config=release_x86_64
     - name: Run unit tests
       run: |
-        ./bin/efsw-unit_tests-debug
+        ./bin/efsw-unit_tests-release
   MacOS:
     runs-on: macos-latest
     steps:
@@ -30,11 +30,11 @@ jobs:
         brew install premake
     - name: Build
       run: |
-        premake5 --verbose gmake2
-        make -C make/macosx/ -j$(sysctl -n hw.ncpu) all
+        premake5 --verbose gmake
+        make -C make/macosx/ -j$(sysctl -n hw.ncpu) -e config=release_arm64
     - name: Run unit tests
       run: |
-        ./bin/efsw-unit_tests-debug
+        ./bin/efsw-unit_tests-release
   Windows:
     runs-on: windows-latest
     env:
@@ -53,8 +53,8 @@ jobs:
     - name: Build
       shell: cmd
       run: |
-        "%MSBUILD_PATH%\MSBuild.exe" .\make\windows\efsw.sln -m /p:Platform="x64"
+        "%MSBUILD_PATH%\MSBuild.exe" .\make\windows\efsw.sln -m /p:Platform="x64" /p:Configuration="release"
     - name: Run unit tests
       shell: cmd
       run: |
-        .\bin\efsw-unit_tests-debug.exe
+        .\bin\efsw-unit_tests-release.exe
