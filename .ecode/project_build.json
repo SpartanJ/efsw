@@ -2,7 +2,7 @@
   "linux-debug": {
     "build": [
       {
-        "args": "--address-sanitizer --verbose gmake2",
+        "args": "--address-sanitizer --verbose gmake",
         "command": "premake5",
         "working_dir": ""
       },
@@ -35,9 +35,15 @@
     },
     "run": [
       {
-        "args": "test",
-        "command": "efsw-test-debug",
+        "args": "",
+        "command": "${project_root}/bin/efsw-test-debug",
         "name": "efsw-test-debug",
+        "working_dir": "${project_root}/bin"
+      },
+      {
+        "args": "",
+        "command": "${project_root}/bin/efsw-unit_tests-debug",
+        "name": "efsw-unit_tests-debug",
         "working_dir": "${project_root}/bin"
       }
     ]
@@ -45,7 +51,7 @@
   "linux-release": {
     "build": [
       {
-        "args": "gmake2",
+        "args": "gmake",
         "command": "premake5",
         "working_dir": ""
       },
@@ -80,7 +86,7 @@
   "linux-relwithdbginfo": {
     "build": [
       {
-        "args": "gmake2",
+        "args": "gmake",
         "command": "premake5",
         "working_dir": ""
       },
@@ -149,8 +155,15 @@
     "run": [
       {
         "args": "",
-        "command": "efsw-test-debug",
+        "command": "${project_root}/bin/efsw-test-debug",
         "name": "efsw-test",
+        "run_in_terminal": true,
+        "working_dir": "${project_root}/bin"
+      },
+      {
+        "args": "",
+        "command": "${project_root}/bin/efsw-unit_tests-debug",
+        "name": "efsw-unit_tests-debug",
         "run_in_terminal": true,
         "working_dir": "${project_root}/bin"
       }
