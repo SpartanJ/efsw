@@ -103,16 +103,14 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 
 	std::string newFile = renamedChildDir + "/new_child_file.txt";
 	EXPECT_TRUE( createFile( newFile, "new content" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_child_file.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "new_child_file.txt" ) );
 
 	listener.clearEvents();
 
 	std::string newGrandchildFile = renamedSubDir + "/new_grandchild_file.txt";
 	EXPECT_TRUE( createFile( newGrandchildFile, "new grandchild content" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_grandchild_file.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "new_grandchild_file.txt" ) );
 
 	listener.clearEvents();
@@ -128,8 +126,7 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 
 	std::string fileInRenamedGrandchild = renamedGrandchildDir + "/file2.txt";
 	EXPECT_TRUE( writeFile( fileInRenamedGrandchild, "again_modified" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "file2.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "file2.txt" ) );
 
 	fileWatcher.removeWatch( testDir );

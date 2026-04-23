@@ -2,6 +2,7 @@ newoption { trigger = "verbose", description = "Build efsw with verbose mode." }
 newoption { trigger = "strip-symbols", description = "Strip debugging symbols in other file ( only for relwithdbginfo configuration )." }
 newoption { trigger = "thread-sanitizer", description ="Compile with ThreadSanitizer." }
 newoption { trigger = "address-sanitizer", description ="Compile with AddressSanitizer." }
+newoption { trigger = "force-kqueue", description ="Force Kqueue in macOS." }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "5"
@@ -45,6 +46,10 @@ function conf_warnings()
 		if not os.istarget("macosx") then
 			links { "asan" }
 		end
+	end
+
+	if _OPTIONS["force-kqueue"] then
+		defines { "EFSW_FSEVENTS_NOT_SUPPORTED" }
 	end
 end
 

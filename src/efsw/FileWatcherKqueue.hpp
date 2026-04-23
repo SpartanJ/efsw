@@ -15,7 +15,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	friend class WatcherKqueue;
 
   public:
-	FileWatcherKqueue( FileWatcher* parent );
+	FileWatcherKqueue( FileWatcher* parent, unsigned int pollingFreq );
 
 	virtual ~FileWatcherKqueue();
 
@@ -59,6 +59,8 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	long mFileDescriptorCount;
 
 	bool mAddingWatcher;
+
+	unsigned int mPollingFreq{ 500 };
 
 	bool isAddingWatcher() const;
 

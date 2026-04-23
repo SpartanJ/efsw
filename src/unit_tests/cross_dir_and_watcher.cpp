@@ -186,8 +186,7 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 
 	std::string movedFileInDir2 = subDirInDir2 + "/child.txt";
 	EXPECT_TRUE( writeFile( movedFileInDir2, "modified" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "child.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "child.txt" ) );
 
 	fileWatcher.removeWatch( watchedDir1 );
