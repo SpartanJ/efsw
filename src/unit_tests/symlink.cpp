@@ -29,15 +29,13 @@ UTEST( Symlink, FollowSymlinkToDirectory ) {
 
 	std::string fileInTarget = targetDir + "/file.txt";
 	EXPECT_TRUE( createFile( fileInTarget, "content" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
 
 	listener.clearEvents();
 
 	EXPECT_TRUE( writeFile( fileInTarget, "modified" ) );
-	sleepMs( 100 );
-
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "file.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );

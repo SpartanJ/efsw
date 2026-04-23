@@ -113,6 +113,9 @@ void WatcherKqueue::addAll() {
 	EV_SET( &mChangeList[0], fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
 			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, 0 );
 
+	struct timespec timeout = { 0, 0 };
+	kevent( mKqueue, mChangeList.data(), 1, NULL, 0, &timeout );
+
 	mWatcher->addFD();
 
 	// Get the files and directories from the directory
@@ -194,6 +197,9 @@ void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	EV_SET( &mChangeList[mChangeListCount], fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
 			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, (void*)entry );
 
+	struct timespec timeout = { 0, 0 };
+	kevent( mKqueue, &mChangeList[mChangeListCount], 1, NULL, 0, &timeout );
+
 	// qsort sort the list by name
 	qsort( &mChangeList[1], mChangeListCount, sizeof( KEvent ), comparator );
 
@@ -215,7 +221,7 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	target.udata = &tempEntry;
 
 	// Search the kevent
-	KEvent* ke = (KEvent*)bsearch( &target, &mChangeList[0], mChangeListCount + 1, sizeof( KEvent ),
+	KEvent* ke = (KEvent*)bsearch( &target, &mChangeList[1], mChangeListCount, sizeof( KEvent ),
 								   comparator );
 
 	// Trying to remove a non-existing file?
@@ -252,6 +258,10 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 
 void WatcherKqueue::rescan() {
 	efDEBUG( "rescan(): Rescanning: %s\n", Directory.c_str() );
+
+	if ( !FileSystem::isDirectory( Directory ) ) {
+		return;
+	}
 
 	DirectorySnapshotDiff Diff = mDirSnap.scan();
 
@@ -427,7 +437,39 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath, boo
 	Watcher* watch = findWatcher( opath2 );
 
 	if ( NULL != watch ) {
-		watch->Directory = opath2;
+		std::string npath( newPath );
+		FileSystem::dirAddSlashAtEnd( npath );
+		
+		std::vector<std::pair<WatcherKqueue*, std::string>> stack;
+		stack.push_back( std::make_pair( static_cast<WatcherKqueue*>( watch ), npath ) );
+
+		while ( !stack.empty() ) {
+			WatcherKqueue* wkq = stack.back().first;
+			std::string curNPath = stack.back().second;
+			stack.pop_back();
+
+			wkq->Directory = curNPath;
+			wkq->mDirSnap.setDirectoryInfo( curNPath );
+			for ( auto& pair : wkq->mDirSnap.Files ) {
+				pair.second.Filepath = curNPath + pair.first;
+			}
+			for ( size_t i = 1; i <= wkq->mChangeListCount; i++ ) {
+				if ( NULL != wkq->mChangeList[i].udata ) {
+					FileInfo* fi = reinterpret_cast<FileInfo*>( wkq->mChangeList[i].udata );
+					std::string filename = FileSystem::fileNameFromPath( fi->Filepath );
+					fi->Filepath = curNPath + filename;
+				}
+			}
+			qsort( &wkq->mChangeList[1], wkq->mChangeListCount, sizeof( KEvent ), comparator );
+
+			for ( auto& childPair : wkq->mWatches ) {
+				WatcherKqueue* childWkq = static_cast<WatcherKqueue*>( childPair.second );
+				std::string childFolderName = FileSystem::fileNameFromPath( childWkq->Directory );
+				std::string childNewPath = curNPath + childFolderName;
+				FileSystem::dirAddSlashAtEnd( childNewPath );
+				stack.push_back( std::make_pair( childWkq, childNewPath ) );
+			}
+		}
 	}
 
 	if ( emitEvents ) {
