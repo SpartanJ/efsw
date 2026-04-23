@@ -4,95 +4,89 @@
 using namespace efsw_test;
 
 UTEST( Modified, SingleFile ) {
-	for ( auto useGeneric : fileWatchers ) {
-		std::string testDir = getTemporaryDirectory();
-		EXPECT_TRUE( createDirectory( testDir ) );
+	std::string testDir = getTemporaryDirectory();
+	EXPECT_TRUE( createDirectory( testDir ) );
 
-		std::string testFile = testDir + "/test_file.txt";
-		EXPECT_TRUE( createFile( testFile, "initial content" ) );
+	std::string testFile = testDir + "/test_file.txt";
+	EXPECT_TRUE( createFile( testFile, "initial content" ) );
 
-		TestListener listener;
-		efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
 
-		efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-		EXPECT_TRUE( watchId > 0 );
+	efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
 
-		fileWatcher.watch();
+	fileWatcher.watch();
 
-		sleepMs( 100 );
+	sleepMs( 100 );
 
-		listener.clearEvents();
+	listener.clearEvents();
 
-		EXPECT_TRUE( writeFile( testFile, " modified content" ) );
+	EXPECT_TRUE( writeFile( testFile, " modified content" ) );
 
-		listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
+	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
 
-		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
 
-		fileWatcher.removeWatch( testDir );
-		removeDirectory( testDir );
-	}
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( testDir );
 }
 
 UTEST( Modified, MultipleWrites ) {
-	for ( auto useGeneric : fileWatchers ) {
-		std::string testDir = getTemporaryDirectory();
-		EXPECT_TRUE( createDirectory( testDir ) );
+	std::string testDir = getTemporaryDirectory();
+	EXPECT_TRUE( createDirectory( testDir ) );
 
-		std::string testFile = testDir + "/test_file.txt";
-		EXPECT_TRUE( createFile( testFile, "line1\n" ) );
+	std::string testFile = testDir + "/test_file.txt";
+	EXPECT_TRUE( createFile( testFile, "line1\n" ) );
 
-		TestListener listener;
-		efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
 
-		efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-		EXPECT_TRUE( watchId > 0 );
+	efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
 
-		fileWatcher.watch();
+	fileWatcher.watch();
 
-		sleepMs( 100 );
-		listener.clearEvents();
+	sleepMs( 100 );
+	listener.clearEvents();
 
-		for ( int i = 0; i < 3; i++ ) {
-			EXPECT_TRUE( writeFile( testFile, "line" + std::to_string( i + 2 ) + "\n" ) );
-			sleepMs( 50 );
-		}
-
-		listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
-
-		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
-
-		fileWatcher.removeWatch( testDir );
-		removeDirectory( testDir );
+	for ( int i = 0; i < 3; i++ ) {
+		EXPECT_TRUE( writeFile( testFile, "line" + std::to_string( i + 2 ) + "\n" ) );
+		sleepMs( 50 );
 	}
+
+	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
+
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( testDir );
 }
 
 UTEST( Modified, AppendToFile ) {
-	for ( auto useGeneric : fileWatchers ) {
-		std::string testDir = getTemporaryDirectory();
-		EXPECT_TRUE( createDirectory( testDir ) );
+	std::string testDir = getTemporaryDirectory();
+	EXPECT_TRUE( createDirectory( testDir ) );
 
-		std::string testFile = testDir + "/test_file.txt";
-		EXPECT_TRUE( createFile( testFile, "start" ) );
+	std::string testFile = testDir + "/test_file.txt";
+	EXPECT_TRUE( createFile( testFile, "start" ) );
 
-		TestListener listener;
-		efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
 
-		efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
-		EXPECT_TRUE( watchId > 0 );
+	efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
 
-		fileWatcher.watch();
+	fileWatcher.watch();
 
-		sleepMs( 100 );
-		listener.clearEvents();
+	sleepMs( 100 );
+	listener.clearEvents();
 
-		EXPECT_TRUE( writeFile( testFile, "_appended" ) );
+	EXPECT_TRUE( writeFile( testFile, "_appended" ) );
 
-		listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
+	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
 
-		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
 
-		fileWatcher.removeWatch( testDir );
-		removeDirectory( testDir );
-	}
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( testDir );
 }
