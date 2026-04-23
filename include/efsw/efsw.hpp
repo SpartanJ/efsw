@@ -178,10 +178,10 @@ class EFSW_API FileWatcher {
 	/// Constructor that lets you force the use of the Generic File Watcher
 	/// @param useGenericFileWatcher True to enable the usage of generic file watcher (polling file
 	/// watcher)
-	/// @param genericFileWatcherPollFrequencyMs Sets the polling frequency of the generic file
-	/// watcher (default polling frequency is 1000 ms / 1 second)
-	explicit FileWatcher( bool useGenericFileWatcher,
-						  unsigned int genericFileWatcherPollFrequencyMs );
+	/// @param pollingFrequencyMs Sets the polling frequency of the generic file
+	/// watcher or kqueue (default polling frequency is 1000 ms / 1 second for generic file watcher
+	/// and 500 ms for kqueue)
+	explicit FileWatcher( bool useGenericFileWatcher, unsigned int pollingFrequencyMs );
 
 	virtual ~FileWatcher();
 

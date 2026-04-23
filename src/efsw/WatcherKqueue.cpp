@@ -63,7 +63,7 @@ WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 }
 
 WatcherKqueue::~WatcherKqueue() {
-	// Remove the childs watchers ( sub-folders watches )
+	// Remove the children watchers ( sub-folders watches )
 	removeAll();
 
 	for ( size_t i = 0; i < mChangeListCount; i++ ) {
@@ -365,7 +365,7 @@ void WatcherKqueue::watch() {
 		} else {
 			FileInfo* entry = NULL;
 
-			// If udate == NULL means that it is the fisrt element of the change list, the folder.
+			// If udate == NULL means that it is the first element of the change list, the folder.
 			// otherwise it is an event of some file inside the folder
 			if ( ( entry = reinterpret_cast<FileInfo*>( event.udata ) ) != NULL ) {
 				efDEBUG( "watch(): File: %s ", entry->Filepath.c_str() );

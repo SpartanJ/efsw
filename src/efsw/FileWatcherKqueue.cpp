@@ -19,12 +19,13 @@
 
 namespace efsw {
 
-FileWatcherKqueue::FileWatcherKqueue( FileWatcher* parent ) :
+FileWatcherKqueue::FileWatcherKqueue( FileWatcher* parent, unsigned int pollingFreq ) :
 	FileWatcherImpl( parent ),
 	mLastWatchID( 0 ),
 	mThread( NULL ),
 	mFileDescriptorCount( 1 ),
-	mAddingWatcher( false ) {
+	mAddingWatcher( false ),
+	mPollingFreq( pollingFreq ) {
 	mTimeOut.tv_sec = 0;
 	mTimeOut.tv_nsec = 0;
 	mInitOK = true;
@@ -180,7 +181,7 @@ void FileWatcherKqueue::run() {
 			}
 		}
 
-		System::sleep( 500 );
+		System::sleep( mPollingFreq );
 	} while ( mInitOK );
 }
 
