@@ -121,7 +121,7 @@
   "macos-debug": {
     "build": [
       {
-        "args": "--verbose --force-kqueue gmake",
+        "args": "--verbose gmake",
         "command": "premake5",
         "working_dir": ""
       },
