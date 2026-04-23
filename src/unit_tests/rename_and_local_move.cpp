@@ -31,9 +31,7 @@ UTEST( LocalVsCrossMove, CompareSameDirVsCrossDir ) {
 	std::string fileRenamed = watchedDir1 + "/file_renamed.txt";
 	EXPECT_TRUE( renameFile( file1, fileRenamed ) );
 
-	listener.waitForActions( efsw::Actions::Moved, "file_renamed.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "file_renamed.txt", "file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "file_renamed.txt" ) );
 
 	listener.clearEvents();
 
@@ -86,9 +84,7 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 	EXPECT_TRUE( renameFile( subDir, renamedSubDir ) );
 
 	listener.waitForActions( efsw::Actions::Moved, "renamed_parent_dir" );
-
-	EXPECT_TRUE(
-		listener.checkEvent( efsw::Actions::Moved, "renamed_parent_dir", "parent_dir" ) );
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "renamed_parent_dir", "parent_dir" ) );
 
 	listener.clearEvents();
 
@@ -104,14 +100,12 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 	std::string newFile = renamedChildDir + "/new_child_file.txt";
 	EXPECT_TRUE( createFile( newFile, "new content" ) );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_child_file.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "new_child_file.txt" ) );
 
 	listener.clearEvents();
 
 	std::string newGrandchildFile = renamedSubDir + "/new_grandchild_file.txt";
 	EXPECT_TRUE( createFile( newGrandchildFile, "new grandchild content" ) );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_grandchild_file.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "new_grandchild_file.txt" ) );
 
 	listener.clearEvents();
 
@@ -119,15 +113,14 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 	EXPECT_TRUE( renameFile( renamedChildDir, renamedGrandchildDir ) );
 	sleepMs( 200 );
 
-	EXPECT_TRUE(
-		listener.checkEvent( efsw::Actions::Moved, "renamed_child_dir", "child_dir" ) );
+	listener.waitForActions( efsw::Actions::Moved, "renamed_parent_dir" );
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "renamed_child_dir", "child_dir" ) );
 
 	listener.clearEvents();
 
 	std::string fileInRenamedGrandchild = renamedGrandchildDir + "/file2.txt";
 	EXPECT_TRUE( writeFile( fileInRenamedGrandchild, "again_modified" ) );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "file2.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "file2.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );

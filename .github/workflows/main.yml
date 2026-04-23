@@ -52,6 +52,21 @@ jobs:
     - name: Run unit tests
       run: |
         ./bin/efsw-unit_tests-release
+  Generic:
+    name: macOS (Generic Watcher)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install dependencies
+      run: |
+        brew install premake
+    - name: Build
+      run: |
+        premake5 --verbose gmake
+        make -C make/macosx/ -j$(sysctl -n hw.ncpu) -e config=release_arm64
+    - name: Run unit tests
+      run: |
+        ./bin/efsw-unit_tests-release --generic
   Windows:
     runs-on: windows-latest
     env:

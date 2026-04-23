@@ -23,10 +23,7 @@ UTEST( Modified, SingleFile ) {
 	listener.clearEvents();
 
 	EXPECT_TRUE( writeFile( testFile, " modified content" ) );
-
-	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
@@ -55,9 +52,7 @@ UTEST( Modified, MultipleWrites ) {
 		sleepMs( 50 );
 	}
 
-	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
@@ -82,10 +77,7 @@ UTEST( Modified, AppendToFile ) {
 	listener.clearEvents();
 
 	EXPECT_TRUE( writeFile( testFile, "_appended" ) );
-
-	listener.waitForActions( efsw::Actions::Modified, "test_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );

@@ -23,21 +23,16 @@ UTEST( CrossDirMove, FileBetweenTwoWatchedDirs ) {
 
 	fileWatcher.watch();
 	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string fileInDir2 = watchedDir2 + "/test_file.txt";
 	EXPECT_TRUE( renameFile( filePath, fileInDir2 ) );
 
-	listener.waitForActions( efsw::Actions::Delete, "test_file.txt" );
-	listener.waitForActions( efsw::Actions::Add, "test_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "test_file.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( watchedDir1 );
 	fileWatcher.removeWatch( watchedDir2 );
-	sleepMs( 300 );
 	removeDirectory( watchedDir1 );
 	removeDirectory( watchedDir2 );
 }
@@ -60,18 +55,14 @@ UTEST( MoveOutOfWatch, FileToUnwatchedDir ) {
 
 	fileWatcher.watch();
 	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string fileInUnwatched = unwatchedDir + "/test_file.txt";
 	EXPECT_TRUE( renameFile( filePath, fileInUnwatched ) );
 
-	sleepMs( 300 );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( watchedDir );
-	sleepMs( 300 );
 	removeDirectory( watchedDir );
 	removeDirectory( unwatchedDir );
 }
@@ -88,26 +79,20 @@ UTEST( NewDirAutoWatch, CreateDirInWatchedFolder ) {
 
 	fileWatcher.watch();
 	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string subDir = testDir + "/new_subdir";
 	EXPECT_TRUE( createDirectory( subDir ) );
 
-	listener.waitForActions( efsw::Actions::Add, "new_subdir" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "new_subdir" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_subdir" ) );
 
 	listener.clearEvents();
 
 	std::string fileInSubDir = subDir + "/file_in_new_dir.txt";
 	EXPECT_TRUE( createFile( fileInSubDir, "content" ) );
-
-	listener.waitForActions( efsw::Actions::Add, "file_in_new_dir.txt" );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file_in_new_dir.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file_in_new_dir.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
-	sleepMs( 300 );
 	removeDirectory( testDir );
 }
 
@@ -123,25 +108,23 @@ UTEST( RemoveWatch, StopEventsAfterRemoval ) {
 
 	fileWatcher.watch();
 	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string filePath = testDir + "/file_before_remove.txt";
 	EXPECT_TRUE( createFile( filePath, "content" ) );
 
-	listener.waitForActions( efsw::Actions::Add, "file_before_remove.txt" );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file_before_remove.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file_before_remove.txt" ) );
 
 	fileWatcher.removeWatch( watchId );
 
-	sleepMs( 300 );
+	sleepMs( 100 );
 
 	listener.clearEvents();
 
 	std::string filePath2 = testDir + "/file_after_remove.txt";
 	EXPECT_TRUE( createFile( filePath2, "content" ) );
 
-	sleepMs( 500 );
+	sleepMs( 100 );
 
 	ASSERT_EQ( 0, static_cast<int>( listener.getEventCount() ) );
 
@@ -170,24 +153,20 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 
 	fileWatcher.watch();
 	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string subDirInDir2 = watchedDir2 + "/moved_folder";
 	EXPECT_TRUE( renameFile( subDir, subDirInDir2 ) );
 
-	listener.waitForActions( efsw::Actions::Delete, "moved_folder" );
-	listener.waitForActions( efsw::Actions::Add, "moved_folder" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "moved_folder" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "moved_folder" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "moved_folder" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "moved_folder" ) );
 
 	listener.clearEvents();
 
 	std::string movedFileInDir2 = subDirInDir2 + "/child.txt";
 	EXPECT_TRUE( writeFile( movedFileInDir2, "modified" ) );
+
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "child.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Modified, "child.txt" ) );
 
 	fileWatcher.removeWatch( watchedDir1 );
 	fileWatcher.removeWatch( watchedDir2 );

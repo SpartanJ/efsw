@@ -17,15 +17,12 @@ UTEST( Delete, SingleFile ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
 	sleepMs( 100 );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
 
-	listener.waitForActions( efsw::Actions::Delete, "test_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "test_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
@@ -46,18 +43,14 @@ UTEST( Delete, MultipleFiles ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
 	sleepMs( 100 );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testDir + "/file1.txt" ) );
 	EXPECT_TRUE( removeFile( testDir + "/file2.txt" ) );
 
-	listener.waitForActions( efsw::Actions::Delete, "file1.txt" );
-	listener.waitForActions( efsw::Actions::Delete, "file2.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "file1.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "file2.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "file1.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "file2.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
@@ -85,10 +78,7 @@ UTEST( Delete, Subdirectory ) {
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
-
-	listener.waitForActions( efsw::Actions::Delete, "nested_file.txt" );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Delete, "nested_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "nested_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
