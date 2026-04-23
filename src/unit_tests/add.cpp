@@ -19,10 +19,7 @@ UTEST( Add, SingleFile ) {
 
 	std::string testFile = testDir + "/test_file.txt";
 	EXPECT_TRUE( createFile( testFile, "test content" ) );
-
-	listener.waitForActions( efsw::Actions::Add, "test_file.txt", 3000 );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "test_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "test_file.txt", 3000 ) );
 
 	fileWatcher.removeWatch( testDir );
 	sleepMs( 300 );
@@ -40,8 +37,7 @@ UTEST( Add, MultipleFiles ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
-	sleepMs( 300 );
+	sleepMs( 100 );
 
 	EXPECT_TRUE( createFile( testDir + "/file1.txt", "content1" ) );
 	sleepMs( 300 );
@@ -49,16 +45,11 @@ UTEST( Add, MultipleFiles ) {
 	sleepMs( 300 );
 	EXPECT_TRUE( createFile( testDir + "/file3.txt", "content3" ) );
 
-	listener.waitForActions( efsw::Actions::Add, "file1.txt", 3000 );
-	listener.waitForActions( efsw::Actions::Add, "file2.txt", 3000 );
-	listener.waitForActions( efsw::Actions::Add, "file3.txt", 3000 );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file1.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file2.txt" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file3.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file1.txt", 3000 ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file2.txt", 3000 ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file3.txt", 3000 ) );
 
 	fileWatcher.removeWatch( testDir );
-	sleepMs( 300 );
 	removeDirectory( testDir );
 }
 
@@ -81,12 +72,8 @@ UTEST( Add, Subdirectory ) {
 
 	std::string testFile = subDir + "/nested_file.txt";
 	EXPECT_TRUE( createFile( testFile, "nested content" ) );
-
-	listener.waitForActions( efsw::Actions::Add, "nested_file.txt", 3000 );
-
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "nested_file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "nested_file.txt", 3000 ) );
 
 	fileWatcher.removeWatch( testDir );
-	sleepMs( 300 );
 	removeDirectory( testDir );
 }

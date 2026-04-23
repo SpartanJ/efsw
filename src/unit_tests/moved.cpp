@@ -18,8 +18,7 @@ UTEST( Moved, RenameFile ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
-	sleepMs( 200 );
+	sleepMs( 100 );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( oldFile, newFile ) );
@@ -50,8 +49,7 @@ UTEST( Moved, MoveFileToSubdirectory ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
-	sleepMs( 200 );
+	sleepMs( 100 );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( sourceFile, destFile ) );
@@ -85,8 +83,7 @@ UTEST( Moved, MoveFileBetweenDirectories ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-
-	sleepMs( 200 );
+	sleepMs( 100 );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( sourceFile, destFile ) );
