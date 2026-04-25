@@ -5,7 +5,7 @@ newoption { trigger = "address-sanitizer", description ="Compile with AddressSan
 newoption { trigger = "force-kqueue", description ="Force Kqueue in macOS." }
 
 efsw_major_version	= "1"
-efsw_minor_version	= "5"
+efsw_minor_version	= "6"
 efsw_patch_version	= "0"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
@@ -246,5 +246,5 @@ solution "efsw"
 
 			if os.is("linux") or os.is("bsd") or os.is("haiku") then
 				targetextension ( ".so." .. efsw_version )
-				postbuildcommands { "sh ../../project/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version .. " " .. iif( _OPTIONS["strip-symbols"], "strip-symbols", "" ) }
+				postbuildcommands { "sh ../../scripts/build.reldbginfo.sh " .. efsw_major_version .. " " .. efsw_minor_version .. " " .. efsw_patch_version .. " " .. iif( _OPTIONS["strip-symbols"], "strip-symbols", "" ) }
 			end

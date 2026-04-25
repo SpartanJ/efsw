@@ -77,7 +77,7 @@ class WatcherFSEvents : public Watcher {
 	std::unordered_set<Uint64> FilesAdded;
 
 	void sendFileAction( WatchID watchid, const std::string& dir, const std::string& filename,
-						 Action action, std::string oldFilename = "" );
+						 Action action, const std::string& oldFilename = "" );
 
 	void sendMissedFileActions( WatchID watchid, const std::string& dir);
 };

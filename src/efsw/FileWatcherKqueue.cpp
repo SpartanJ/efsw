@@ -186,7 +186,7 @@ void FileWatcherKqueue::run() {
 }
 
 void FileWatcherKqueue::handleAction( Watcher* watch, const std::string& filename,
-									  unsigned long action, std::string oldFilename ) {}
+									  unsigned long action, const std::string& oldFilename ) {}
 
 std::vector<std::string> FileWatcherKqueue::directories() {
 	std::vector<std::string> dirs;

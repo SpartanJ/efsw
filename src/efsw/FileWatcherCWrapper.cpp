@@ -22,7 +22,7 @@ class Watcher_CAPI : public efsw::FileWatchListener {
 
 	void handleFileAction( efsw::WatchID watchid, const std::string& dir,
 						   const std::string& filename, efsw::Action action,
-						   std::string oldFilename = "" ) {
+						   const std::string& oldFilename = "" ) {
 		mFn( mWatcher, watchid, dir.c_str(), filename.c_str(), (enum efsw_action)action,
 			 oldFilename.c_str(), mParam );
 	}

@@ -39,7 +39,7 @@ class FileWatcherWin32 : public FileWatcherImpl {
 
 	/// Handles the action
 	void handleAction( Watcher* watch, const std::string& filename, unsigned long action,
-					   std::string oldFilename = "" ) override;
+					   const std::string& oldFilename = "" ) override;
 
 	/// @return Returns a list of the directories that are being watched
 	std::vector<std::string> directories() override;

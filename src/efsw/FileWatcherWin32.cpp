@@ -163,7 +163,7 @@ void FileWatcherWin32::run() {
 }
 
 void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename,
-									 unsigned long action, std::string /*oldFilename*/ ) {
+									 unsigned long action, const std::string& /*oldFilename*/ ) {
 	Action fwAction;
 
 	switch ( action ) {
