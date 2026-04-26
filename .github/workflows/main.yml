@@ -118,10 +118,8 @@ jobs:
             export CC=clang
             export CXX=clang++
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Build
-        run: |
-          premake5 --verbose gmake
-          make -C make/bsd/ -j$(nproc) -e config=release_x86_64
+            premake5 --verbose gmake
+            make -C make/bsd/ -j$(nproc) -e config=release_x86_64
       - name: Run unit tests
         run: |
           ./bin/efsw-unit_tests-release
@@ -148,7 +146,5 @@ jobs:
             pkgman install -y git gcc premake5
           run: |
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Build
-        run: |
-          premake5 --verbose gmake
-          make -C make/haiku/ -j$(nproc) -e config=release_arm64
+            premake5 --verbose gmake
+            make -C make/haiku/ -j$(nproc) -e config=release_arm64
