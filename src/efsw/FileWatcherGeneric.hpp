@@ -14,6 +14,8 @@ class FileWatcherGeneric : public FileWatcherImpl {
   public:
 	typedef std::vector<WatcherGeneric*> WatchList;
 
+	FileWatcherGeneric( FileWatcher* parent );
+
 	FileWatcherGeneric( FileWatcher* parent, unsigned int pollingFreq );
 
 	virtual ~FileWatcherGeneric();
@@ -21,7 +23,7 @@ class FileWatcherGeneric : public FileWatcherImpl {
 	/// Add a directory watch
 	/// On error returns WatchID with Error type.
 	WatchID addWatch( const std::string& directory, FileWatchListener* watcher, bool recursive,
-					  const std::vector<WatcherOption> &options ) override;
+					  const std::vector<WatcherOption>& options ) override;
 
 	/// Remove a directory watch. This is a brute force lazy search O(nlogn).
 	void removeWatch( const std::string& directory ) override;

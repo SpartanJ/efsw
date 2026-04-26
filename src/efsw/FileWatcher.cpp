@@ -30,8 +30,13 @@ namespace efsw {
 
 FileWatcher::FileWatcher() : FileWatcher( false ) {}
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_GENERIC
+FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
+	FileWatcher( useGenericFileWatcher, 1000 ) {}
+#else
 FileWatcher::FileWatcher( bool useGenericFileWatcher ) :
 	FileWatcher( useGenericFileWatcher, useGenericFileWatcher ? 1000 : 500 ) {}
+#endif
 
 FileWatcher::FileWatcher( bool useGenericFileWatcher, unsigned int pollingFrequencyMs ) :
 	mFollowSymlinks( false ), mOutOfScopeLinks( false ) {
@@ -42,7 +47,7 @@ FileWatcher::FileWatcher( bool useGenericFileWatcher, unsigned int pollingFreque
 	} else {
 		efDEBUG( "Using backend: %s\n", BACKEND_NAME );
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_GENERIC
 		mImpl = new FILEWATCHER_IMPL( this, pollingFrequencyMs );
 #else
 		mImpl = new FILEWATCHER_IMPL( this );
