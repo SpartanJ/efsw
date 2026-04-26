@@ -119,10 +119,8 @@ jobs:
             export CXX=clang++
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
             premake5 --verbose gmake
-            gmake -C make/bsd/ -j$(nproc) -e config=release_x86_64
-      - name: Run unit tests
-        run: |
-          ./bin/efsw-unit_tests-release
+            gmake -C make/bsd/ -j$(nproc) -e config=
+            ./bin/efsw-unit_tests-release
   Haiku:
     name: Haiku (Generic Watcher)
     runs-on: ubuntu-latest
