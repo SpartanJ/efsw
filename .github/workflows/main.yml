@@ -92,7 +92,6 @@ jobs:
         .\bin\efsw-unit_tests-release.exe
   FreeBSD:
     name: FreeBSD (kqueue)
-    needs: release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -127,8 +126,7 @@ jobs:
         run: |
           ./bin/efsw-unit_tests-release
   Haiku:
-    name: Haiku x86_64 Nightly
-    needs: release
+    name: Haiku (Generic Watcher)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
