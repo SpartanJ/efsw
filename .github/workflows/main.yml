@@ -119,7 +119,7 @@ jobs:
             export CXX=clang++
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
             premake5 --verbose gmake
-            gmake -C make/bsd/ -j$(nproc) -e config=
+            gmake -C make/bsd/ -j$(nproc) -e config=release_x86_64
             ./bin/efsw-unit_tests-release
   Haiku:
     name: Haiku (Generic Watcher)
