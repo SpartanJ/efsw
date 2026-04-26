@@ -59,7 +59,7 @@ void WatcherFSEvents::init() {
 
 void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 									  const std::string& filename, Action action,
-									  std::string oldFilename ) {
+									  const std::string& oldFilename ) {
 	Listener->handleFileAction( watchid, FileSystem::precomposeFileName( dir ),
 								FileSystem::precomposeFileName( filename ), action,
 								FileSystem::precomposeFileName( oldFilename ) );

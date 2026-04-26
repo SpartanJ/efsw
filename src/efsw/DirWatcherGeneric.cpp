@@ -85,7 +85,7 @@ void DirWatcherGeneric::resetDirectory( std::string directory ) {
 }
 
 void DirWatcherGeneric::handleAction( const std::string& filename, unsigned long action,
-									  std::string oldFilename ) {
+									  const std::string& oldFilename ) {
 	Watch->Listener->handleFileAction( Watch->ID, DirSnap.DirectoryInfo.Filepath,
 									   FileSystem::fileNameFromPath( filename ), (Action)action,
 									   oldFilename );

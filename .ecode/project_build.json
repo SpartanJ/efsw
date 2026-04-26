@@ -121,7 +121,7 @@
   "macos-debug": {
     "build": [
       {
-        "args": "--verbose gmake",
+        "args": "--verbose gmake2",
         "command": "premake5",
         "working_dir": ""
       },
@@ -207,7 +207,7 @@
   "mingw-debug": {
     "build": [
       {
-        "args": "--os=windows --cc=mingw gmake",
+        "args": "--os=windows --cc=gcc gmake",
         "command": "premake5",
         "working_dir": ""
       },

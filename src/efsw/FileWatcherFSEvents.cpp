@@ -218,7 +218,8 @@ void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
 void FileWatcherFSEvents::watch() {}
 
 void FileWatcherFSEvents::handleAction( Watcher* /*watch*/, const std::string& /*filename*/,
-										unsigned long /*action*/, std::string /*oldFilename*/ ) {
+										unsigned long /*action*/,
+										const std::string& /*oldFilename*/ ) {
 	/// Not used
 }
 

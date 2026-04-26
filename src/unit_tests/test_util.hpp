@@ -20,7 +20,7 @@ class TestListener : public efsw::FileWatchListener {
 	std::vector<std::tuple<efsw::Action, std::string, std::string>> events;
 
 	void handleFileAction( efsw::WatchID, const std::string& /* dir */, const std::string& filename,
-						   efsw::Action action, std::string oldFilename = "" ) override {
+						   efsw::Action action, const std::string& oldFilename = "" ) override {
 		std::lock_guard<std::mutex> lock( mtx );
 		events.push_back( std::make_tuple( action, filename, oldFilename ) );
 		cv.notify_one();

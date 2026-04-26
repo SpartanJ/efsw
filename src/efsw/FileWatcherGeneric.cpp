@@ -126,7 +126,8 @@ void FileWatcherGeneric::run() {
 	} while ( mInitOK );
 }
 
-void FileWatcherGeneric::handleAction( Watcher*, const std::string&, unsigned long, std::string ) {
+void FileWatcherGeneric::handleAction( Watcher*, const std::string&, unsigned long,
+									   const std::string& ) {
 	/// Not used
 }
 

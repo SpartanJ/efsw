@@ -563,7 +563,7 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
-									   unsigned long action, std::string ) {
+									   unsigned long action, const std::string& ) {
 	if ( !watch || !watch->Listener || !mInitOK ) {
 		return;
 	}
