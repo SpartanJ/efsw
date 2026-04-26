@@ -119,7 +119,7 @@ jobs:
             export CXX=clang++
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
             premake5 --verbose gmake
-            make -C make/bsd/ -j$(nproc) -e config=release_x86_64
+            gmake -C make/bsd/ -j$(nproc) -e config=release_x86_64
       - name: Run unit tests
         run: |
           ./bin/efsw-unit_tests-release
