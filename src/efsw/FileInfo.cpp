@@ -102,7 +102,7 @@ void FileInfo::getInfo() {
 	int res = stat( Filepath.c_str(), &st );
 #else
 	struct _stat st;
-	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
+	int res = _wstat( FileSystem::getWidePath( Filepath ).c_str(), &st );
 #endif
 
 	if ( 0 == res ) {
@@ -131,7 +131,7 @@ void FileInfo::getRealInfo() {
 	int res = lstat( Filepath.c_str(), &st );
 #else
 	struct _stat st;
-	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
+	int res = _wstat( FileSystem::getWidePath( Filepath ).c_str(), &st );
 #endif
 
 	if ( 0 == res ) {
@@ -208,7 +208,7 @@ bool FileInfo::exists() {
 	int res = stat( Filepath.c_str(), &st );
 #else
 	struct _stat st;
-	int res = _wstat( String::fromUtf8( Filepath ).toWideString().c_str(), &st );
+	int res = _wstat( FileSystem::getWidePath( Filepath ).c_str(), &st );
 #endif
 
 	if ( slashAtEnd ) {

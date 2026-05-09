@@ -13,6 +13,10 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#if __cplusplus >= 201703L || _MSVC_LANG >= 201703L
+#define USE_FILESYSTEM_PATH_CONVERSION
+#include <filesystem>
+#endif
 #endif
 
 namespace efsw {
@@ -150,13 +154,22 @@ std::string FileSystem::getRealPath( const std::string& path ) {
 	realPath = std::string( dir );
 #elif EFSW_OS == EFSW_OS_WIN
 	wchar_t dir[_MAX_PATH + 1];
-	GetFullPathNameW( String::fromUtf8( path ).toWideString().c_str(), _MAX_PATH, &dir[0],
-					  nullptr );
+	GetFullPathNameW( getWidePath( path ).c_str(), _MAX_PATH, &dir[0], nullptr );
 	realPath = String( dir ).toUtf8();
 #else
 #warning FileSystem::getRealPath() not implemented on this platform.
 #endif
 	return realPath;
 }
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+std::wstring FileSystem::getWidePath(const std::string & path) {
+#if defined(USE_FILESYSTEM_PATH_CONVERSION)
+	return std::filesystem::u8path( path ).wstring();
+#else
+	return String::fromUtf8( path ).toWideString();
+#endif
+}
+#endif
 
 } // namespace efsw

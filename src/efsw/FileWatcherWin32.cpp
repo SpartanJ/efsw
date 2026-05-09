@@ -61,7 +61,7 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 	bool preventDeletion = getOptionValue( options, Option::WinPreventDirectoryDeletion, 0 ) != 0;
 
 	WatcherStructWin32* watch =
-		CreateWatch( String::fromUtf8( dir ).toWideString().c_str(), recursive, bufferSize,
+		CreateWatch( FileSystem::getWidePath( dir ).c_str(), recursive, bufferSize,
 					 notifyFilter, mIOCP, preventDeletion );
 
 	if ( NULL == watch ) {
