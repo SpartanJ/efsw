@@ -1,4 +1,5 @@
 #include <efsw/platform/win/FileSystemImpl.hpp>
+#include <efsw/FileSystem.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -20,7 +21,7 @@ bool FileSystem::changeWorkingDirectory( const std::string& path ) {
 	int res;
 #ifdef EFSW_COMPILER_MSVC
 #ifdef UNICODE
-	res = _wchdir( String::fromUtf8( path.c_str() ).toWideString().c_str() );
+	res = _wchdir( efsw::FileSystem::getWidePath( path ).c_str() );
 #else
 	res = _chdir( String::fromUtf8( path.c_str() ).toAnsiString().c_str() );
 #endif

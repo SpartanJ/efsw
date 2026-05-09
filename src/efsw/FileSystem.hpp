@@ -36,6 +36,10 @@ class FileSystem {
 
 	static std::string getRealPath( const std::string& path );
 
+#if EFSW_OS == EFSW_OS_WIN
+	static std::wstring getWidePath(const std::string& path);
+#endif
+
 };
 
 } // namespace efsw
