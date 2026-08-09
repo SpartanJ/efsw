@@ -72,8 +72,8 @@ target_compile_features(efsw PRIVATE cxx_std_11)
 if(BUILD_SHARED_LIBS)
 	target_compile_definitions(efsw PRIVATE EFSW_DYNAMIC EFSW_EXPORTS)
 	set_target_properties(efsw PROPERTIES
-		VERSION ${CMAKE_PROJECT_VERSION}
-		SOVERSION 1
+		VERSION ${PROJECT_VERSION}
+		SOVERSION ${PROJECT_VERSION_MAJOR}
 	)
 endif()
 
