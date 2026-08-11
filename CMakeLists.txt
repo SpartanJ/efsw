@@ -186,11 +186,11 @@ if(EFSW_INSTALL)
 	endif()
 
 	install(EXPORT efswExport NAMESPACE efsw:: DESTINATION "${packageDestDir}" FILE ${PROJECT_NAME}Targets.cmake)
-	install(FILES
+  install(FILES
       ${CMAKE_CURRENT_BINARY_DIR}/cmake/efswConfig.cmake
       ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}ConfigVersion.cmake
     DESTINATION "${packageDestDir}"
-	)
+  )
 endif()
 
 if(BUILD_TEST_APP)
