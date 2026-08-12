@@ -74,6 +74,9 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	if ( !mInitOK )
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
+
+	this->mReportCrossDirectoryMoves = getOptionValue( options, Options::LinuxReportCrossDirectoryMoves, 0 ) != 0;
+
 	bool syntheticEvents = getOptionValue( options, Options::LinuxProduceSyntheticEvents, 0 ) != 0;
 	return addWatch( directory, watcher, recursive, syntheticEvents, NULL );
 }
@@ -346,10 +349,15 @@ void FileWatcherInotify::run() {
 
 								// If the move happened between TWO DIFFERENT watched directories
 								if ( curWatcher != currentMoveFrom ) {
-									// We need to simulate a delete event, the IN_MOVED_TO will
-									// generate an add event after
-									handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
-												  IN_DELETE );
+									if ( mReportCrossDirectoryMoves ) {
+										handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
+													  IN_MOVED_TO );
+									} else {
+										// We need to simulate a delete event, the IN_MOVED_TO will
+										// generate an add event after
+										handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
+													  IN_DELETE );
+									}
 
 									// Clear the state on the source watcher so it doesn't
 									// get processed again or stuck with stale data.

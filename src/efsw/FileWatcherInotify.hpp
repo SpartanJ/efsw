@@ -71,6 +71,8 @@ class FileWatcherInotify : public FileWatcherImpl {
 	bool pathInWatches( const std::string& path ) override;
 
   private:
+	bool mReportCrossDirectoryMoves {false};
+
 	void run();
 
 	void removeWatchLocked( WatchID watchid, bool skipInotifyRemove = false );
