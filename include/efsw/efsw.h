@@ -118,6 +118,16 @@ enum efsw_option {
 	/// files in the new directory watched. This might have the unintended consequence of sending
 	/// duplicated created events due to the system also emitting this event.
 	EFSW_LINUX_PRODUCE_SYNTHETIC_EVENTS = 5,
+	/// Linux does not support cross directory moves. This means that when a file is moved from
+	/// one directory to another the system will emit a delete event for the source directory and
+	/// a create event for the destination directory. Enabling this option will make efsw attempt
+	/// to detect such moves and report them as a single Moved event, with oldFilename set to the
+	/// source path as an absolute path (e.g. "/home/user/tmp/upload.tmp").
+	/// NOTE: Both source and destination must be inside the same watched tree (single recursive
+	/// watch, or two watches on the same FileWatcher instance). If the source directory is not
+	/// watched, inotify will not emit IN_MOVED_FROM and efsw falls back to Add+Modified.
+	/// This option is Linux-specific and depends on inotify rename cookies.
+	EFSW_OPT_LINUX_REPORT_CROSS_DIRECTORY_MOVES = 6,
 };
 
 /// Basic interface for listening for file events.
