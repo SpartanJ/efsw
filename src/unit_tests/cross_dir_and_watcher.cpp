@@ -173,3 +173,79 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 	removeDirectory( watchedDir1 );
 	removeDirectory( watchedDir2 );
 }
+
+#ifdef __linux__
+// With LinuxReportCrossDirectoryMoves enabled, a rename across subdirectories of a single
+// recursive watch should produce exactly one Moved event (no Delete, no Add).
+UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
+	std::string rootDir = getTemporaryDirectory();
+	std::string tmpDir = rootDir + "/tmp";
+	std::string dataDir = rootDir + "/data";
+
+	EXPECT_TRUE( createDirectory( rootDir ) );
+	EXPECT_TRUE( createDirectory( tmpDir ) );
+	EXPECT_TRUE( createDirectory( dataDir ) );
+
+	std::string srcFile = tmpDir + "/upload.tmp";
+	EXPECT_TRUE( createFile( srcFile, "content" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+
+	std::vector<efsw::WatcherOption> options = {
+		{ efsw::Options::LinuxReportCrossDirectoryMoves, 1 } };
+	efsw::WatchID watchId = fileWatcher.addWatch( rootDir, &listener, true, options );
+	EXPECT_TRUE( watchId > 0 );
+
+	fileWatcher.watch();
+	sleepMs( 200 );
+	listener.clearEvents();
+
+	std::string dstFile = dataDir + "/config.json";
+	EXPECT_TRUE( renameFile( srcFile, dstFile ) );
+
+	// Expect a single Moved event for the destination filename
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "config.json" ) );
+
+	// There must be no Delete or Add events for these filenames
+	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Delete, "upload.tmp" ) );
+	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Add, "config.json" ) );
+
+	fileWatcher.removeWatch( rootDir );
+	removeDirectory( rootDir );
+}
+#endif //__linux__
+
+// Without the option, cross-dir moves across a recursive watch still produce Delete+Add.
+UTEST( CrossDirMove, FallsBackToDeleteAddWithoutOption ) {
+	std::string rootDir = getTemporaryDirectory();
+	std::string tmpDir = rootDir + "/tmp";
+	std::string dataDir = rootDir + "/data";
+
+	EXPECT_TRUE( createDirectory( rootDir ) );
+	EXPECT_TRUE( createDirectory( tmpDir ) );
+	EXPECT_TRUE( createDirectory( dataDir ) );
+
+	std::string srcFile = tmpDir + "/upload.tmp";
+	EXPECT_TRUE( createFile( srcFile, "content" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+
+	efsw::WatchID watchId = fileWatcher.addWatch( rootDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
+
+	fileWatcher.watch();
+	sleepMs( 200 );
+	listener.clearEvents();
+
+	std::string dstFile = dataDir + "/config.json";
+	EXPECT_TRUE( renameFile( srcFile, dstFile ) );
+
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "upload.tmp" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "config.json" ) );
+	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Moved, "config.json" ) );
+
+	fileWatcher.removeWatch( rootDir );
+	removeDirectory( rootDir );
+}
