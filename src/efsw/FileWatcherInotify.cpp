@@ -74,6 +74,10 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	if ( !mInitOK )
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
+
+	mReportCrossDirectoryMoves =
+		getOptionValue( options, Options::LinuxReportCrossDirectoryMoves, 0 ) != 0;
+
 	bool syntheticEvents = getOptionValue( options, Options::LinuxProduceSyntheticEvents, 0 ) != 0;
 	return addWatch( directory, watcher, recursive, syntheticEvents, NULL );
 }
@@ -338,18 +342,33 @@ void FileWatcherInotify::run() {
 						}
 
 						if ( curWatcher ) {
-							handleAction( curWatcher, (char*)pevent->name, pevent->mask );
+							// For IN_MOVED_TO: if we have a pending cross-dir move with the
+							// option enabled, defer the event — we'll emit Moved instead of
+							// the default Add+Modified that handleAction would fire.
+							bool isMoveActionDst = ( pevent->mask & IN_MOVED_TO ) &&
+												   currentMoveFrom &&
+												   pevent->cookie == currentMoveCookie;
+							bool moveBetweenTwoWatchedDirs =
+								isMoveActionDst && curWatcher != currentMoveFrom;
+							bool deferredMovedTo =
+								moveBetweenTwoWatchedDirs && mReportCrossDirectoryMoves;
+
+							if ( !deferredMovedTo )
+								handleAction( curWatcher, (char*)pevent->name, pevent->mask );
 
 							// Check if this is the destination of a move
-							if ( ( pevent->mask & IN_MOVED_TO ) && currentMoveFrom &&
-								 pevent->cookie == currentMoveCookie ) {
-
-								// If the move happened between TWO DIFFERENT watched directories
-								if ( curWatcher != currentMoveFrom ) {
-									// We need to simulate a delete event, the IN_MOVED_TO will
-									// generate an add event after
-									handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
-												  IN_DELETE );
+							if ( isMoveActionDst ) {
+								if ( moveBetweenTwoWatchedDirs ) {
+									if ( deferredMovedTo ) {
+										emitCrossDirectoryMove(
+											currentMoveFrom, currentMoveFrom->OldFileName,
+											curWatcher, std::string( (char*)pevent->name ) );
+									} else {
+										// We need to simulate a delete event, the IN_MOVED_TO will
+										// generate an add event after
+										handleAction( currentMoveFrom, currentMoveFrom->OldFileName,
+													  IN_DELETE );
+									}
 
 									// Clear the state on the source watcher so it doesn't
 									// get processed again or stuck with stale data.
@@ -560,6 +579,18 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 					  static_cast<WatcherInotify*>( watch ), true );
 		}
 	}
+}
+
+void FileWatcherInotify::emitCrossDirectoryMove( Watcher* src, const std::string& srcFile,
+												 Watcher* dst, const std::string& dstFile ) {
+	if ( !src || !dst ) {
+		return;
+	}
+
+	std::string oldDstFilename = dst->OldFileName;
+	dst->OldFileName = src->Directory + srcFile;
+	handleAction( dst, dstFile, IN_MOVED_TO );
+	dst->OldFileName = std::move( oldDstFilename );
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
