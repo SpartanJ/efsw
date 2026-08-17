@@ -137,6 +137,13 @@ FSEvents for macOS Lion and beyond in some cases will generate more actions than
 
 Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
 
+Cross-directory moves inside a single recursive watch can optionally be reported as one `Moved`
+event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename` contains the
+absolute source path. This behavior is best-effort and currently supported by the Linux inotify and
+macOS FSEvents backends. Moves between independently registered watches, moves into or out of the
+watched tree, and moves whose native event pair is incomplete continue to be reported as `Delete`
+and/or `Add` events.
+
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 
 OS-independent watcher, Kqueue and FSEvents for macOS below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.

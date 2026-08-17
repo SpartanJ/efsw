@@ -55,25 +55,14 @@ class TestListener : public efsw::FileWatchListener {
 
 	bool waitForActions( efsw::Actions::Action action, const std::string& filename,
 						 int timeoutMs = 2000 ) {
-		auto start = std::chrono::steady_clock::now();
-		while ( true ) {
-			{
-				std::lock_guard<std::mutex> lock( mtx );
-				for ( const auto& ev : events ) {
-					if ( std::get<0>( ev ) == action && std::get<1>( ev ) == filename ) {
-						return true;
-					}
-				}
+		std::unique_lock<std::mutex> lock( mtx );
+		return cv.wait_for( lock, std::chrono::milliseconds( timeoutMs ), [&] {
+			for ( const auto& ev : events ) {
+				if ( std::get<0>( ev ) == action && std::get<1>( ev ) == filename )
+					return true;
 			}
-			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-							   std::chrono::steady_clock::now() - start )
-							   .count();
-			if ( elapsed >= timeoutMs ) {
-				return false;
-			}
-			std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
-		}
-		return false;
+			return false;
+		} );
 	}
 };
 
