@@ -42,6 +42,7 @@ set(EFSW_CPP_SOURCE
 	src/efsw/DirectorySnapshot.cpp
 	src/efsw/DirectorySnapshotDiff.cpp
 	src/efsw/DirWatcherGeneric.cpp
+	src/efsw/FileActionBatch.cpp
 	src/efsw/FileInfo.cpp
 	src/efsw/FileSystem.cpp
 	src/efsw/FileWatcher.cpp

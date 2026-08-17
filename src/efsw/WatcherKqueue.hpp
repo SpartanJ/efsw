@@ -6,6 +6,7 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <efsw/DirectorySnapshot.hpp>
+#include <efsw/FileActionBatch.hpp>
 #include <sys/event.h>
 #include <sys/types.h>
 #include <unordered_map>
@@ -24,7 +25,8 @@ typedef std::unordered_map<WatchID, Watcher*> WatchMap;
 class WatcherKqueue : public Watcher {
   public:
 	WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener,
-				   bool recursive, FileWatcherKqueue* watcher, WatcherKqueue* parent = NULL );
+				   bool recursive, FileWatcherKqueue* watcher, WatcherKqueue* parent = NULL,
+				   bool reportCrossDirectoryMoves = false );
 
 	virtual ~WatcherKqueue();
 
@@ -38,10 +40,10 @@ class WatcherKqueue : public Watcher {
 	void rescan();
 
 	void handleAction( const std::string& filename, efsw::Action action,
-					   const std::string& oldFilename = "" );
+					   const std::string& oldFilename, const FileInfo& fileInfo );
 
 	void handleFolderAction( std::string filename, efsw::Action action,
-							 const std::string& oldFilename = "" );
+							 const std::string& oldFilename, const FileInfo& fileInfo );
 
 	void addAll();
 
@@ -78,6 +80,10 @@ class WatcherKqueue : public Watcher {
 
 	bool mInitOK;
 	int mErrno;
+	bool mReportCrossDirectoryMoves;
+	bool mCollectActions;
+	bool mNeedsRecursiveRescan;
+	FileActionBatch mActionBatch;
 
 	bool pathInWatches( const std::string& path );
 
@@ -85,9 +91,14 @@ class WatcherKqueue : public Watcher {
 
 	Watcher* findWatcher( const std::string path );
 
-	void moveDirectory( std::string oldPath, std::string newPath, bool emitEvents = true );
+	void moveDirectory( std::string oldPath, std::string newPath, const FileInfo& fileInfo,
+						bool emitEvents = true );
 
 	void sendDirChanged();
+
+	WatcherKqueue* root();
+
+	void rescanTree();
 };
 
 } // namespace efsw

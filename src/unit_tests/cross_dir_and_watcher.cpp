@@ -175,13 +175,11 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 	removeDirectory( watchedDir2 );
 }
 
-#if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+#if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS || \
+	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 // With ReportCrossDirectoryMoves enabled, a rename across subdirectories of a single recursive
 // watch should produce exactly one Moved event (no Delete, no Add).
 UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
-	if ( useGeneric )
-		return;
-
 	std::string rootDir = getTemporaryDirectory();
 	std::string tmpDir = rootDir + "/tmp";
 	std::string dataDir = rootDir + "/data";
@@ -195,10 +193,9 @@ UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
 	std::string canonicalSrcFile = efsw::FileSystem::getRealPath( srcFile );
 
 	TestListener listener;
-	efsw::FileWatcher fileWatcher( false, 100 );
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
 
-	std::vector<efsw::WatcherOption> options = {
-		{ efsw::Options::ReportCrossDirectoryMoves, 1 } };
+	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
 	efsw::WatchID watchId = fileWatcher.addWatch( rootDir, &listener, true, options );
 	EXPECT_TRUE( watchId > 0 );
 
@@ -212,8 +209,7 @@ UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
 
 	// Expect a single Moved event for the destination filename
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "config.json" ) );
-	EXPECT_TRUE(
-		listener.checkEvent( efsw::Actions::Moved, "config.json", canonicalSrcFile ) );
+	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "config.json", canonicalSrcFile ) );
 
 	// There must be no Delete or Add events for these filenames
 	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Delete, "upload.tmp" ) );

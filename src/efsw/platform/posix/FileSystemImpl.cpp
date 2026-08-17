@@ -161,8 +161,8 @@ std::string FileSystem::getCurrentWorkingDirectory() {
 	return result != NULL ? std::string( result ) : std::string();
 }
 
-FileInfoMap FileSystem::filesInfoFromPath( const std::string& path ) {
-	FileInfoMap files;
+FileInfoList FileSystem::filesInfoFromPath( const std::string& path ) {
+	FileInfoList files;
 
 	DIR* dp;
 	struct dirent* dirp;
@@ -172,10 +172,7 @@ FileInfoMap FileSystem::filesInfoFromPath( const std::string& path ) {
 
 	while ( ( dirp = readdir( dp ) ) != NULL ) {
 		if ( strcmp( dirp->d_name, ".." ) != 0 && strcmp( dirp->d_name, "." ) != 0 ) {
-			std::string name( dirp->d_name );
-			std::string fpath( path + name );
-
-			files[name] = FileInfo( fpath );
+			files.emplace_back( path + dirp->d_name );
 		}
 	}
 

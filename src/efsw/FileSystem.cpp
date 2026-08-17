@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -25,10 +26,14 @@ bool FileSystem::isDirectory( const std::string& path ) {
 	return Platform::FileSystem::isDirectory( path );
 }
 
-FileInfoMap FileSystem::filesInfoFromPath( std::string path ) {
+FileInfoList FileSystem::filesInfoFromPath( std::string path ) {
 	dirAddSlashAtEnd( path );
 
-	return Platform::FileSystem::filesInfoFromPath( path );
+	FileInfoList files = Platform::FileSystem::filesInfoFromPath( path );
+	std::sort( files.begin(), files.end(), []( const FileInfo& left, const FileInfo& right ) {
+		return left.Filepath < right.Filepath;
+	} );
+	return files;
 }
 
 char FileSystem::getOSSlash() {

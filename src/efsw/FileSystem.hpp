@@ -10,7 +10,8 @@ class FileSystem {
   public:
 	static bool isDirectory( const std::string& path );
 
-	static FileInfoMap filesInfoFromPath( std::string path );
+	/// Returns directory entries sorted by FileInfo::Filepath.
+	static FileInfoList filesInfoFromPath( std::string path );
 
 	static char getOSSlash();
 

@@ -45,7 +45,8 @@ void WatcherFSEvents::init() {
 					  efswFSEventStreamCreateFlagUseExtendedData |
 					  efswFSEventStreamCreateFlagUseCFTypes;
 	} else {
-		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive );
+		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive,
+										 ReportCrossDirectoryMoves );
 	}
 
 	FSEventStreamContext ctx;

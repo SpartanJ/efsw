@@ -140,9 +140,10 @@ Generic watcher relies on the inode information to detect file and directories r
 Cross-directory moves inside a single recursive watch can optionally be reported as one `Moved`
 event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename` contains the
 absolute source path. This behavior is best-effort and currently supported by the Linux inotify and
-macOS FSEvents backends. Moves between independently registered watches, moves into or out of the
-watched tree, and moves whose native event pair is incomplete continue to be reported as `Delete`
-and/or `Add` events.
+macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher on POSIX.
+Moves between independently registered watches, moves into or out of the watched tree, and moves
+whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
+reported as `Delete` and/or `Add` events.
 
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 

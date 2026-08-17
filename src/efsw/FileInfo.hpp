@@ -2,7 +2,6 @@
 #define EFSW_FILEINFO_HPP
 
 #include <efsw/base.hpp>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -52,10 +51,11 @@ class FileInfo {
 	Uint32 OwnerId;
 	Uint32 GroupId;
 	Uint32 Permissions;
+	Uint64 Device;
 	Uint64 Inode;
+	Uint64 LinkCount;
 };
 
-typedef std::map<std::string, FileInfo> FileInfoMap;
 typedef std::vector<FileInfo> FileInfoList;
 typedef std::vector<std::pair<std::string, FileInfo>> MovedList;
 

@@ -56,7 +56,14 @@ bool FileInfo::inodeSupported() {
 }
 
 FileInfo::FileInfo() :
-	ModificationTime( 0 ), OwnerId( 0 ), GroupId( 0 ), Permissions( 0 ), Inode( 0 ) {}
+	ModificationTime( 0 ),
+	Size( 0 ),
+	OwnerId( 0 ),
+	GroupId( 0 ),
+	Permissions( 0 ),
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {}
 
 FileInfo::FileInfo( const std::string& filepath ) :
 	Filepath( filepath ),
@@ -64,7 +71,9 @@ FileInfo::FileInfo( const std::string& filepath ) :
 	OwnerId( 0 ),
 	GroupId( 0 ),
 	Permissions( 0 ),
-	Inode( 0 ) {
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {
 	getInfo();
 }
 
@@ -74,7 +83,9 @@ FileInfo::FileInfo( const std::string& filepath, bool linkInfo ) :
 	OwnerId( 0 ),
 	GroupId( 0 ),
 	Permissions( 0 ),
-	Inode( 0 ) {
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {
 	if ( linkInfo ) {
 		getRealInfo();
 	} else {
@@ -111,7 +122,9 @@ void FileInfo::getInfo() {
 		OwnerId = st.st_uid;
 		GroupId = st.st_gid;
 		Permissions = st.st_mode;
+		Device = st.st_dev;
 		Inode = st.st_ino;
+		LinkCount = st.st_nlink;
 	}
 
 	if ( slashAtEnd ) {
@@ -140,7 +153,9 @@ void FileInfo::getRealInfo() {
 		OwnerId = st.st_uid;
 		GroupId = st.st_gid;
 		Permissions = st.st_mode;
+		Device = st.st_dev;
 		Inode = st.st_ino;
+		LinkCount = st.st_nlink;
 	}
 
 	if ( slashAtEnd ) {
@@ -151,7 +166,7 @@ void FileInfo::getRealInfo() {
 bool FileInfo::operator==( const FileInfo& Other ) const {
 	return ( ModificationTime == Other.ModificationTime && Size == Other.Size &&
 			 OwnerId == Other.OwnerId && GroupId == Other.GroupId &&
-			 Permissions == Other.Permissions && Inode == Other.Inode );
+			 Permissions == Other.Permissions && Device == Other.Device && Inode == Other.Inode );
 }
 
 bool FileInfo::isDirectory() const {
@@ -225,12 +240,14 @@ FileInfo& FileInfo::operator=( const FileInfo& Other ) {
 	this->GroupId = Other.GroupId;
 	this->OwnerId = Other.OwnerId;
 	this->Permissions = Other.Permissions;
+	this->Device = Other.Device;
 	this->Inode = Other.Inode;
+	this->LinkCount = Other.LinkCount;
 	return *this;
 }
 
 bool FileInfo::sameInode( const FileInfo& Other ) const {
-	return inodeSupported() && Inode == Other.Inode;
+	return inodeSupported() && Inode != 0 && Device == Other.Device && Inode == Other.Inode;
 }
 
 bool FileInfo::operator!=( const FileInfo& Other ) const {

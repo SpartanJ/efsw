@@ -48,8 +48,8 @@ std::string FileSystem::getCurrentWorkingDirectory() {
 #endif
 }
 
-FileInfoMap FileSystem::filesInfoFromPath( const std::string& path ) {
-	FileInfoMap files;
+FileInfoList FileSystem::filesInfoFromPath( const std::string& path ) {
+	FileInfoList files;
 
 	String tpath( path );
 
@@ -67,7 +67,7 @@ FileInfoMap FileSystem::filesInfoFromPath( const std::string& path ) {
 		std::string fpath( path + name );
 
 		if ( name != "." && name != ".." ) {
-			files[name] = FileInfo( fpath );
+			files.emplace_back( fpath );
 		}
 
 		while ( FindNextFileW( hFind, &findFileData ) ) {
@@ -75,7 +75,7 @@ FileInfoMap FileSystem::filesInfoFromPath( const std::string& path ) {
 			fpath = path + name;
 
 			if ( name != "." && name != ".." ) {
-				files[name] = FileInfo( fpath );
+				files.emplace_back( fpath );
 			}
 		}
 

@@ -49,7 +49,7 @@ class DirWatcherGeneric {
 	void resetDirectory( std::string directory );
 
 	void handleAction( const std::string& filename, unsigned long action,
-					   const std::string& oldFilename = "" );
+					   const std::string& oldFilename, const FileInfo& fileInfo );
 };
 
 } // namespace efsw
