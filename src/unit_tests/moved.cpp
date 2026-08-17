@@ -26,12 +26,13 @@ UTEST( Moved, RenameFile ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( testDir + "/watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( oldFile, newFile ) );
 
-	listener.waitForActions( efsw::Actions::Moved, "new_name.txt" );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "new_name.txt" ) );
 
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "new_name.txt", "old_name.txt" ) );
 
@@ -57,13 +58,14 @@ UTEST( Moved, MoveFileToSubdirectory ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( testDir + "/watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( sourceFile, destFile ) );
 
-	listener.waitForActions( efsw::Actions::Add, "file.txt" );
-	listener.waitForActions( efsw::Actions::Delete, "file.txt" );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "file.txt" ) );
 
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
 
@@ -91,13 +93,14 @@ UTEST( Moved, MoveFileBetweenDirectories ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( testDir + "/watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( sourceFile, destFile ) );
 
-	listener.waitForActions( efsw::Actions::Add, "file.txt" );
-	listener.waitForActions( efsw::Actions::Delete, "file.txt" );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "file.txt" ) );
 
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Add, "file.txt" ) );
 
@@ -106,7 +109,7 @@ UTEST( Moved, MoveFileBetweenDirectories ) {
 }
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS || \
-	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 UTEST( Moved, CrossDirectoryBetweenIndependentWatchesStaysDeleteAdd ) {
 	std::string sourceDir = getTemporaryDirectory() + "_source";
 	std::string destinationDir = getTemporaryDirectory() + "_destination";

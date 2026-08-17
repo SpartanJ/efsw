@@ -21,7 +21,7 @@ void FileActionBatch::clear() {
 void FileActionBatch::add( WatchID watchid, const std::string& directory,
 						   const std::string& filename, Action action,
 						   const std::string& oldFilename, const FileInfo& fileInfo ) {
-	mEvents.push_back( Event( watchid, directory, filename, action, oldFilename, fileInfo ) );
+	mEvents.emplace_back( watchid, directory, filename, action, oldFilename, fileInfo );
 }
 
 static bool metadataMatches( const FileInfo& source, const FileInfo& destination ) {
@@ -40,17 +40,17 @@ static bool pathContains( const std::string& directory, const std::string& path 
 		   path[directory.size()] == FileSystem::getOSSlash();
 }
 
-static std::string canonicalSourcePath( const std::string& path ) {
-	std::string directory( FileSystem::pathRemoveFileName( path ) );
-	std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
-	if ( canonicalDirectory.empty() )
-		return path;
-	FileSystem::dirAddSlashAtEnd( canonicalDirectory );
-	return canonicalDirectory + FileSystem::fileNameFromPath( path );
-}
-
-void FileActionBatch::dispatch( FileWatchListener* listener ) {
+void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
 	if ( NULL == listener ) {
+		clear();
+		return;
+	}
+
+	if ( !detectMoves ) {
+		for ( const Event& event : mEvents ) {
+			listener->handleFileAction( event.Watch, event.Directory, event.Filename,
+									event.ActionType, event.OldFilename );
+		}
 		clear();
 		return;
 	}
@@ -114,7 +114,7 @@ void FileActionBatch::dispatch( FileWatchListener* listener ) {
 			const Event& source = mEvents[move->second];
 			listener->handleFileAction( destination.Watch, destination.Directory,
 										destination.Filename, Actions::Moved,
-										canonicalSourcePath( source.Info.Filepath ) );
+										 FileSystem::canonicalSourcePath( source.Info.Filepath ) );
 		} else if ( !suppressed[i] ) {
 			const Event& event = mEvents[i];
 			listener->handleFileAction( event.Watch, event.Directory, event.Filename,

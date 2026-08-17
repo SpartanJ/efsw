@@ -167,6 +167,15 @@ std::string FileSystem::getRealPath( const std::string& path ) {
 	return realPath;
 }
 
+std::string FileSystem::canonicalSourcePath( const std::string& path ) {
+	std::string directory( FileSystem::pathRemoveFileName( path ) );
+	std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
+	if ( canonicalDirectory.empty() )
+		return path;
+	FileSystem::dirAddSlashAtEnd( canonicalDirectory );
+	return canonicalDirectory + FileSystem::fileNameFromPath( path );
+}
+
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 std::wstring FileSystem::getWidePath( const std::string& path ) {
 #if defined( USE_FILESYSTEM_PATH_CONVERSION )

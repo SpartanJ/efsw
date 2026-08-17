@@ -35,9 +35,27 @@ struct sLastModifiedEvent {
 	std::string fileName;
 };
 
+struct PendingRenameWin32 {
+	std::string FileName;
+	LARGE_INTEGER FileId;
+	ULONGLONG CreatedAt;
+};
+
+struct ExtendedEventWin32 {
+	DWORD Action;
+	std::string FileName;
+	LARGE_INTEGER FileId;
+};
+
 RefreshResult RefreshWatch( WatcherStructWin32* pWatch );
 
 void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped );
+
+DWORD PendingMoveWaitTimeout( const WatcherWin32* pWatch );
+
+void FlushPendingMoves( WatcherWin32* pWatch );
+
+void StopWatch( WatcherStructWin32* pWatch );
 
 void DestroyWatch( WatcherStructWin32* pWatch );
 
@@ -50,10 +68,12 @@ class WatcherWin32 : public Watcher {
 		Struct( NULL ),
 		DirHandle( NULL ),
 		Buffer(),
+		ExtendedEvents(),
 		lParam( 0 ),
 		NotifyFilter( 0 ),
 		StopNow( false ),
 		Extended( false ),
+		ReportCrossDirectoryMoves( false ),
 		Watch( NULL ),
 		DirName( NULL ) {
 		Buffer.resize( dwBufferSize );
@@ -62,14 +82,17 @@ class WatcherWin32 : public Watcher {
 	WatcherStructWin32* Struct;
 	HANDLE DirHandle;
 	std::vector<BYTE> Buffer;
+	std::vector<ExtendedEventWin32> ExtendedEvents;
 	LPARAM lParam;
 	DWORD NotifyFilter;
 	bool StopNow;
 	bool Extended;
+	bool ReportCrossDirectoryMoves;
 	FileWatcherImpl* Watch;
 	char* DirName;
 	sLastModifiedEvent LastModifiedEvent;
-	std::vector<std::pair<std::string, LARGE_INTEGER>> OldFiles;
+	std::vector<PendingRenameWin32> PendingRenames;
+	std::vector<PendingRenameWin32> PendingRemovals;
 };
 
 } // namespace efsw

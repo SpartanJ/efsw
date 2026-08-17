@@ -135,12 +135,13 @@ macOS will use only Kqueue if the macOS version is below 10.5. This implementati
 
 FSEvents for macOS Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
 
-Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
+The generic watcher relies on stable filesystem identity to detect file and directory renames/moves. On POSIX it uses device and inode information; on Windows it uses the volume serial number and file index. If identity is unavailable or ambiguous, the watcher reports Add/Delete events instead.
 
 Cross-directory moves inside a single recursive watch can optionally be reported as one `Moved`
 event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename` contains the
-absolute source path. This behavior is best-effort and currently supported by the Linux inotify and
-macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher on POSIX.
+absolute source path. This behavior is best-effort and currently supported by the Linux inotify,
+Windows, and macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher
+on POSIX and Windows.
 Moves between independently registered watches, moves into or out of the watched tree, and moves
 whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
 reported as `Delete` and/or `Add` events.

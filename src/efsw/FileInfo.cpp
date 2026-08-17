@@ -15,6 +15,10 @@
 #include <limits.h>
 #include <stdlib.h>
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+#include <windows.h>
+#endif
+
 #ifdef EFSW_COMPILER_MSVC
 #ifndef S_ISDIR
 #define S_ISDIR( f ) ( ( f ) & _S_IFDIR )
@@ -37,6 +41,29 @@
 
 namespace efsw {
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+static void getWindowsFileIdentity( const std::string& filePath, Uint64& device, Uint64& inode,
+									Uint64& linkCount ) {
+	HANDLE handle = CreateFileW( FileSystem::getWidePath( filePath ).c_str(), FILE_READ_ATTRIBUTES,
+								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+								 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL );
+	if ( handle == INVALID_HANDLE_VALUE )
+		return;
+
+	BY_HANDLE_FILE_INFORMATION info;
+	if ( GetFileInformationByHandle( handle, &info ) ) {
+		ULARGE_INTEGER fileIndex;
+		fileIndex.HighPart = info.nFileIndexHigh;
+		fileIndex.LowPart = info.nFileIndexLow;
+		device = info.dwVolumeSerialNumber;
+		inode = fileIndex.QuadPart;
+		linkCount = info.nNumberOfLinks;
+	}
+
+	CloseHandle( handle );
+}
+#endif
+
 bool FileInfo::exists( const std::string& filePath ) {
 	FileInfo fi( filePath );
 	return fi.exists();
@@ -48,11 +75,7 @@ bool FileInfo::isLink( const std::string& filePath ) {
 }
 
 bool FileInfo::inodeSupported() {
-#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	return true;
-#else
-	return false;
-#endif
 }
 
 FileInfo::FileInfo() :
@@ -125,6 +148,10 @@ void FileInfo::getInfo() {
 		Device = st.st_dev;
 		Inode = st.st_ino;
 		LinkCount = st.st_nlink;
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+		getWindowsFileIdentity( Filepath, Device, Inode, LinkCount );
+#endif
 	}
 
 	if ( slashAtEnd ) {
@@ -156,6 +183,10 @@ void FileInfo::getRealInfo() {
 		Device = st.st_dev;
 		Inode = st.st_ino;
 		LinkCount = st.st_nlink;
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+		getWindowsFileIdentity( Filepath, Device, Inode, LinkCount );
+#endif
 	}
 
 	if ( slashAtEnd ) {

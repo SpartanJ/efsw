@@ -23,14 +23,17 @@ WatcherGeneric::~WatcherGeneric() {
 }
 
 void WatcherGeneric::watch() {
-	mCollectActions = ReportCrossDirectoryMoves && Recursive && FileInfo::inodeSupported();
+	// Recursive scans must finish updating the complete watcher tree before callbacks are delivered.
+	// A listener may immediately mutate a directory after receiving an event.
+	mCollectActions = Recursive;
 	if ( mCollectActions )
 		mActionBatch.clear();
 
 	DirWatch->watch();
 
 	if ( mCollectActions ) {
-		mActionBatch.dispatch( Listener );
+		mActionBatch.dispatch( Listener,
+						   ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
 		mCollectActions = false;
 	}
 }

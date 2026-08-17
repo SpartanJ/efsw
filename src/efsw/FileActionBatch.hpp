@@ -15,7 +15,7 @@ class FileActionBatch {
 	void add( WatchID watchid, const std::string& directory, const std::string& filename,
 			  Action action, const std::string& oldFilename, const FileInfo& fileInfo );
 
-	void dispatch( FileWatchListener* listener );
+	void dispatch( FileWatchListener* listener, bool detectMoves = true );
 
   protected:
 	struct Event {

@@ -47,6 +47,7 @@ class FileWatcherWin32 : public FileWatcherImpl {
   protected:
 	HANDLE mIOCP;
 	Watches mWatches;
+	Watches mRetiredWatches;
 
 	/// The last watchid
 	WatchID mLastWatchID;
@@ -57,6 +58,7 @@ class FileWatcherWin32 : public FileWatcherImpl {
 
 	/// Remove all directory watches.
 	void removeAllWatches();
+	void drainRetiredWatches();
 
 	void removeWatch( WatcherStructWin32* watch );
 

@@ -55,7 +55,8 @@ UTEST( MoveOutOfWatch, FileToUnwatchedDir ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( watchedDir + "/watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
 	listener.clearEvents();
 
 	std::string fileInUnwatched = unwatchedDir + "/test_file.txt";
@@ -79,7 +80,8 @@ UTEST( NewDirAutoWatch, CreateDirInWatchedFolder ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( testDir + "/watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
 	listener.clearEvents();
 
 	std::string subDir = testDir + "/new_subdir";
@@ -153,7 +155,10 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 	EXPECT_TRUE( watchId2 > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( createFile( watchedDir1 + "/watch_ready_1" ) );
+	EXPECT_TRUE( createFile( watchedDir2 + "/watch_ready_2" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready_1" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready_2" ) );
 	listener.clearEvents();
 
 	std::string subDirInDir2 = watchedDir2 + "/moved_folder";
@@ -176,7 +181,7 @@ UTEST( MoveFolderCrossDir, FolderBetweenTwoWatchedDirs ) {
 }
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS || \
-	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 // With ReportCrossDirectoryMoves enabled, a rename across subdirectories of a single recursive
 // watch should produce exactly one Moved event (no Delete, no Add).
 UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
