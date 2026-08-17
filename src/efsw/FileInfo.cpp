@@ -15,6 +15,10 @@
 #include <limits.h>
 #include <stdlib.h>
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+#include <windows.h>
+#endif
+
 #ifdef EFSW_COMPILER_MSVC
 #ifndef S_ISDIR
 #define S_ISDIR( f ) ( ( f ) & _S_IFDIR )
@@ -37,6 +41,29 @@
 
 namespace efsw {
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+static void getWindowsFileIdentity( const std::string& filePath, Uint64& device, Uint64& inode,
+									Uint64& linkCount ) {
+	HANDLE handle = CreateFileW( FileSystem::getWidePath( filePath ).c_str(), FILE_READ_ATTRIBUTES,
+								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+								 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL );
+	if ( handle == INVALID_HANDLE_VALUE )
+		return;
+
+	BY_HANDLE_FILE_INFORMATION info;
+	if ( GetFileInformationByHandle( handle, &info ) ) {
+		ULARGE_INTEGER fileIndex;
+		fileIndex.HighPart = info.nFileIndexHigh;
+		fileIndex.LowPart = info.nFileIndexLow;
+		device = info.dwVolumeSerialNumber;
+		inode = fileIndex.QuadPart;
+		linkCount = info.nNumberOfLinks;
+	}
+
+	CloseHandle( handle );
+}
+#endif
+
 bool FileInfo::exists( const std::string& filePath ) {
 	FileInfo fi( filePath );
 	return fi.exists();
@@ -48,15 +75,18 @@ bool FileInfo::isLink( const std::string& filePath ) {
 }
 
 bool FileInfo::inodeSupported() {
-#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
 	return true;
-#else
-	return false;
-#endif
 }
 
 FileInfo::FileInfo() :
-	ModificationTime( 0 ), OwnerId( 0 ), GroupId( 0 ), Permissions( 0 ), Inode( 0 ) {}
+	ModificationTime( 0 ),
+	Size( 0 ),
+	OwnerId( 0 ),
+	GroupId( 0 ),
+	Permissions( 0 ),
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {}
 
 FileInfo::FileInfo( const std::string& filepath ) :
 	Filepath( filepath ),
@@ -64,7 +94,9 @@ FileInfo::FileInfo( const std::string& filepath ) :
 	OwnerId( 0 ),
 	GroupId( 0 ),
 	Permissions( 0 ),
-	Inode( 0 ) {
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {
 	getInfo();
 }
 
@@ -74,7 +106,9 @@ FileInfo::FileInfo( const std::string& filepath, bool linkInfo ) :
 	OwnerId( 0 ),
 	GroupId( 0 ),
 	Permissions( 0 ),
-	Inode( 0 ) {
+	Device( 0 ),
+	Inode( 0 ),
+	LinkCount( 0 ) {
 	if ( linkInfo ) {
 		getRealInfo();
 	} else {
@@ -111,7 +145,13 @@ void FileInfo::getInfo() {
 		OwnerId = st.st_uid;
 		GroupId = st.st_gid;
 		Permissions = st.st_mode;
+		Device = st.st_dev;
 		Inode = st.st_ino;
+		LinkCount = st.st_nlink;
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+		getWindowsFileIdentity( Filepath, Device, Inode, LinkCount );
+#endif
 	}
 
 	if ( slashAtEnd ) {
@@ -140,7 +180,13 @@ void FileInfo::getRealInfo() {
 		OwnerId = st.st_uid;
 		GroupId = st.st_gid;
 		Permissions = st.st_mode;
+		Device = st.st_dev;
 		Inode = st.st_ino;
+		LinkCount = st.st_nlink;
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+		getWindowsFileIdentity( Filepath, Device, Inode, LinkCount );
+#endif
 	}
 
 	if ( slashAtEnd ) {
@@ -151,7 +197,7 @@ void FileInfo::getRealInfo() {
 bool FileInfo::operator==( const FileInfo& Other ) const {
 	return ( ModificationTime == Other.ModificationTime && Size == Other.Size &&
 			 OwnerId == Other.OwnerId && GroupId == Other.GroupId &&
-			 Permissions == Other.Permissions && Inode == Other.Inode );
+			 Permissions == Other.Permissions && Device == Other.Device && Inode == Other.Inode );
 }
 
 bool FileInfo::isDirectory() const {
@@ -225,12 +271,14 @@ FileInfo& FileInfo::operator=( const FileInfo& Other ) {
 	this->GroupId = Other.GroupId;
 	this->OwnerId = Other.OwnerId;
 	this->Permissions = Other.Permissions;
+	this->Device = Other.Device;
 	this->Inode = Other.Inode;
+	this->LinkCount = Other.LinkCount;
 	return *this;
 }
 
 bool FileInfo::sameInode( const FileInfo& Other ) const {
-	return inodeSupported() && Inode == Other.Inode;
+	return inodeSupported() && Inode != 0 && Device == Other.Device && Inode == Other.Inode;
 }
 
 bool FileInfo::operator!=( const FileInfo& Other ) const {

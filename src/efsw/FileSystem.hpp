@@ -10,7 +10,8 @@ class FileSystem {
   public:
 	static bool isDirectory( const std::string& path );
 
-	static FileInfoMap filesInfoFromPath( std::string path );
+	/// Returns directory entries sorted by FileInfo::Filepath.
+	static FileInfoList filesInfoFromPath( std::string path );
 
 	static char getOSSlash();
 
@@ -35,6 +36,9 @@ class FileSystem {
 	static std::string getCurrentWorkingDirectory();
 
 	static std::string getRealPath( const std::string& path );
+
+	/// Returns a canonicalized path when the final path component may no longer exist.
+	static std::string canonicalSourcePath( const std::string& path );
 
 #if EFSW_OS == EFSW_OS_WIN
 	static std::wstring getWidePath( const std::string& path );

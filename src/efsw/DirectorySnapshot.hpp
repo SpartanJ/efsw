@@ -6,9 +6,10 @@
 namespace efsw {
 
 class DirectorySnapshot {
-  public:
+	public:
 	FileInfo DirectoryInfo;
-	FileInfoMap Files;
+	/// Kept sorted by FileInfo::Filepath for binary lookup.
+	FileInfoList Files;
 
 	void setDirectoryInfo( std::string directory );
 
@@ -24,7 +25,7 @@ class DirectorySnapshot {
 
 	DirectorySnapshotDiff scan();
 
-	FileInfoMap::iterator nodeInFiles( FileInfo& fi );
+	FileInfoList::iterator nodeInFiles( const FileInfo& fi, const FileInfoList& currentFiles );
 
 	void addFile( std::string path );
 

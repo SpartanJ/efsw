@@ -75,15 +75,16 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::Unspecified, directory );
 	Lock initLock( mInitLock );
 
-	mReportCrossDirectoryMoves =
-		getOptionValue( options, Options::LinuxReportCrossDirectoryMoves, 0 ) != 0;
-
 	bool syntheticEvents = getOptionValue( options, Options::LinuxProduceSyntheticEvents, 0 ) != 0;
-	return addWatch( directory, watcher, recursive, syntheticEvents, NULL );
+	bool reportCrossDirectoryMoves =
+		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
+	return addWatch( directory, watcher, recursive, syntheticEvents, reportCrossDirectoryMoves,
+					 NULL );
 }
 
 WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, bool syntheticEvents, WatcherInotify* parent,
+									  bool recursive, bool syntheticEvents,
+									  bool reportCrossDirectoryMoves, WatcherInotify* parent,
 									  bool fromInternalEvent ) {
 	std::string dir( directory );
 
@@ -155,6 +156,7 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	pWatch->Recursive = recursive;
 	pWatch->Parent = parent;
 	pWatch->syntheticEvents = syntheticEvents;
+	pWatch->reportCrossDirectoryMoves = reportCrossDirectoryMoves;
 
 	{
 		Lock lock( mWatchesLock );
@@ -168,30 +170,25 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	}
 
 	if ( pWatch->Recursive ) {
-		std::map<std::string, FileInfo> files = FileSystem::filesInfoFromPath( pWatch->Directory );
+		FileInfoList files = FileSystem::filesInfoFromPath( pWatch->Directory );
 
 		if ( fromInternalEvent && parent != NULL && syntheticEvents ) {
 			for ( const auto& file : files ) {
-				if ( file.second.isRegularFile() || file.second.isDirectory() ||
-					 file.second.isLink() ) {
+				if ( file.isRegularFile() || file.isDirectory() || file.isLink() ) {
 					pWatch->Listener->handleFileAction(
 						pWatch->ID, pWatch->Directory,
-						FileSystem::fileNameFromPath( file.second.Filepath ), Actions::Add );
+						FileSystem::fileNameFromPath( file.Filepath ), Actions::Add );
 				}
 			}
 		}
 
-		std::map<std::string, FileInfo>::iterator it = files.begin();
-
-		for ( ; it != files.end(); ++it ) {
+		for ( const auto& cfi : files ) {
 			if ( !mInitOK )
 				break;
 
-			const FileInfo& cfi = it->second;
-
 			if ( cfi.isDirectory() && cfi.isReadable() ) {
-				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents, pWatch,
-						  fromInternalEvent );
+				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents,
+						  reportCrossDirectoryMoves, pWatch, fromInternalEvent );
 			}
 		}
 	}
@@ -351,7 +348,8 @@ void FileWatcherInotify::run() {
 							bool moveBetweenTwoWatchedDirs =
 								isMoveActionDst && curWatcher != currentMoveFrom;
 							bool deferredMovedTo =
-								moveBetweenTwoWatchedDirs && mReportCrossDirectoryMoves;
+								moveBetweenTwoWatchedDirs && curWatcher->reportCrossDirectoryMoves &&
+								curWatcher->ID == currentMoveFrom->ID;
 
 							if ( !deferredMovedTo )
 								handleAction( curWatcher, (char*)pevent->name, pevent->mask );
@@ -576,7 +574,8 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 		if ( !found ) {
 			WatcherInotify* iWatch = static_cast<WatcherInotify*>( watch );
 			addWatch( fpath, watch->Listener, watch->Recursive, iWatch->syntheticEvents,
-					  static_cast<WatcherInotify*>( watch ), true );
+					  iWatch->reportCrossDirectoryMoves, static_cast<WatcherInotify*>( watch ),
+					  true );
 		}
 	}
 }
@@ -626,7 +625,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 		if ( watch->Recursive && FileSystem::isDirectory( fpath ) && !watch->OldFileName.empty() ) {
 			/// Update the new directory path
-			std::string opath( watch->Directory + watch->OldFileName );
+			std::string opath( watch->OldFileName );
+			if ( opath.empty() || opath[0] != FileSystem::getOSSlash() )
+				opath = watch->Directory + opath;
 			FileSystem::dirAddSlashAtEnd( opath );
 			FileSystem::dirAddSlashAtEnd( fpath );
 

@@ -41,7 +41,8 @@ int comparator( const void* ke1, const void* ke2 ) {
 
 WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 							  FileWatchListener* listener, bool recursive,
-							  FileWatcherKqueue* watcher, WatcherKqueue* parent ) :
+							  FileWatcherKqueue* watcher, WatcherKqueue* parent,
+							  bool reportCrossDirectoryMoves ) :
 	Watcher( watchid, dirname, listener, recursive ),
 	mLastWatchID( 0 ),
 	mChangeListCount( 0 ),
@@ -49,7 +50,10 @@ WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 	mWatcher( watcher ),
 	mParent( parent ),
 	mInitOK( true ),
-	mErrno( 0 ) {
+	mErrno( 0 ),
+	mReportCrossDirectoryMoves( reportCrossDirectoryMoves ),
+	mCollectActions( false ),
+	mNeedsRecursiveRescan( false ) {
 	if ( -1 == mKqueue ) {
 		efDEBUG(
 			"kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n",
@@ -119,11 +123,9 @@ void WatcherKqueue::addAll() {
 	mWatcher->addFD();
 
 	// Get the files and directories from the directory
-	FileInfoMap files = FileSystem::filesInfoFromPath( Directory );
+	FileInfoList files = FileSystem::filesInfoFromPath( Directory );
 
-	for ( FileInfoMap::iterator it = files.begin(); it != files.end(); it++ ) {
-		FileInfo& fi = it->second;
-
+	for ( const auto& fi : files ) {
 		if ( fi.isRegularFile() ) {
 			// Add the regular files kevent
 			addFile( fi.Filepath, false );
@@ -133,7 +135,7 @@ void WatcherKqueue::addAll() {
 
 			// If the watcher is not adding the watcher means that the directory was created
 			if ( id > 0 && !mWatcher->isAddingWatcher() ) {
-				handleFolderAction( fi.Filepath, Actions::Add );
+				handleFolderAction( fi.Filepath, Actions::Add, "", fi );
 			}
 		}
 	}
@@ -205,7 +207,7 @@ void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 
 	// handle action
 	if ( emitEvents ) {
-		handleAction( name, Actions::Add );
+		handleAction( name, Actions::Add, "", *entry );
 	}
 }
 
@@ -233,13 +235,13 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 
 	efDEBUG( "File removed\n" );
 
-	// handle action
-	if ( emitEvents ) {
-		handleAction( name, Actions::Delete );
-	}
-
 	// Delete the user data ( FileInfo ) from the kevent closed
 	FileInfo* del = reinterpret_cast<FileInfo*>( ke->udata );
+
+	// handle action
+	if ( emitEvents ) {
+		handleAction( name, Actions::Delete, "", *del );
+	}
 
 	efSAFE_DELETE( del );
 
@@ -279,7 +281,7 @@ void WatcherKqueue::rescan() {
 		}
 
 		DiffIterator( FilesModified ) {
-			handleAction( ( *it ).Filepath, Actions::Modified );
+			handleAction( ( *it ).Filepath, Actions::Modified, "", *it );
 		}
 
 		DiffIterator( FilesDeleted ) {
@@ -287,23 +289,24 @@ void WatcherKqueue::rescan() {
 		}
 
 		DiffMovedIterator( FilesMoved ) {
-			handleAction( ( *mit ).second.Filepath, Actions::Moved, ( *mit ).first );
+			handleAction( ( *mit ).second.Filepath, Actions::Moved, ( *mit ).first,
+						  ( *mit ).second );
 			removeFile( Directory + ( *mit ).first, false );
 			addFile( ( *mit ).second.Filepath, false );
 		}
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
-			handleFolderAction( ( *it ).Filepath, Actions::Add );
 			addWatch( ( *it ).Filepath, Listener, Recursive, this );
+			handleFolderAction( ( *it ).Filepath, Actions::Add, "", *it );
 		}
 
 		DiffIterator( DirsModified ) {
-			handleFolderAction( ( *it ).Filepath, Actions::Modified );
+			handleFolderAction( ( *it ).Filepath, Actions::Modified, "", *it );
 		}
 
 		DiffIterator( DirsDeleted ) {
-			handleFolderAction( ( *it ).Filepath, Actions::Delete );
+			handleFolderAction( ( *it ).Filepath, Actions::Delete, "", *it );
 
 			Watcher* watch = findWatcher( ( *it ).Filepath );
 
@@ -313,7 +316,7 @@ void WatcherKqueue::rescan() {
 		}
 
 		DiffMovedIterator( DirsMoved ) {
-			moveDirectory( Directory + ( *mit ).first, ( *mit ).second.Filepath );
+			moveDirectory( Directory + ( *mit ).first, ( *mit ).second.Filepath, ( *mit ).second );
 		}
 	}
 }
@@ -329,16 +332,23 @@ WatchID WatcherKqueue::watchingDirectory( std::string dir ) {
 }
 
 void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action,
-								  const std::string& oldFilename ) {
-	Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
-								FileSystem::fileNameFromPath( oldFilename ) );
+								  const std::string& oldFilename, const FileInfo& fileInfo ) {
+	WatcherKqueue* rootWatch = root();
+	if ( rootWatch->mCollectActions ) {
+		rootWatch->mActionBatch.add( ID, Directory, FileSystem::fileNameFromPath( filename ),
+									 action, FileSystem::fileNameFromPath( oldFilename ),
+									 fileInfo );
+	} else {
+		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
+									FileSystem::fileNameFromPath( oldFilename ) );
+	}
 }
 
 void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action action,
-										const std::string& oldFilename ) {
+										const std::string& oldFilename, const FileInfo& fileInfo ) {
 	FileSystem::dirRemoveSlashAtEnd( filename );
 
-	handleAction( filename, action, oldFilename );
+	handleAction( filename, action, oldFilename, fileInfo );
 }
 
 void WatcherKqueue::sendDirChanged() {
@@ -351,6 +361,12 @@ void WatcherKqueue::sendDirChanged() {
 void WatcherKqueue::watch() {
 	if ( -1 == mKqueue ) {
 		return;
+	}
+	bool isRootWatch = NULL == mParent;
+	if ( isRootWatch && mReportCrossDirectoryMoves && Recursive ) {
+		mActionBatch.clear();
+		mCollectActions = true;
+		mNeedsRecursiveRescan = false;
 	}
 
 	int nev = 0;
@@ -399,7 +415,7 @@ void WatcherKqueue::watch() {
 
 						mDirSnap.updateFile( entry->Filepath );
 
-						handleAction( entry->Filepath, efsw::Actions::Modified );
+						handleAction( entry->Filepath, efsw::Actions::Modified, "", *entry );
 					}
 				} else if ( event.fflags & NOTE_RENAME ) {
 					efDEBUG( "moved\n" );
@@ -414,6 +430,34 @@ void WatcherKqueue::watch() {
 
 	if ( needScan ) {
 		rescan();
+		WatcherKqueue* rootWatch = root();
+		if ( rootWatch->mCollectActions )
+			rootWatch->mNeedsRecursiveRescan = true;
+	}
+
+	if ( isRootWatch && mCollectActions ) {
+		if ( mNeedsRecursiveRescan )
+			rescanTree();
+		mActionBatch.dispatch( Listener );
+		mCollectActions = false;
+	}
+}
+
+WatcherKqueue* WatcherKqueue::root() {
+	WatcherKqueue* watch = this;
+	while ( watch->mParent )
+		watch = watch->mParent;
+	return watch;
+}
+
+void WatcherKqueue::rescanTree() {
+	rescan();
+	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
+		WatcherKqueue* watch = dynamic_cast<WatcherKqueue*>( it->second );
+		if ( NULL != watch )
+			watch->rescanTree();
+		else
+			it->second->watch();
 	}
 }
 
@@ -429,7 +473,8 @@ Watcher* WatcherKqueue::findWatcher( const std::string path ) {
 	return NULL;
 }
 
-void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath, bool emitEvents ) {
+void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
+								   const FileInfo& fileInfo, bool emitEvents ) {
 	// Update the directory path if it's a watcher
 	std::string opath2( oldPath );
 	FileSystem::dirAddSlashAtEnd( opath2 );
@@ -450,9 +495,6 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath, boo
 
 			wkq->Directory = curNPath;
 			wkq->mDirSnap.setDirectoryInfo( curNPath );
-			for ( auto& pair : wkq->mDirSnap.Files ) {
-				pair.second.Filepath = curNPath + pair.first;
-			}
 			for ( size_t i = 1; i <= wkq->mChangeListCount; i++ ) {
 				if ( NULL != wkq->mChangeList[i].udata ) {
 					FileInfo* fi = reinterpret_cast<FileInfo*>( wkq->mChangeList[i].udata );
@@ -473,7 +515,7 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath, boo
 	}
 
 	if ( emitEvents ) {
-		handleFolderAction( newPath, efsw::Actions::Moved, oldPath );
+		handleFolderAction( newPath, efsw::Actions::Moved, oldPath, fileInfo );
 	}
 }
 
@@ -513,8 +555,8 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 	}
 
 	if ( mWatcher->availablesFD() ) {
-		WatcherKqueue* watch =
-			new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher, parent );
+		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher,
+												  parent, mReportCrossDirectoryMoves );
 
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 
@@ -532,8 +574,8 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
-				WatcherGeneric* watch =
-					new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+				WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
+															recursive, mReportCrossDirectoryMoves );
 
 				mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 			} else {
@@ -547,8 +589,8 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 			s_ug = true;
 		}
 
-		WatcherGeneric* watch =
-			new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
+													recursive, mReportCrossDirectoryMoves );
 
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 	}

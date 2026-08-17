@@ -30,7 +30,7 @@ FileWatcherGeneric::~FileWatcherGeneric() {
 }
 
 WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption>& ) {
+									  bool recursive, const std::vector<WatcherOption>& options ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -60,7 +60,10 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 
 	mLastWatchID++;
 
-	WatcherGeneric* pWatch = new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive );
+	bool reportCrossDirectoryMoves =
+		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
+	WatcherGeneric* pWatch = new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive,
+												 reportCrossDirectoryMoves );
 
 	Lock lock( mWatchesLock );
 	mWatches.push_back( pWatch );

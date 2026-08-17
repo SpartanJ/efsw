@@ -41,28 +41,27 @@ bool FileWatcherFSEvents::isGranular() {
 	return getOSXReleaseNumber() >= 11;
 }
 
-static std::string convertCFStringToStdString( CFStringRef cfString ) {
+static bool convertCFStringToStdString( CFStringRef cfString, std::string& result ) {
 	// Try to get the C string pointer directly
 	const char* cStr = CFStringGetCStringPtr( cfString, kCFStringEncodingUTF8 );
 
 	if ( cStr ) {
-		// If the pointer is valid, directly return a std::string from it
-		return std::string( cStr );
+		result.assign( cStr );
+		return true;
 	} else {
 		// If not, manually convert it
 		CFIndex length = CFStringGetLength( cfString );
 		CFIndex maxSize = CFStringGetMaximumSizeForEncoding( length, kCFStringEncodingUTF8 ) +
 						  1; // +1 for null terminator
 
-		char* buffer = new char[maxSize];
+		result.resize( maxSize );
 
-		if ( CFStringGetCString( cfString, buffer, maxSize, kCFStringEncodingUTF8 ) ) {
-			std::string result( buffer );
-			delete[] buffer;
-			return result;
+		if ( CFStringGetCString( cfString, &result[0], maxSize, kCFStringEncodingUTF8 ) ) {
+			result.resize( strlen( result.c_str() ) );
+			return true;
 		} else {
-			delete[] buffer;
-			return "";
+			result.clear();
+			return false;
 		}
 	}
 }
@@ -73,8 +72,9 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 										   const FSEventStreamEventId eventIds[] ) {
 	WatcherFSEvents* watcher = static_cast<WatcherFSEvents*>( userData );
 
-	std::vector<FSEvent> events;
-	events.reserve( numEvents );
+	if ( watcher->EventBuffer.capacity() < numEvents )
+		watcher->EventBuffer.reserve( numEvents );
+	size_t eventCount = 0;
 
 	for ( size_t i = 0; i < numEvents; i++ ) {
 		if ( isGranular() ) {
@@ -88,16 +88,28 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			if ( cfInode ) {
 				unsigned long inode = 0;
 				CFNumberGetValue( cfInode, kCFNumberLongType, &inode );
-				events.push_back( FSEvent( convertCFStringToStdString( path ), (long)eventFlags[i],
-										   (Uint64)eventIds[i], inode ) );
+				if ( eventCount == watcher->EventBuffer.size() )
+					watcher->EventBuffer.emplace_back( std::string(), 0, 0 );
+				FSEvent& event = watcher->EventBuffer[eventCount];
+				if ( convertCFStringToStdString( path, event.Path ) ) {
+					event.Flags = (long)eventFlags[i];
+					event.Id = (Uint64)eventIds[i];
+					event.inode = inode;
+					eventCount++;
+				}
 			}
 		} else {
-			events.push_back( FSEvent( std::string( ( (char**)eventPaths )[i] ),
-									   (long)eventFlags[i], (Uint64)eventIds[i] ) );
+			if ( eventCount == watcher->EventBuffer.size() )
+				watcher->EventBuffer.emplace_back( std::string(), 0, 0 );
+			FSEvent& event = watcher->EventBuffer[eventCount++];
+			event.Path.assign( ( (char**)eventPaths )[i] );
+			event.Flags = (long)eventFlags[i];
+			event.Id = (Uint64)eventIds[i];
+			event.inode = 0;
 		}
 	}
 
-	watcher->handleActions( events );
+	watcher->handleActions( watcher->EventBuffer, eventCount );
 
 	watcher->process();
 
@@ -170,6 +182,8 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	pWatch->ModifiedFlags =
 		getOptionValue( options, Option::MacModifiedFilter, efswFSEventsModified );
 	pWatch->SanitizeEvents = getOptionValue( options, Option::MacSanitizeEvents, 0 ) != 0;
+	pWatch->ReportCrossDirectoryMoves =
+		getOptionValue( options, Option::ReportCrossDirectoryMoves, 0 ) != 0;
 
 	pWatch->init();
 

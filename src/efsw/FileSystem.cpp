@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -25,10 +26,14 @@ bool FileSystem::isDirectory( const std::string& path ) {
 	return Platform::FileSystem::isDirectory( path );
 }
 
-FileInfoMap FileSystem::filesInfoFromPath( std::string path ) {
+FileInfoList FileSystem::filesInfoFromPath( std::string path ) {
 	dirAddSlashAtEnd( path );
 
-	return Platform::FileSystem::filesInfoFromPath( path );
+	FileInfoList files = Platform::FileSystem::filesInfoFromPath( path );
+	std::sort( files.begin(), files.end(), []( const FileInfo& left, const FileInfo& right ) {
+		return left.Filepath < right.Filepath;
+	} );
+	return files;
 }
 
 char FileSystem::getOSSlash() {
@@ -160,6 +165,15 @@ std::string FileSystem::getRealPath( const std::string& path ) {
 #warning FileSystem::getRealPath() not implemented on this platform.
 #endif
 	return realPath;
+}
+
+std::string FileSystem::canonicalSourcePath( const std::string& path ) {
+	std::string directory( FileSystem::pathRemoveFileName( path ) );
+	std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
+	if ( canonicalDirectory.empty() )
+		return path;
+	FileSystem::dirAddSlashAtEnd( canonicalDirectory );
+	return canonicalDirectory + FileSystem::fileNameFromPath( path );
 }
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32

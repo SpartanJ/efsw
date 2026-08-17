@@ -135,7 +135,24 @@ macOS will use only Kqueue if the macOS version is below 10.5. This implementati
 
 FSEvents for macOS Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
 
-Generic watcher relies on the inode information to detect file and directories renames/move. Since Windows has no concept of inodes as Unix platforms do, there is no current reliable way of determining file/directory movement on Windows without help from the Windows API ( this is replaced with Add/Delete events ).
+The generic watcher relies on stable filesystem identity to detect file and directory renames/moves. On POSIX it uses device and inode information; on Windows it uses the volume serial number and file index. If identity is unavailable or ambiguous, the watcher reports Add/Delete events instead.
+
+Cross-directory moves inside a single recursive watch can optionally be reported as one `Moved`
+event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename` contains the
+absolute source path. This behavior is best-effort and currently supported by the Linux inotify,
+Windows, and macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher
+on POSIX and Windows.
+
+The native Windows implementation requires Windows 10 version 1709 or newer and NTFS for
+`ReadDirectoryChangesExW` extended file identifiers. When that API or information class is
+unavailable, the backend transparently falls back to `ReadDirectoryChangesW`; watching continues
+to work, but cross-directory moves are reported as `Delete` + `Add`. The generic Windows watcher
+does not require `ReadDirectoryChangesExW` and can correlate moves on older supported Windows
+versions when the filesystem provides stable volume and file identifiers.
+
+Moves between independently registered watches, moves into or out of the watched tree, and moves
+whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
+reported as `Delete` and/or `Add` events.
 
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 

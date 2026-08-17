@@ -78,10 +78,13 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 
 	/// Check first if are enough file descriptors available to create another kqueue watcher,
 	/// otherwise it creates a generic watcher
+	bool reportCrossDirectoryMoves =
+		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
 	if ( availablesFD() ) {
 		mAddingWatcher = true;
 
-		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this );
+		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this,
+												  NULL, reportCrossDirectoryMoves );
 
 		{
 			Lock lock( mWatchesLock );
@@ -102,8 +105,8 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
-				WatcherGeneric* genericWatch =
-					new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive );
+				WatcherGeneric* genericWatch = new WatcherGeneric(
+					++mLastWatchID, dir, watcher, this, recursive, reportCrossDirectoryMoves );
 
 				Lock lock( mWatchesLock );
 				mWatches.insert( std::make_pair( mLastWatchID, genericWatch ) );
@@ -120,7 +123,8 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 			s_ug = true;
 		}
 
-		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive );
+		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive,
+													reportCrossDirectoryMoves );
 
 		Lock lock( mWatchesLock );
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );

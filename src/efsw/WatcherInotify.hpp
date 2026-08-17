@@ -17,6 +17,7 @@ class WatcherInotify : public Watcher {
 
 	FileInfo DirInfo;
 	bool syntheticEvents{ false };
+	bool reportCrossDirectoryMoves{ false };
 };
 
 } // namespace efsw

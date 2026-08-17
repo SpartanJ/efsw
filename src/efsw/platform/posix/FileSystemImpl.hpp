@@ -10,7 +10,8 @@ namespace efsw { namespace Platform {
 
 class FileSystem {
   public:
-	static FileInfoMap filesInfoFromPath( const std::string& path );
+	/// Returns entries in platform enumeration order; the common FileSystem wrapper sorts them.
+	static FileInfoList filesInfoFromPath( const std::string& path );
 
 	static char getOSSlash();
 
