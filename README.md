@@ -142,6 +142,14 @@ event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename
 absolute source path. This behavior is best-effort and currently supported by the Linux inotify,
 Windows, and macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher
 on POSIX and Windows.
+
+The native Windows implementation requires Windows 10 version 1709 or newer and NTFS for
+`ReadDirectoryChangesExW` extended file identifiers. When that API or information class is
+unavailable, the backend transparently falls back to `ReadDirectoryChangesW`; watching continues
+to work, but cross-directory moves are reported as `Delete` + `Add`. The generic Windows watcher
+does not require `ReadDirectoryChangesExW` and can correlate moves on older supported Windows
+versions when the filesystem provides stable volume and file identifiers.
+
 Moves between independently registered watches, moves into or out of the watched tree, and moves
 whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
 reported as `Delete` and/or `Add` events.
