@@ -1,15 +1,15 @@
 #include <efsw/Debug.hpp>
 #include <efsw/FileSystem.hpp>
 #include <efsw/FileWatcherFSEvents.hpp>
-#include <efsw/Lock.hpp>
 #include <efsw/String.hpp>
-#include <efsw/System.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <sys/utsname.h>
 
 namespace efsw {
+
+static char DispatchQueueIdentity;
 
 int getOSXReleaseNumber() {
 	static int osxR = -1;
@@ -70,10 +70,12 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 										   size_t numEvents, void* eventPaths,
 										   const FSEventStreamEventFlags eventFlags[],
 										   const FSEventStreamEventId eventIds[] ) {
-	WatcherFSEvents* watcher = static_cast<WatcherFSEvents*>( userData );
+	FileWatcherFSEvents* fileWatcher = static_cast<FileWatcherFSEvents*>( userData );
+	if ( !fileWatcher->mInitOK )
+		return;
 
-	if ( watcher->EventBuffer.capacity() < numEvents )
-		watcher->EventBuffer.reserve( numEvents );
+	if ( fileWatcher->mEventBuffer.capacity() < numEvents )
+		fileWatcher->mEventBuffer.reserve( numEvents );
 	size_t eventCount = 0;
 
 	for ( size_t i = 0; i < numEvents; i++ ) {
@@ -88,9 +90,9 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			if ( cfInode ) {
 				unsigned long inode = 0;
 				CFNumberGetValue( cfInode, kCFNumberLongType, &inode );
-				if ( eventCount == watcher->EventBuffer.size() )
-					watcher->EventBuffer.emplace_back( std::string(), 0, 0 );
-				FSEvent& event = watcher->EventBuffer[eventCount];
+				if ( eventCount == fileWatcher->mEventBuffer.size() )
+					fileWatcher->mEventBuffer.emplace_back( std::string(), 0, 0 );
+				FSEvent& event = fileWatcher->mEventBuffer[eventCount];
 				if ( convertCFStringToStdString( path, event.Path ) ) {
 					event.Flags = (long)eventFlags[i];
 					event.Id = (Uint64)eventIds[i];
@@ -99,9 +101,9 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 				}
 			}
 		} else {
-			if ( eventCount == watcher->EventBuffer.size() )
-				watcher->EventBuffer.emplace_back( std::string(), 0, 0 );
-			FSEvent& event = watcher->EventBuffer[eventCount++];
+			if ( eventCount == fileWatcher->mEventBuffer.size() )
+				fileWatcher->mEventBuffer.emplace_back( std::string(), 0, 0 );
+			FSEvent& event = fileWatcher->mEventBuffer[eventCount++];
 			event.Path.assign( ( (char**)eventPaths )[i] );
 			event.Flags = (long)eventFlags[i];
 			event.Id = (Uint64)eventIds[i];
@@ -109,31 +111,148 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 		}
 	}
 
-	watcher->handleActions( watcher->EventBuffer, eventCount );
+	std::vector<std::shared_ptr<WatcherFSEvents>> watches;
+	{
+		std::lock_guard<std::mutex> lock( fileWatcher->mWatchesMutex );
+		watches.reserve( fileWatcher->mWatches.size() );
+		for ( const auto& watch : fileWatcher->mWatches )
+			watches.push_back( watch.second );
+	}
 
-	watcher->process();
+	for ( const auto& watcher : watches ) {
+		watcher->EventBuffer.clear();
+		for ( size_t i = 0; i < eventCount; ++i ) {
+			FSEvent& event = fileWatcher->mEventBuffer[i];
+			bool mustRescan = event.Flags & ( kFSEventStreamEventFlagUserDropped |
+											  kFSEventStreamEventFlagKernelDropped |
+											  kFSEventStreamEventFlagMustScanSubDirs );
+			if ( mustRescan || watcher->handlesPath( event.Path ) )
+				watcher->EventBuffer.push_back( event );
+		}
+
+		if ( !watcher->EventBuffer.empty() ) {
+			watcher->handleActions( watcher->EventBuffer );
+			watcher->process();
+		}
+	}
 
 	efDEBUG( "\n" );
 }
 
 FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
-	FileWatcherImpl( parent ), mLastWatchID( 0 ) {
-	mInitOK = true;
-
-	watch();
+	FileWatcherImpl( parent ),
+	mLastWatchID( 0 ),
+	mStream( NULL ),
+	mDispatchQueue( NULL ),
+	mWatching( false ) {
+	mDispatchQueue = dispatch_queue_create( "com.efsw.fsevents", DISPATCH_QUEUE_SERIAL );
+	if ( NULL != mDispatchQueue ) {
+		dispatch_queue_set_specific( mDispatchQueue, &DispatchQueueIdentity, this, NULL );
+		mInitOK = true;
+	}
 }
 
 FileWatcherFSEvents::~FileWatcherFSEvents() {
 	mInitOK = false;
 
-	mWatchCond.notify_all();
+	FSEventStreamRef stream = NULL;
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		stream = stopStream();
+	}
+	releaseStreamAfterCallbacks( stream );
 
-	WatchMap::iterator iter = mWatches.begin();
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		mWatches.clear();
+	}
 
-	for ( ; iter != mWatches.end(); ++iter ) {
-		WatcherFSEvents* watch = iter->second;
+	if ( NULL != mDispatchQueue ) {
+		dispatch_queue_set_specific( mDispatchQueue, &DispatchQueueIdentity, NULL, NULL );
+		dispatch_release( mDispatchQueue );
+		mDispatchQueue = NULL;
+	}
+}
 
-		efSAFE_DELETE( watch );
+bool FileWatcherFSEvents::rebuildStream( FSEventStreamRef& replacedStream ) {
+	replacedStream = NULL;
+	if ( mWatches.empty() || NULL == mDispatchQueue )
+		return false;
+
+	mStreamPaths.clear();
+	mStreamPaths.reserve( mWatches.size() );
+	for ( const auto& watch : mWatches )
+		mStreamPaths.push_back( watch.second->DirectoryRef );
+
+	CFArrayRef directoryArray = CFArrayCreate( kCFAllocatorDefault, mStreamPaths.data(),
+											   static_cast<CFIndex>( mStreamPaths.size() ), NULL );
+	mStreamPaths.clear();
+
+	Uint32 streamFlags = kFSEventStreamCreateFlagNone;
+	if ( isGranular() ) {
+		streamFlags = efswFSEventStreamCreateFlagFileEvents | efswFSEventStreamCreateFlagNoDefer |
+					  efswFSEventStreamCreateFlagUseExtendedData |
+					  efswFSEventStreamCreateFlagUseCFTypes;
+	}
+
+	FSEventStreamContext context;
+	context.version = 0;
+	context.info = this;
+	context.retain = NULL;
+	context.release = NULL;
+	context.copyDescription = NULL;
+
+	FSEventStreamRef newStream = NULL;
+	if ( NULL != directoryArray ) {
+		newStream = FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback,
+										 &context, directoryArray, kFSEventStreamEventIdSinceNow,
+										 0., streamFlags );
+	}
+
+	if ( NULL != directoryArray )
+		CFRelease( directoryArray );
+
+	if ( NULL == newStream )
+		return false;
+
+	FSEventStreamSetDispatchQueue( newStream, mDispatchQueue );
+	if ( !FSEventStreamStart( newStream ) ) {
+		FSEventStreamInvalidate( newStream );
+		FSEventStreamRelease( newStream );
+		return false;
+	}
+
+	replacedStream = mStream;
+	mStream = newStream;
+	if ( NULL != replacedStream ) {
+		FSEventStreamStop( replacedStream );
+		FSEventStreamInvalidate( replacedStream );
+	}
+	return true;
+}
+
+FSEventStreamRef FileWatcherFSEvents::stopStream() {
+	FSEventStreamRef stream = mStream;
+	mStream = NULL;
+	if ( NULL != stream ) {
+		FSEventStreamStop( stream );
+		FSEventStreamInvalidate( stream );
+	}
+	return stream;
+}
+
+void FileWatcherFSEvents::releaseStreamAfterCallbacks( FSEventStreamRef stream ) {
+	if ( NULL == stream )
+		return;
+
+	if ( dispatch_get_specific( &DispatchQueueIdentity ) == this ) {
+		dispatch_async( mDispatchQueue, ^{
+		  FSEventStreamRelease( stream );
+		} );
+	} else {
+		dispatch_sync( mDispatchQueue, ^{
+					   } );
+		FSEventStreamRelease( stream );
 	}
 }
 
@@ -171,11 +290,8 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 		}
 	}
 
-	mLastWatchID++;
-
-	WatcherFSEvents* pWatch = new WatcherFSEvents();
+	std::shared_ptr<WatcherFSEvents> pWatch = std::make_shared<WatcherFSEvents>();
 	pWatch->Listener = watcher;
-	pWatch->ID = mLastWatchID;
 	pWatch->Directory = dir;
 	pWatch->Recursive = recursive;
 	pWatch->FWatcher = this;
@@ -185,14 +301,26 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 	pWatch->ReportCrossDirectoryMoves =
 		getOptionValue( options, Option::ReportCrossDirectoryMoves, 0 ) != 0;
 
-	pWatch->init();
-
 	{
-		Lock lock( mWatchesLock );
-		mWatches.insert( std::make_pair( mLastWatchID, pWatch ) );
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		pWatch->ID = ++mLastWatchID;
 	}
+	if ( !pWatch->init() )
+		return Errors::Log::createLastError( Errors::WatcherFailed, dir );
 
-	mWatchCond.notify_all();
+	FSEventStreamRef replacedStream = NULL;
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		if ( pathInWatchesUnlocked( dir ) )
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
+
+		mWatches.insert( std::make_pair( pWatch->ID, pWatch ) );
+		if ( mWatching && !rebuildStream( replacedStream ) ) {
+			mWatches.erase( pWatch->ID );
+			return Errors::Log::createLastError( Errors::WatcherFailed, dir );
+		}
+	}
+	releaseStreamAfterCallbacks( replacedStream );
 	return pWatch->ID;
 }
 
@@ -200,36 +328,74 @@ void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
 	std::string dir( FileSystem::getRealPath( directory ) );
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	Lock lock( mWatchesLock );
-
-	WatchMap::iterator iter = mWatches.begin();
-
-	for ( ; iter != mWatches.end(); ++iter ) {
-		if ( dir == iter->second->Directory ) {
-			removeWatch( iter->second->ID );
-			return;
+	FSEventStreamRef replacedStream = NULL;
+	std::shared_ptr<WatcherFSEvents> removedWatch;
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		for ( WatchMap::iterator iter = mWatches.begin(); iter != mWatches.end(); ++iter ) {
+			if ( dir == iter->second->Directory ) {
+				removedWatch = iter->second;
+				mWatches.erase( iter );
+				if ( mWatching ) {
+					if ( mWatches.empty() )
+						replacedStream = stopStream();
+					else
+						rebuildStream( replacedStream );
+				}
+				break;
+			}
 		}
+	}
+
+	if ( removedWatch ) {
+		efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+		releaseStreamAfterCallbacks( replacedStream );
 	}
 }
 
 void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
-	Lock lock( mWatchesLock );
+	FSEventStreamRef replacedStream = NULL;
+	std::shared_ptr<WatcherFSEvents> removedWatch;
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		WatchMap::iterator iter = mWatches.find( watchid );
+		if ( iter == mWatches.end() )
+			return;
 
-	WatchMap::iterator iter = mWatches.find( watchid );
+		removedWatch = iter->second;
+		mWatches.erase( iter );
+		if ( mWatching ) {
+			if ( mWatches.empty() )
+				replacedStream = stopStream();
+			else
+				rebuildStream( replacedStream );
+		}
+	}
 
-	if ( iter == mWatches.end() )
-		return;
-
-	WatcherFSEvents* watch = iter->second;
-
-	mWatches.erase( iter );
-
-	efDEBUG( "Removed watch %s\n", watch->Directory.c_str() );
-
-	efSAFE_DELETE( watch );
+	efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+	releaseStreamAfterCallbacks( replacedStream );
 }
 
-void FileWatcherFSEvents::watch() {}
+void FileWatcherFSEvents::watch() {
+	FSEventStreamRef replacedStream = NULL;
+	bool startFailed = false;
+	{
+		std::lock_guard<std::mutex> lock( mWatchesMutex );
+		if ( mWatching )
+			return;
+
+		mWatching = true;
+		if ( !mWatches.empty() ) {
+			startFailed = !rebuildStream( replacedStream );
+			if ( startFailed )
+				mWatching = false;
+		}
+	}
+
+	releaseStreamAfterCallbacks( replacedStream );
+	if ( startFailed )
+		Errors::Log::createLastError( Errors::WatcherFailed, "FSEvents" );
+}
 
 void FileWatcherFSEvents::handleAction( Watcher* /*watch*/, const std::string& /*filename*/,
 										unsigned long /*action*/,
@@ -240,7 +406,7 @@ void FileWatcherFSEvents::handleAction( Watcher* /*watch*/, const std::string& /
 std::vector<std::string> FileWatcherFSEvents::directories() {
 	std::vector<std::string> dirs;
 
-	Lock lock( mWatchesLock );
+	std::lock_guard<std::mutex> lock( mWatchesMutex );
 
 	dirs.reserve( mWatches.size() );
 
@@ -252,7 +418,12 @@ std::vector<std::string> FileWatcherFSEvents::directories() {
 }
 
 bool FileWatcherFSEvents::pathInWatches( const std::string& path ) {
-	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
+	std::lock_guard<std::mutex> lock( mWatchesMutex );
+	return pathInWatchesUnlocked( path );
+}
+
+bool FileWatcherFSEvents::pathInWatchesUnlocked( const std::string& path ) const {
+	for ( WatchMap::const_iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		if ( it->second->Directory == path ) {
 			return true;
 		}

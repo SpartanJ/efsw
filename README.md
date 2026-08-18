@@ -129,6 +129,12 @@ File modification events may be reported multiple times during a copy operation,
 
 Windows and FSEvents macOS implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
 
+On macOS, all paths registered on the same `FileWatcher` share one active FSEvents stream. Paths
+added before `watch()` are started together. After watching has started, adding or removing a path
+starts the replacement stream before stopping the previous stream so the handover does not leave a
+gap. In steady state, each `FileWatcher` therefore consumes one client from the system-wide
+FSEvents client pool instead of one client per call to `addWatch`.
+
 Kqueue implementation is limited by the maximum number of file descriptors allowed per process by the OS. In the case of reaching the file descriptors limit ( in BSD around 18000 and in macOS around 10240 ), it will fallback to the generic file watcher.
 
 macOS will use only Kqueue if the macOS version is below 10.5. This implementation needs to be compiled separately from the macOS >= 10.5 implementation, since there's no way to compile FSEvents backend in macOS below 10.5.

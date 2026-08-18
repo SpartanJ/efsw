@@ -11,64 +11,31 @@
 
 namespace efsw {
 
-WatcherFSEvents::WatcherFSEvents() :
-	Watcher(), FWatcher( NULL ), FSStream( NULL ), DispatchQueue( NULL ), WatcherGen( NULL ) {}
+WatcherFSEvents::WatcherFSEvents() : Watcher(), FWatcher( NULL ), WatcherGen( NULL ) {}
 
 WatcherFSEvents::~WatcherFSEvents() {
-	if ( NULL != FSStream ) {
-		FSEventStreamStop( FSStream );
-		FSEventStreamInvalidate( FSStream );
-		if ( NULL != DispatchQueue ) {
-			dispatch_sync( DispatchQueue, ^{
-						   } );
-		}
-		FSEventStreamRelease( FSStream );
-	}
-
-	if ( NULL != DispatchQueue ) {
-		dispatch_release( DispatchQueue );
-		DispatchQueue = NULL;
-	}
+	if ( NULL != DirectoryRef )
+		CFRelease( DirectoryRef );
 
 	efSAFE_DELETE( WatcherGen );
 }
 
-void WatcherFSEvents::init() {
-	CFStringRef CFDirectory =
-		CFStringCreateWithCString( NULL, Directory.c_str(), kCFStringEncodingUTF8 );
-	CFArrayRef CFDirectoryArray = CFArrayCreate( NULL, (const void**)&CFDirectory, 1, NULL );
+bool WatcherFSEvents::init() {
+	DirectoryRef =
+		CFStringCreateWithCString( kCFAllocatorDefault, Directory.c_str(), kCFStringEncodingUTF8 );
+	if ( NULL == DirectoryRef )
+		return false;
 
-	Uint32 streamFlags = kFSEventStreamCreateFlagNone;
-
-	if ( FileWatcherFSEvents::isGranular() ) {
-		streamFlags = efswFSEventStreamCreateFlagFileEvents | efswFSEventStreamCreateFlagNoDefer |
-					  efswFSEventStreamCreateFlagUseExtendedData |
-					  efswFSEventStreamCreateFlagUseCFTypes;
-	} else {
+	if ( !FileWatcherFSEvents::isGranular() ) {
 		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive,
 										 ReportCrossDirectoryMoves );
 	}
 
-	FSEventStreamContext ctx;
-	/* Initialize context */
-	ctx.version = 0;
-	ctx.info = this;
-	ctx.retain = NULL;
-	ctx.release = NULL;
-	ctx.copyDescription = NULL;
+	return true;
+}
 
-	DispatchQueue = dispatch_queue_create( NULL, NULL );
-
-	FSStream =
-		FSEventStreamCreate( kCFAllocatorDefault, &FileWatcherFSEvents::FSEventCallback, &ctx,
-							 CFDirectoryArray, kFSEventStreamEventIdSinceNow, 0., streamFlags );
-
-	FSEventStreamSetDispatchQueue( FSStream, DispatchQueue );
-
-	FSEventStreamStart( FSStream );
-
-	CFRelease( CFDirectoryArray );
-	CFRelease( CFDirectory );
+bool WatcherFSEvents::handlesPath( const std::string& path ) const {
+	return path.size() > Directory.size() && 0 == path.compare( 0, Directory.size(), Directory );
 }
 
 void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
