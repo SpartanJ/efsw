@@ -44,22 +44,36 @@ namespace efsw {
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 static void getWindowsFileIdentity( const std::string& filePath, Uint64& device, Uint64& inode,
 									Uint64& linkCount ) {
-	HANDLE handle = CreateFileW( FileSystem::getWidePath( filePath ).c_str(), FILE_READ_ATTRIBUTES,
-								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-								 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL );
+	wchar_t stackPath[512];
+	const int pathLength = static_cast<int>( filePath.size() );
+	const int wideLength =
+		MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, nullptr, 0 );
+	if ( wideLength <= 0 )
+		return;
+
+	std::wstring heapPath;
+	wchar_t* widePath = stackPath;
+	if ( static_cast<size_t>( wideLength + 1 ) > sizeof( stackPath ) / sizeof( *stackPath ) ) {
+		heapPath.resize( wideLength + 1 );
+		widePath = heapPath.data();
+	}
+	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, widePath, wideLength ) !=
+		 wideLength )
+		return;
+	widePath[wideLength] = L'\0';
+
+	HANDLE handle = CreateFileW( widePath, FILE_READ_ATTRIBUTES,
+								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+								 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr );
 	if ( handle == INVALID_HANDLE_VALUE )
 		return;
 
 	BY_HANDLE_FILE_INFORMATION info;
 	if ( GetFileInformationByHandle( handle, &info ) ) {
-		ULARGE_INTEGER fileIndex;
-		fileIndex.HighPart = info.nFileIndexHigh;
-		fileIndex.LowPart = info.nFileIndexLow;
 		device = info.dwVolumeSerialNumber;
-		inode = fileIndex.QuadPart;
+		inode = static_cast<Uint64>( info.nFileIndexHigh ) << 32 | info.nFileIndexLow;
 		linkCount = info.nNumberOfLinks;
 	}
-
 	CloseHandle( handle );
 }
 #endif
