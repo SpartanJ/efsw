@@ -56,7 +56,8 @@ class WatcherFSEvents : public Watcher {
 
 	~WatcherFSEvents();
 
-	void init();
+	bool init();
+	bool handlesPath( const std::string& path ) const;
 
 	void handleActions( std::vector<FSEvent>& events );
 	void handleActions( std::vector<FSEvent>& events, size_t eventCount );
@@ -64,12 +65,11 @@ class WatcherFSEvents : public Watcher {
 	void process();
 
 	Atomic<FileWatcherFSEvents*> FWatcher;
-	FSEventStreamRef FSStream;
-	dispatch_queue_t DispatchQueue;
 	Uint64 ModifiedFlags{ efswFSEventsModified };
 	bool SanitizeEvents{ false };
 	bool ReportCrossDirectoryMoves{ false };
 	std::vector<FSEvent> EventBuffer;
+	CFStringRef DirectoryRef{ NULL };
 
   protected:
 	void handleAddModDel( const Uint32& flags, const std::string& path, std::string& dirPath,

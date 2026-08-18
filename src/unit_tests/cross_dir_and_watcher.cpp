@@ -259,3 +259,74 @@ UTEST( CrossDirMove, FallsBackToDeleteAddWithoutOption ) {
 	fileWatcher.removeWatch( rootDir );
 	removeDirectory( rootDir );
 }
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+UTEST( FSEvents, RebuildsSharedStreamAfterWatchingStarts ) {
+	if ( useGeneric )
+		return;
+
+	std::string rootDir = getTemporaryDirectory();
+	std::string watchedDir1 = rootDir + "/watch_1";
+	std::string watchedDir2 = rootDir + "/watch_2";
+	ASSERT_TRUE( createDirectory( rootDir ) );
+	ASSERT_TRUE( createDirectory( watchedDir1 ) );
+	ASSERT_TRUE( createDirectory( watchedDir2 ) );
+
+	TestListener listener;
+	{
+		efsw::FileWatcher fileWatcher;
+		efsw::WatchID watchId1 = fileWatcher.addWatch( watchedDir1, &listener, false );
+		ASSERT_TRUE( watchId1 > 0 );
+		fileWatcher.watch();
+
+		ASSERT_TRUE( createFile( watchedDir1 + "/initial_watch.txt", "content" ) );
+		ASSERT_TRUE( listener.waitForActions( efsw::Actions::Add, "initial_watch.txt" ) );
+		listener.clearEvents();
+
+		efsw::WatchID watchId2 = fileWatcher.addWatch( watchedDir2, &listener, false );
+		ASSERT_TRUE( watchId2 > 0 );
+		ASSERT_TRUE( createFile( watchedDir1 + "/after_add_1.txt", "content" ) );
+		ASSERT_TRUE( createFile( watchedDir2 + "/after_add_2.txt", "content" ) );
+		ASSERT_TRUE( listener.waitForActions( efsw::Actions::Add, "after_add_1.txt" ) );
+		ASSERT_TRUE( listener.waitForActions( efsw::Actions::Add, "after_add_2.txt" ) );
+
+		fileWatcher.removeWatch( watchId1 );
+		listener.clearEvents();
+		ASSERT_TRUE( createFile( watchedDir1 + "/after_remove_1.txt", "content" ) );
+		ASSERT_TRUE( createFile( watchedDir2 + "/after_remove_2.txt", "content" ) );
+		ASSERT_TRUE( listener.waitForActions( efsw::Actions::Add, "after_remove_2.txt" ) );
+		EXPECT_FALSE( listener.checkEvent( efsw::Actions::Add, "after_remove_1.txt" ) );
+	}
+
+	removeDirectory( rootDir );
+}
+
+// FSEvents limits the system to 1024 stream clients. A FileWatcher with more logical watches must
+// continue receiving events because all its paths share one FSEventStreamRef.
+UTEST( FSEvents, MoreThanSystemClientLimitSharesStream ) {
+	if ( useGeneric )
+		return;
+
+	static const int WatchCount = 1100;
+	std::string rootDir = getTemporaryDirectory();
+	ASSERT_TRUE( createDirectory( rootDir ) );
+
+	TestListener listener;
+	{
+		efsw::FileWatcher fileWatcher;
+		std::string lastDirectory;
+		for ( int i = 0; i < WatchCount; ++i ) {
+			lastDirectory = rootDir + "/watch_" + std::to_string( i );
+			ASSERT_TRUE( createDirectory( lastDirectory ) );
+			ASSERT_TRUE( fileWatcher.addWatch( lastDirectory, &listener, false ) > 0 );
+		}
+
+		fileWatcher.watch();
+		ASSERT_TRUE( createFile( lastDirectory + "/after_client_limit.txt", "content" ) );
+		EXPECT_TRUE(
+			listener.waitForActions( efsw::Actions::Add, "after_client_limit.txt", 5000 ) );
+	}
+
+	removeDirectory( rootDir );
+}
+#endif

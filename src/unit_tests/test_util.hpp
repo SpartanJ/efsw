@@ -11,6 +11,12 @@
 #include <thread>
 #include <vector>
 
+#if defined( _WIN32 )
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace efsw_test {
 
 class TestListener : public efsw::FileWatchListener {
@@ -67,7 +73,13 @@ class TestListener : public efsw::FileWatchListener {
 };
 
 inline std::string getTemporaryDirectory() {
+#if defined( _WIN32 )
+	const auto processId = _getpid();
+#else
+	const auto processId = getpid();
+#endif
 	return std::filesystem::temp_directory_path().string() + "/efsw_test_" +
+		   std::to_string( processId ) + "_" +
 		   std::to_string( std::hash<std::thread::id>{}( std::this_thread::get_id() ) );
 }
 
