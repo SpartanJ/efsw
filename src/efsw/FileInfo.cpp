@@ -55,7 +55,7 @@ static void getWindowsFileIdentity( const std::string& filePath, Uint64& device,
 	wchar_t* widePath = stackPath;
 	if ( static_cast<size_t>( wideLength + 1 ) > sizeof( stackPath ) / sizeof( *stackPath ) ) {
 		heapPath.resize( wideLength + 1 );
-		widePath = heapPath.data();
+		widePath = &heapPath[0];
 	}
 	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, widePath, wideLength ) !=
 		 wideLength )
