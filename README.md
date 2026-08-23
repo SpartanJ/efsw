@@ -160,6 +160,13 @@ Moves between independently registered watches, moves into or out of the watched
 whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
 reported as `Delete` and/or `Add` events.
 
+On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
+recursively covers the other watch root. Recursive watching is implemented using one inotify
+watch per directory, and sharing the same native directory watch between independent logical
+registrations is intentionally unsupported. `addWatch()` returns `Errors::FileOverlapping` for these
+overlapping registrations. Applications that need multiple consumers for the same subtree should
+register it once and multiplex the resulting events internally.
+
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 
 OS-independent watcher, Kqueue and FSEvents for macOS below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.

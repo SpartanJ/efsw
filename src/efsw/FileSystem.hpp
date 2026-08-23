@@ -15,7 +15,7 @@ class FileSystem {
 
 	static char getOSSlash();
 
-	static bool slashAtEnd( std::string& dir );
+	static bool slashAtEnd( const std::string& dir );
 
 	static void dirAddSlashAtEnd( std::string& dir );
 

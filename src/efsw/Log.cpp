@@ -27,6 +27,9 @@ Error Log::createLastError( Error err, std::string log ) {
 		case FileRepeated:
 			LastError = "File repeated in watches ( " + log + " )";
 			break;
+		case FileOverlapping:
+			LastError = "Watch overlaps an existing recursive watch ( " + log + " )";
+			break;
 		case FileOutOfScope:
 			LastError = "Symlink file out of scope ( " + log + " )";
 			break;

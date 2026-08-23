@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <efsw/FileWatcherInotify.hpp>
+#include <utility>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
@@ -96,7 +97,10 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( pathInWatches( dir ) ) {
+	} else if ( NULL != parent && pathInWatches( dir ) ) {
+		/// Internal recursive watches keep the exact-duplicate check: a newly
+		/// traversed subdirectory must not register over an existing explicit
+		/// watch root.
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	} else if ( NULL != parent && FileSystem::isRemoteFS( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRemote, dir );
@@ -113,13 +117,27 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		}
 
 		/// If it's a symlink check if the realpath exists as a watcher, or
-		/// if the path is outside the current dir
-		if ( pathInWatches( link ) ) {
-			return Errors::Log::createLastError( Errors::FileRepeated, directory );
-		} else if ( !linkAllowed( curPath, link ) ) {
+		/// if the path is outside the current dir.
+		/// For explicit user watches the conflict check runs on the resolved
+		/// link target, so that the comparison sees the same normalized path
+		/// that will be registered with inotify.
+		if ( !linkAllowed( curPath, link ) ) {
 			return Errors::Log::createLastError( Errors::FileOutOfScope, dir );
+		} else if ( NULL != parent && pathInWatches( link ) ) {
+			return Errors::Log::createLastError( Errors::FileRepeated, directory );
 		} else {
 			dir = link;
+		}
+	}
+
+	if ( NULL == parent ) {
+		const Errors::Error conflict = getWatchConflict( dir, recursive );
+		if ( Errors::NoError != conflict ) {
+			/// Explicit user watches must not overlap an existing registration in a
+			/// way that would require both to own the same native inotify directory
+			/// watch. Compare only after resolving a symlink so the check uses the
+			/// effective directory that will be registered with inotify.
+			return Errors::Log::createLastError( conflict, directory );
 		}
 	}
 
@@ -136,9 +154,12 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		}
 	}
 
-	// The watch could exists if a file was moved between directories that are being watched
-	// In that case we need to remove the local watch information but *keep* the inotify watch id
-	// open, to be reused with the new watch.
+	// Explicit overlapping user watches are rejected before calling
+	// inotify_add_watch(). Therefore an existing wd here must not represent
+	// a second explicit registration of the same physical directory.
+	//
+	// This path is retained for inotify identity reuse caused by filesystem
+	// topology changes (for example, an already watched directory being moved).
 	{
 		Lock lock( mWatchesLock );
 		auto watchIdExists = mWatches.find( wd );
@@ -611,13 +632,17 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 		/// If OldFileName doesn't exist means that the file has been moved from other folder, so we
 		/// just send the Add event
 		if ( watch->OldFileName.empty() ) {
+			// Install recursive directory coverage before notifying the listener. A
+			// listener can react to Add immediately and create files in the new
+			// directory, so publishing the event first leaves a window where those
+			// files are missed by inotify.
+			checkForNewWatcher( watch, fpath );
+
 			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
 											   Actions::Add );
 
 			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
 											   Actions::Modified );
-
-			checkForNewWatcher( watch, fpath );
 		} else {
 			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
 											   Actions::Moved, watch->OldFileName );
@@ -646,9 +671,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 		watch->OldFileName = "";
 	} else if ( IN_CREATE & action ) {
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
-
 		checkForNewWatcher( watch, fpath );
+
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
 	} else if ( IN_MOVED_FROM & action ) {
 		watch->OldFileName = filename;
 	} else if ( IN_DELETE & action ) {
@@ -686,10 +711,74 @@ std::vector<std::string> FileWatcherInotify::directories() {
 	return dirs;
 }
 
+bool FileWatcherInotify::isDirectoryInside( const std::string& child,
+											const std::string& parent ) {
+	if ( parent.empty() )
+		return false;
+
+	if ( child == parent )
+		return false;
+
+	if ( child.size() <= parent.size() )
+		return false;
+
+	if ( child.compare( 0, parent.size(), parent ) != 0 )
+		return false;
+
+	return FileSystem::slashAtEnd( parent ) ||
+		   child[parent.size()] == FileSystem::getOSSlash();
+}
+
+std::string FileWatcherInotify::directoryComparisonPath( const std::string& directory ) {
+	std::string comparisonPath( directory );
+
+	// inotify identifies the filesystem object, not the spelling supplied by
+	// the caller. Resolve '.', '..', relative paths, and symlink aliases before
+	// deciding whether two explicit registrations overlap.
+	FileInfo fileInfo( comparisonPath );
+	if ( fileInfo.isDirectory() ) {
+		std::string realPath( FileSystem::getRealPath( comparisonPath ) );
+		if ( !realPath.empty() )
+			comparisonPath = std::move( realPath );
+	}
+
+	FileSystem::dirAddSlashAtEnd( comparisonPath );
+	return comparisonPath;
+}
+
+Errors::Error FileWatcherInotify::getWatchConflict( const std::string& directory,
+												 bool recursive ) {
+	Lock l( mRealWatchesLock );
+	const std::string comparisonDirectory( directoryComparisonPath( directory ) );
+
+	for ( const auto& entry : mRealWatches ) {
+		const WatcherInotify* watch = entry.second;
+
+		if ( NULL == watch )
+			continue;
+
+		const std::string existingDirectory( directoryComparisonPath( watch->Directory ) );
+
+		if ( existingDirectory == comparisonDirectory )
+			return Errors::FileRepeated;
+
+		if ( watch->Recursive &&
+			 isDirectoryInside( comparisonDirectory, existingDirectory ) )
+			return Errors::FileOverlapping;
+
+		if ( recursive && isDirectoryInside( existingDirectory, comparisonDirectory ) )
+			return Errors::FileOverlapping;
+	}
+
+	return Errors::NoError;
+}
+
 bool FileWatcherInotify::pathInWatches( const std::string& path ) {
 	Lock l( mRealWatchesLock );
 
-	/// Search in the real watches, since it must allow adding a watch already watched as a subdir
+	/// pathInWatches() checks exact explicit user watches only.
+	/// Overlap with recursive explicit roots is validated separately by
+	/// getWatchConflict() before a new root is registered.
 	WatchMap::iterator it = mRealWatches.begin();
 
 	for ( ; it != mRealWatches.end(); ++it )

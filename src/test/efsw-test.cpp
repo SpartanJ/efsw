@@ -46,6 +46,7 @@ efsw::WatchID handleWatchID( efsw::WatchID watchid ) {
 	switch ( watchid ) {
 		case efsw::Errors::FileNotFound:
 		case efsw::Errors::FileRepeated:
+		case efsw::Errors::FileOverlapping:
 		case efsw::Errors::FileOutOfScope:
 		case efsw::Errors::FileRemote:
 		case efsw::Errors::WatcherFailed:
