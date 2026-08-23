@@ -67,6 +67,7 @@ efsw_watchid handleWatchID( efsw_watchid watchid ) {
 	switch ( watchid ) {
 		case EFSW_NOTFOUND:
 		case EFSW_REPEATED:
+		case EFSW_OVERLAPPING:
 		case EFSW_OUTOFSCOPE:
 		case EFSW_REMOTE:
 		case EFSW_WATCHER_FAILED:

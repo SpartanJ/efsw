@@ -44,6 +44,9 @@
         "args": "",
         "command": "${project_root}/bin/efsw-unit_tests-debug",
         "name": "efsw-unit_tests-debug",
+        "reuse_previous_terminal": true,
+        "run_in_terminal": true,
+        "use_statusbar_terminal": true,
         "working_dir": "${project_root}/bin"
       }
     ]
@@ -116,7 +119,15 @@
         "preset": "generic",
         "relative_file_paths": true
       }
-    }
+    },
+    "run": [
+      {
+        "args": "",
+        "command": "${project_root}/bin/efsw-unit_tests-reldbginfo",
+        "name": "efsw-unit_tests-reldbginfo",
+        "working_dir": "${project_root}/bin/"
+      }
+    ]
   },
   "macos-debug": {
     "build": [

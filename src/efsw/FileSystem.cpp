@@ -40,7 +40,7 @@ char FileSystem::getOSSlash() {
 	return Platform::FileSystem::getOSSlash();
 }
 
-bool FileSystem::slashAtEnd( std::string& dir ) {
+bool FileSystem::slashAtEnd( const std::string& dir ) {
 	return ( dir.size() && dir[dir.size() - 1] == getOSSlash() );
 }
 

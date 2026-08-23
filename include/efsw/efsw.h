@@ -79,7 +79,8 @@ enum efsw_error {
 	EFSW_NOTREADABLE = -4,
 	EFSW_REMOTE = -5,
 	EFSW_WATCHER_FAILED = -6,
-	EFSW_UNSPECIFIED = -7
+	EFSW_UNSPECIFIED = -7,
+	EFSW_OVERLAPPING = -8
 };
 
 enum efsw_option {

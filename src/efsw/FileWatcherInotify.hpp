@@ -71,6 +71,20 @@ class FileWatcherInotify : public FileWatcherImpl {
 	bool pathInWatches( const std::string& path ) override;
 
   private:
+	/// @return Returns true if child is a strict descendant directory of parent.
+	/// Equality is not considered "inside" so callers can distinguish exact
+	/// duplicates from strict descendants.
+	static bool isDirectoryInside( const std::string& child, const std::string& parent );
+
+	/// Returns a canonical, slash-terminated path when the directory can be
+	/// resolved, and a slash-terminated lexical path otherwise.
+	static std::string directoryComparisonPath( const std::string& directory );
+
+	/// Returns FileRepeated for an exact duplicate, FileOverlapping for an
+	/// unsupported recursive overlap, or NoError when registration is safe.
+	/// Read-only, does not modify any state.
+	Errors::Error getWatchConflict( const std::string& directory, bool recursive );
+
 	void run();
 
 	void emitCrossDirectoryMove( Watcher* src, const std::string& srcFile, Watcher* dst,

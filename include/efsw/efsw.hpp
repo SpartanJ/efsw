@@ -101,7 +101,10 @@ enum Error {
 	FileRemote = -5,
 	/// File system watcher failed to watch for changes.
 	WatcherFailed = -6,
-	Unspecified = -7
+	Unspecified = -7,
+	/// The requested watch overlaps an existing recursive watch in a way that
+	/// cannot be represented safely by the selected backend.
+	FileOverlapping = -8
 };
 
 class EFSW_API Log {
