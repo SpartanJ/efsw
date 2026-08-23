@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 #include "utest.h"
 
+#include <efsw/base.hpp>
 #include <efsw/efsw.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
