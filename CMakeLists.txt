@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
-project(efsw VERSION 1.7.1)
+project(efsw VERSION 1.7.2)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if (NOT CMAKE_CXX_STANDARD)
