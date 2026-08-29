@@ -5,8 +5,8 @@ newoption { trigger = "address-sanitizer", description ="Compile with AddressSan
 newoption { trigger = "force-kqueue", description ="Force Kqueue in macOS." }
 
 efsw_major_version	= "1"
-efsw_minor_version	= "6"
-efsw_patch_version	= "3"
+efsw_minor_version	= "7"
+efsw_patch_version	= "1"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function string.starts(String,Start)
