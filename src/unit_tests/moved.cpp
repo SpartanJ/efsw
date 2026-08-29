@@ -273,14 +273,11 @@ UTEST( Moved, CrossDirectoryOptionIsOwnedByRecursiveWatch ) {
 	// Adding a watch with the default options must not disable the first watch's option.
 	EXPECT_TRUE( fileWatcher.addWatch( defaultRoot, &listener, true ) > 0 );
 
-	fileWatcher.watch();
-	EXPECT_TRUE( createFile( enabledRoot + "/enabled_watch_ready" ) );
-	EXPECT_TRUE( createFile( defaultRoot + "/default_watch_ready" ) );
-	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "enabled_watch_ready" ) );
-	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "default_watch_ready" ) );
-	listener.clearEvents();
-
+	// Queue the complete rename before reading inotify. This test verifies
+	// option ownership, not the documented best-effort behavior when a move
+	// pair is split across read batches.
 	EXPECT_TRUE( renameFile( sourceFile, destinationFile ) );
+	fileWatcher.watch();
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "file.txt" ) );
 	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "file.txt", sourceFile ) );
 
@@ -288,6 +285,89 @@ UTEST( Moved, CrossDirectoryOptionIsOwnedByRecursiveWatch ) {
 	fileWatcher.removeWatch( defaultRoot );
 	removeDirectory( enabledRoot );
 	removeDirectory( defaultRoot );
+}
+
+UTEST( Moved, ConcurrentCrossDirectoryMovesKeepTheirCookies ) {
+	if ( useGeneric )
+		return;
+
+	const int fileCount = 32;
+	std::string root = getTemporaryDirectory();
+	std::string sourceDir = root + "/source";
+	std::string destinationDir = root + "/destination";
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( sourceDir ) );
+	EXPECT_TRUE( createDirectory( destinationDir ) );
+
+	for ( int i = 0; i < fileCount; ++i )
+		EXPECT_TRUE( createFile( sourceDir + "/file_" + std::to_string( i ), "content" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( false, 100 );
+	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
+	EXPECT_TRUE( fileWatcher.addWatch( root, &listener, true, options ) > 0 );
+
+	// Queue the burst before the reader starts so all completed rename pairs
+	// fit in one inotify read. This deterministically exercises interleaved
+	// cookie correlation without asserting cross-read pairing.
+	for ( int i = 0; i < fileCount; ++i ) {
+		const std::string filename = "file_" + std::to_string( i );
+		EXPECT_TRUE( renameFile( sourceDir + "/" + filename, destinationDir + "/" + filename ) );
+	}
+	fileWatcher.watch();
+
+	for ( int i = 0; i < fileCount; ++i ) {
+		const std::string filename = "file_" + std::to_string( i );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, filename ) );
+		EXPECT_TRUE(
+			listener.checkEvent( efsw::Actions::Moved, filename, sourceDir + "/" + filename ) );
+	}
+
+	fileWatcher.removeWatch( root );
+	removeDirectory( root );
+}
+
+UTEST( Moved, DeleteAddFallbackPreservesInotifyQueueOrder ) {
+	if ( useGeneric )
+		return;
+
+	std::string root = getTemporaryDirectory();
+	std::string sourceDir = root + "/source";
+	std::string destinationDir = root + "/destination";
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( sourceDir ) );
+	EXPECT_TRUE( createDirectory( destinationDir ) );
+	EXPECT_TRUE( createFile( sourceDir + "/file.txt", "content" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( false, 100 );
+	EXPECT_TRUE( fileWatcher.addWatch( sourceDir, &listener, false ) > 0 );
+	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &listener, false ) > 0 );
+
+	// Queue the complete operation before reading so FROM and TO are replayed
+	// from one batch. Independent logical watches intentionally use Delete + Add;
+	// those callbacks must retain the source-before-destination kernel order.
+	EXPECT_TRUE( renameFile( sourceDir + "/file.txt", destinationDir + "/file.txt" ) );
+	fileWatcher.watch();
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "file.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+
+	const auto events = listener.getEvents();
+	size_t deletePosition = events.size();
+	size_t addPosition = events.size();
+	for ( size_t i = 0; i < events.size(); ++i ) {
+		if ( std::get<1>( events[i] ) != "file.txt" )
+			continue;
+		if ( std::get<0>( events[i] ) == efsw::Actions::Delete )
+			deletePosition = i;
+		else if ( std::get<0>( events[i] ) == efsw::Actions::Add )
+			addPosition = i;
+	}
+	EXPECT_TRUE( deletePosition < addPosition );
+
+	fileWatcher.removeWatch( sourceDir );
+	fileWatcher.removeWatch( destinationDir );
+	removeDirectory( root );
 }
 #endif
 

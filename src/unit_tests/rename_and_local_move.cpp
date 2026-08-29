@@ -23,12 +23,12 @@ UTEST( LocalVsCrossMove, CompareSameDirVsCrossDir ) {
 	EXPECT_TRUE( watchId1 > 0 );
 	EXPECT_TRUE( watchId2 > 0 );
 
-	fileWatcher.watch();
-	EXPECT_TRUE( createFile( watchedDir2 + "/watch_ready" ) );
-	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "watch_ready" ) );
-
 	std::string fileRenamed = watchedDir1 + "/file_renamed.txt";
+	// Queue the complete local rename before reading inotify. Moved correlation
+	// is intentionally limited to one read batch so callbacks never need to be
+	// held and reordered while waiting for a potentially missing pair.
 	EXPECT_TRUE( renameFile( file1, fileRenamed ) );
+	fileWatcher.watch();
 
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "file_renamed.txt" ) );
 
