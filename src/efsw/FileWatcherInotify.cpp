@@ -441,10 +441,13 @@ void FileWatcherInotify::run() {
 								destination = watcher->second;
 						}
 
+						// Watches of the same file watcher share the inotify fd, so any pair of
+						// watches that enabled the option can be correlated, no matter whether
+						// they belong to the same recursive tree or were added separately.
 						const bool coalesce =
 							destination && ( destination == curWatcher ||
 											 ( destination->reportCrossDirectoryMoves &&
-											   destination->ID == curWatcher->ID ) );
+											   curWatcher->reportCrossDirectoryMoves ) );
 						if ( coalesce ) {
 							pendingMoves.erase( event.cookie );
 							pendingMoves.emplace( event.cookie,
