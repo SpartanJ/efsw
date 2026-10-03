@@ -3,6 +3,7 @@
 #include <efsw/Lock.hpp>
 #include <efsw/String.hpp>
 #include <efsw/System.hpp>
+#include <utility>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
@@ -74,7 +75,7 @@ WatchID FileWatcherWin32::addWatch( const std::string& directory, FileWatchListe
 	watch->Watch->Directory = dir;
 	watch->Watch->Watch = this;
 	watch->Watch->Listener = watcher;
-	watch->Watch->ReportCrossDirectoryMoves = reportCrossDirectoryMoves && recursive;
+	watch->Watch->ReportCrossDirectoryMoves = reportCrossDirectoryMoves;
 	watch->Watch->DirName = new char[dir.length() + 1];
 	strcpy( watch->Watch->DirName, dir.c_str() );
 
@@ -116,6 +117,7 @@ void FileWatcherWin32::removeWatch( WatchID watchid ) {
 void FileWatcherWin32::removeWatch( WatcherStructWin32* watch ) {
 	Lock lock( mWatchesLock );
 
+	discardCrossWatchEvents( watch->Watch );
 	StopWatch( watch );
 	mWatches.erase( watch );
 	mRetiredWatches.insert( watch );
@@ -134,6 +136,7 @@ void FileWatcherWin32::removeAllWatches() {
 	Watches::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
+		discardCrossWatchEvents( ( *iter )->Watch );
 		StopWatch( ( *iter ) );
 		mRetiredWatches.insert( *iter );
 	}
@@ -173,6 +176,7 @@ void FileWatcherWin32::run() {
 			DWORD timeout = INFINITE;
 			{
 				Lock lock( mWatchesLock );
+				timeout = crossWatchTimeout();
 				for ( auto watch : mWatches ) {
 					const DWORD pendingTimeout = PendingMoveWaitTimeout( watch->Watch );
 					if ( pendingTimeout < timeout )
@@ -190,16 +194,117 @@ void FileWatcherWin32::run() {
 				} else if ( mWatches.find( (WatcherStructWin32*)ov ) != mWatches.end() ) {
 					WatchCallback( numOfBytes, ov );
 					FlushPendingMoves( ( (WatcherStructWin32*)ov )->Watch );
+					flushCrossWatchEvents();
 				}
 			} else if ( !res && GetLastError() == WAIT_TIMEOUT ) {
 				Lock lock( mWatchesLock );
 				for ( auto watch : mWatches )
 					FlushPendingMoves( watch->Watch );
+				flushCrossWatchEvents();
 			}
 		} else {
 			System::sleep( 10 );
 		}
 	} while ( mInitOK );
+}
+
+bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch,
+											  const ExtendedEventWin32& event ) {
+	if ( !watch->ReportCrossDirectoryMoves || event.FileId.QuadPart == 0 ||
+		 ( event.Action != FILE_ACTION_REMOVED && event.Action != FILE_ACTION_ADDED ) )
+		return false;
+
+	const bool removed = event.Action == FILE_ACTION_REMOVED;
+	std::vector<CrossWatchEvent>& opposite = removed ? mCrossWatchAdds : mCrossWatchRemovals;
+	std::vector<CrossWatchEvent>& pending = removed ? mCrossWatchRemovals : mCrossWatchAdds;
+	size_t matches = 0;
+	auto match = opposite.end();
+	for ( auto it = opposite.begin(); it != opposite.end(); ++it ) {
+		if ( it->FileId.QuadPart == event.FileId.QuadPart ) {
+			match = it;
+			matches++;
+		}
+	}
+	if ( matches == 1 ) {
+		WatcherWin32* source = removed ? watch : match->Watch;
+		WatcherWin32* destination = removed ? match->Watch : watch;
+		const std::string& sourceName = removed ? event.FileName : match->FileName;
+		const std::string& destinationName = removed ? match->FileName : event.FileName;
+		std::string sourcePath = std::string( source->DirName ) + sourceName;
+		std::string destinationPath = std::string( destination->DirName ) + destinationName;
+		FileInfo destinationInfo( destinationPath );
+		FileInfo sourceRoot( source->DirName );
+		if ( sourcePath != destinationPath && source->ReportCrossDirectoryMoves &&
+			 destination->ReportCrossDirectoryMoves &&
+			 destinationInfo.Inode == static_cast<Uint64>( event.FileId.QuadPart ) &&
+			 destinationInfo.Device == sourceRoot.Device &&
+			 ( destinationInfo.isDirectory() ||
+			   ( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) ) {
+			// A move within one registered tree uses the same relative-name handling.
+			if ( source == destination ) {
+				handleAction( destination, destinationName, FILE_ACTION_RENAMED_NEW_NAME,
+							  sourceName );
+			} else {
+				std::string folder = FileSystem::pathRemoveFileName( destinationPath );
+				FileSystem::dirAddSlashAtEnd( folder );
+				destination->Listener->handleFileAction(
+					destination->ID, folder, FileSystem::fileNameFromPath( destinationPath ),
+					Actions::Moved, FileSystem::canonicalSourcePath( sourcePath ) );
+			}
+			opposite.erase( match );
+			return true;
+		}
+	}
+	CrossWatchEvent stored{ watch, event.FileName, event.FileId, GetTickCount64() };
+	pending.emplace_back( std::move( stored ) );
+	return true;
+}
+
+DWORD FileWatcherWin32::crossWatchTimeout() const {
+	const ULONGLONG now = GetTickCount64();
+	DWORD timeout = INFINITE;
+	for ( const auto& list : { &mCrossWatchRemovals, &mCrossWatchAdds } ) {
+		for ( const CrossWatchEvent& event : *list ) {
+			const ULONGLONG elapsed = now - event.CreatedAt;
+			const DWORD remaining = elapsed >= 100 ? 0 : static_cast<DWORD>( 100 - elapsed );
+			if ( remaining < timeout )
+				timeout = remaining;
+		}
+	}
+	return timeout;
+}
+
+void FileWatcherWin32::flushCrossWatchEvents() {
+	const ULONGLONG now = GetTickCount64();
+	for ( auto it = mCrossWatchRemovals.begin(); it != mCrossWatchRemovals.end(); ) {
+		if ( now - it->CreatedAt >= 100 ) {
+			handleAction( it->Watch, it->FileName, FILE_ACTION_REMOVED );
+			it = mCrossWatchRemovals.erase( it );
+		} else
+			++it;
+	}
+	for ( auto it = mCrossWatchAdds.begin(); it != mCrossWatchAdds.end(); ) {
+		if ( now - it->CreatedAt >= 100 ) {
+			handleAction( it->Watch, it->FileName, FILE_ACTION_ADDED );
+			it = mCrossWatchAdds.erase( it );
+		} else
+			++it;
+	}
+}
+
+void FileWatcherWin32::discardCrossWatchEvents( WatcherWin32* watch ) {
+	for ( auto it = mCrossWatchRemovals.begin(); it != mCrossWatchRemovals.end(); ) {
+		if ( it->Watch == watch )
+			it = mCrossWatchRemovals.erase( it );
+		else
+			++it;
+	}
+	for ( auto it = mCrossWatchAdds.begin(); it != mCrossWatchAdds.end(); ) {
+		if ( it->Watch == watch )
+			it = mCrossWatchAdds.erase( it );
+		else
+			++it;
+	}
 }
 
 void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename,

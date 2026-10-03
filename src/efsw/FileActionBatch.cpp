@@ -6,13 +6,15 @@ namespace efsw {
 
 FileActionBatch::Event::Event( WatchID watchid, const std::string& directory,
 							   const std::string& filename, Action action,
-							   const std::string& oldFilename, const FileInfo& fileInfo ) :
+							   const std::string& oldFilename, const FileInfo& fileInfo,
+							   FileWatchListener* listener ) :
 	Watch( watchid ),
 	Directory( directory ),
 	Filename( filename ),
 	ActionType( action ),
 	OldFilename( oldFilename ),
-	Info( fileInfo ) {}
+	Info( fileInfo ),
+	Listener( listener ) {}
 
 void FileActionBatch::clear() {
 	mEvents.clear();
@@ -20,8 +22,9 @@ void FileActionBatch::clear() {
 
 void FileActionBatch::add( WatchID watchid, const std::string& directory,
 						   const std::string& filename, Action action,
-						   const std::string& oldFilename, const FileInfo& fileInfo ) {
-	mEvents.emplace_back( watchid, directory, filename, action, oldFilename, fileInfo );
+						   const std::string& oldFilename, const FileInfo& fileInfo,
+						   FileWatchListener* listener ) {
+	mEvents.emplace_back( watchid, directory, filename, action, oldFilename, fileInfo, listener );
 }
 
 static bool metadataMatches( const FileInfo& source, const FileInfo& destination ) {
@@ -41,15 +44,12 @@ static bool pathContains( const std::string& directory, const std::string& path 
 }
 
 void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
-	if ( NULL == listener ) {
-		clear();
-		return;
-	}
-
 	if ( !detectMoves ) {
 		for ( const Event& event : mEvents ) {
-			listener->handleFileAction( event.Watch, event.Directory, event.Filename,
-									event.ActionType, event.OldFilename );
+			FileWatchListener* target = event.Listener ? event.Listener : listener;
+			if ( target )
+				target->handleFileAction( event.Watch, event.Directory, event.Filename,
+										  event.ActionType, event.OldFilename );
 		}
 		clear();
 		return;
@@ -112,13 +112,17 @@ void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) 
 		if ( move != moves.end() ) {
 			const Event& destination = mEvents[i];
 			const Event& source = mEvents[move->second];
-			listener->handleFileAction( destination.Watch, destination.Directory,
-										destination.Filename, Actions::Moved,
-										 FileSystem::canonicalSourcePath( source.Info.Filepath ) );
+			FileWatchListener* target = destination.Listener ? destination.Listener : listener;
+			if ( target )
+				target->handleFileAction( destination.Watch, destination.Directory,
+										  destination.Filename, Actions::Moved,
+										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
 		} else if ( !suppressed[i] ) {
 			const Event& event = mEvents[i];
-			listener->handleFileAction( event.Watch, event.Directory, event.Filename,
-										event.ActionType, event.OldFilename );
+			FileWatchListener* target = event.Listener ? event.Listener : listener;
+			if ( target )
+				target->handleFileAction( event.Watch, event.Directory, event.Filename,
+										  event.ActionType, event.OldFilename );
 		}
 	}
 

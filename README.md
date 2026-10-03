@@ -143,11 +143,11 @@ FSEvents for macOS Lion and beyond in some cases will generate more actions than
 
 The generic watcher relies on stable filesystem identity to detect file and directory renames/moves. On POSIX it uses device and inode information; on Windows it uses the volume serial number and file index. If identity is unavailable or ambiguous, the watcher reports Add/Delete events instead.
 
-Cross-directory moves inside a single recursive watch can optionally be reported as one `Moved`
-event by setting `Options::ReportCrossDirectoryMoves`. In that case `oldFilename` contains the
-absolute source path. This behavior is best-effort and currently supported by the Linux inotify,
-Windows, and macOS FSEvents backends, the kqueue backend on macOS and BSD, and the generic watcher
-on POSIX and Windows.
+Cross-directory moves can optionally be reported as one `Moved` event by setting
+`Options::ReportCrossDirectoryMoves`. This works within a recursive watch and between separately
+registered watches on the same `FileWatcher` when both watches enable the option. In that case
+`oldFilename` contains the absolute source path. This behavior is best-effort and supported by the
+Linux inotify, Windows, macOS FSEvents, macOS and BSD kqueue, and generic backends.
 
 The native Windows implementation requires Windows 10 version 1709 or newer and NTFS for
 `ReadDirectoryChangesExW` extended file identifiers. When that API or information class is
@@ -156,9 +156,9 @@ to work, but cross-directory moves are reported as `Delete` + `Add`. The generic
 does not require `ReadDirectoryChangesExW` and can correlate moves on older supported Windows
 versions when the filesystem provides stable volume and file identifiers.
 
-Moves between independently registered watches, moves into or out of the watched tree, and moves
-whose native event pair is incomplete or whose filesystem identity is ambiguous continue to be
-reported as `Delete` and/or `Add` events.
+Moves between watches without the option on both ends, moves into or out of the watched tree, and
+moves whose native event pair is incomplete or whose filesystem identity is ambiguous continue to
+be reported as `Delete` and/or `Add` events.
 
 On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
 recursively covers the other watch root. Recursive watching is implemented using one inotify

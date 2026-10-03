@@ -23,8 +23,14 @@ WatcherGeneric::~WatcherGeneric() {
 }
 
 void WatcherGeneric::watch() {
-	// Recursive scans must finish updating the complete watcher tree before callbacks are delivered.
-	// A listener may immediately mutate a directory after receiving an event.
+	if ( SharedActionBatch ) {
+		mCollectActions = true;
+		DirWatch->watch();
+		mCollectActions = false;
+		return;
+	}
+	// Recursive scans must finish updating the complete watcher tree before callbacks are
+	// delivered. A listener may immediately mutate a directory after receiving an event.
 	mCollectActions = Recursive;
 	if ( mCollectActions )
 		mActionBatch.clear();
@@ -32,8 +38,7 @@ void WatcherGeneric::watch() {
 	DirWatch->watch();
 
 	if ( mCollectActions ) {
-		mActionBatch.dispatch( Listener,
-						   ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
+		mActionBatch.dispatch( Listener, ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
 		mCollectActions = false;
 	}
 }
@@ -53,7 +58,9 @@ void WatcherGeneric::handleAction( const std::string& directory, const std::stri
 								   Action action, const std::string& oldFilename,
 								   const FileInfo& fileInfo ) {
 	if ( mCollectActions ) {
-		mActionBatch.add( ID, directory, filename, action, oldFilename, fileInfo );
+		FileActionBatch* batch = SharedActionBatch ? SharedActionBatch : &mActionBatch;
+		batch->add( ID, directory, filename, action, oldFilename, fileInfo,
+					SharedActionBatch ? Listener : NULL );
 	} else {
 		Listener->handleFileAction( ID, directory, filename, action, oldFilename );
 	}

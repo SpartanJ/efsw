@@ -13,7 +13,8 @@ class FileActionBatch {
 	void clear();
 
 	void add( WatchID watchid, const std::string& directory, const std::string& filename,
-			  Action action, const std::string& oldFilename, const FileInfo& fileInfo );
+			  Action action, const std::string& oldFilename, const FileInfo& fileInfo,
+			  FileWatchListener* listener = NULL );
 
 	void dispatch( FileWatchListener* listener, bool detectMoves = true );
 
@@ -25,9 +26,11 @@ class FileActionBatch {
 		Action ActionType;
 		std::string OldFilename;
 		FileInfo Info;
+		FileWatchListener* Listener;
 
 		Event( WatchID watchid, const std::string& directory, const std::string& filename,
-			   Action action, const std::string& oldFilename, const FileInfo& fileInfo );
+			   Action action, const std::string& oldFilename, const FileInfo& fileInfo,
+			   FileWatchListener* listener );
 	};
 
 	std::vector<Event> mEvents;

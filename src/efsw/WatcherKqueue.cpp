@@ -335,9 +335,11 @@ void WatcherKqueue::handleAction( const std::string& filename, efsw::Action acti
 								  const std::string& oldFilename, const FileInfo& fileInfo ) {
 	WatcherKqueue* rootWatch = root();
 	if ( rootWatch->mCollectActions ) {
-		rootWatch->mActionBatch.add( ID, Directory, FileSystem::fileNameFromPath( filename ),
-									 action, FileSystem::fileNameFromPath( oldFilename ),
-									 fileInfo );
+		FileActionBatch* batch =
+			mWatcher->mSharedActionBatch ? mWatcher->mSharedActionBatch : &rootWatch->mActionBatch;
+		batch->add( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
+					FileSystem::fileNameFromPath( oldFilename ), fileInfo,
+					mWatcher->mSharedActionBatch ? Listener : NULL );
 	} else {
 		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
 									FileSystem::fileNameFromPath( oldFilename ) );
@@ -363,8 +365,10 @@ void WatcherKqueue::watch() {
 		return;
 	}
 	bool isRootWatch = NULL == mParent;
-	if ( isRootWatch && mReportCrossDirectoryMoves && Recursive ) {
-		mActionBatch.clear();
+	if ( isRootWatch &&
+		 ( mWatcher->mSharedActionBatch || ( mReportCrossDirectoryMoves && Recursive ) ) ) {
+		if ( !mWatcher->mSharedActionBatch )
+			mActionBatch.clear();
 		mCollectActions = true;
 		mNeedsRecursiveRescan = false;
 	}
@@ -438,7 +442,8 @@ void WatcherKqueue::watch() {
 	if ( isRootWatch && mCollectActions ) {
 		if ( mNeedsRecursiveRescan )
 			rescanTree();
-		mActionBatch.dispatch( Listener );
+		if ( !mWatcher->mSharedActionBatch )
+			mActionBatch.dispatch( Listener );
 		mCollectActions = false;
 	}
 }

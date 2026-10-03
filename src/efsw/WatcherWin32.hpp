@@ -92,7 +92,6 @@ class WatcherWin32 : public Watcher {
 	char* DirName;
 	sLastModifiedEvent LastModifiedEvent;
 	std::vector<PendingRenameWin32> PendingRenames;
-	std::vector<PendingRenameWin32> PendingRemovals;
 };
 
 } // namespace efsw

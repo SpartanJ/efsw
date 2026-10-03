@@ -13,6 +13,7 @@ class WatcherGeneric : public Watcher {
 	FileWatcherImpl* WatcherImpl;
 	DirWatcherGeneric* DirWatch;
 	bool ReportCrossDirectoryMoves;
+	FileActionBatch* SharedActionBatch{ NULL };
 
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
 					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );

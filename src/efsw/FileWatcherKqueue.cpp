@@ -179,10 +179,22 @@ void FileWatcherKqueue::run() {
 	do {
 		{
 			Lock lock( mWatchesLock );
+			FileActionBatch sharedActions;
 
 			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
+				WatcherKqueue* kqueueWatch = dynamic_cast<WatcherKqueue*>( it->second );
+				bool collect = kqueueWatch && kqueueWatch->reportsCrossDirectoryMoves() &&
+							   FileInfo::inodeSupported();
+				mSharedActionBatch = collect ? &sharedActions : NULL;
+				WatcherGeneric* genericWatch = dynamic_cast<WatcherGeneric*>( it->second );
+				if ( genericWatch && genericWatch->ReportCrossDirectoryMoves )
+					genericWatch->SharedActionBatch = &sharedActions;
 				it->second->watch();
+				if ( genericWatch )
+					genericWatch->SharedActionBatch = NULL;
+				mSharedActionBatch = NULL;
 			}
+			sharedActions.dispatch( NULL );
 		}
 
 		System::sleep( mPollingFreq );

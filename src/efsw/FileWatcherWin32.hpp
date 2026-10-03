@@ -44,6 +44,12 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	/// @return Returns a list of the directories that are being watched
 	std::vector<std::string> directories() override;
 
+	// Called on the IOCP thread while mWatchesLock is held.
+	bool handleCrossWatchEvent( WatcherWin32* watch, const ExtendedEventWin32& event );
+	DWORD crossWatchTimeout() const;
+	void flushCrossWatchEvents();
+	void discardCrossWatchEvents( WatcherWin32* watch );
+
   protected:
 	HANDLE mIOCP;
 	Watches mWatches;
@@ -53,6 +59,14 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	WatchID mLastWatchID;
 	Thread* mThread;
 	Mutex mWatchesLock;
+	struct CrossWatchEvent {
+		WatcherWin32* Watch;
+		std::string FileName;
+		LARGE_INTEGER FileId;
+		ULONGLONG CreatedAt;
+	};
+	std::vector<CrossWatchEvent> mCrossWatchRemovals;
+	std::vector<CrossWatchEvent> mCrossWatchAdds;
 
 	bool pathInWatches( const std::string& path ) override;
 

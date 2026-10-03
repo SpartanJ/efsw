@@ -119,9 +119,73 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			watches.push_back( watch.second );
 	}
 
+	// The native stream is shared, so pair rename records before splitting them
+	// into logical watches. Each watch otherwise sees only half of the move.
+	std::vector<bool> paired( eventCount, false );
+	if ( isGranular() ) {
+		for ( size_t i = 0; i < eventCount; ++i ) {
+			const FSEvent& first = fileWatcher->mEventBuffer[i];
+			if ( paired[i] || first.inode == 0 ||
+				 !( first.Flags & efswFSEventStreamEventFlagItemRenamed ) )
+				continue;
+			for ( size_t j = i + 1; j < eventCount; ++j ) {
+				const FSEvent& second = fileWatcher->mEventBuffer[j];
+				if ( paired[j] || second.inode != first.inode || first.Path == second.Path ||
+					 !( second.Flags & efswFSEventStreamEventFlagItemRenamed ) )
+					continue;
+				const bool firstExists = FileInfo::exists( first.Path );
+				const bool secondExists = FileInfo::exists( second.Path );
+				if ( firstExists == secondExists )
+					continue;
+				const FSEvent& source = firstExists ? second : first;
+				const FSEvent& destination = firstExists ? first : second;
+				std::shared_ptr<WatcherFSEvents> sourceWatch, destinationWatch;
+				for ( const auto& watch : watches ) {
+					if ( watch->handlesPath( source.Path ) )
+						sourceWatch = watch;
+					if ( watch->handlesPath( destination.Path ) )
+						destinationWatch = watch;
+				}
+				if ( !sourceWatch || !destinationWatch || sourceWatch == destinationWatch ||
+					 !sourceWatch->ReportCrossDirectoryMoves ||
+					 !destinationWatch->ReportCrossDirectoryMoves )
+					continue;
+				FileInfo sourceRoot( sourceWatch->Directory );
+				FileInfo destinationInfo( destination.Path );
+				if ( destinationInfo.Inode != first.inode ||
+					 destinationInfo.Device != sourceRoot.Device ||
+					 !( destinationInfo.isDirectory() ||
+						( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) )
+					continue;
+				std::string dir = FileSystem::pathRemoveFileName( destination.Path );
+				FileSystem::dirAddSlashAtEnd( dir );
+				destinationWatch->Listener->handleFileAction(
+					destinationWatch->ID, FileSystem::precomposeFileName( dir ),
+					FileSystem::precomposeFileName(
+						FileSystem::fileNameFromPath( destination.Path ) ),
+					Actions::Moved,
+					FileSystem::precomposeFileName(
+						FileSystem::canonicalSourcePath( source.Path ) ) );
+				paired[i] = paired[j] = true;
+				for ( size_t k = 0; k < eventCount; ++k ) {
+					const FSEvent& duplicate = fileWatcher->mEventBuffer[k];
+					if ( duplicate.inode == first.inode &&
+						 ( duplicate.Path == source.Path || duplicate.Path == destination.Path ) &&
+						 ( duplicate.Flags & ( efswFSEventStreamEventFlagItemRenamed |
+											   efswFSEventStreamEventFlagItemCreated |
+											   efswFSEventStreamEventFlagItemRemoved ) ) )
+						paired[k] = true;
+				}
+				break;
+			}
+		}
+	}
+
 	for ( const auto& watcher : watches ) {
 		watcher->EventBuffer.clear();
 		for ( size_t i = 0; i < eventCount; ++i ) {
+			if ( paired[i] )
+				continue;
 			FSEvent& event = fileWatcher->mEventBuffer[i];
 			bool mustRescan = event.Flags & ( kFSEventStreamEventFlagUserDropped |
 											  kFSEventStreamEventFlagKernelDropped |

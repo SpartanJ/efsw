@@ -59,6 +59,7 @@ class WatcherKqueue : public Watcher {
 	void removeWatch( WatchID watchid );
 
 	bool initOK();
+	bool reportsCrossDirectoryMoves() const { return mReportCrossDirectoryMoves; }
 
 	int lastErrno();
 
