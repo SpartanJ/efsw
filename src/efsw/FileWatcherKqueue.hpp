@@ -61,6 +61,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	bool mAddingWatcher;
 
 	unsigned int mPollingFreq{ 500 };
+	FileActionBatch mSharedActions;
 	FileActionBatch* mSharedActionBatch{ NULL };
 
 	bool isAddingWatcher() const;

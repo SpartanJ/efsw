@@ -5,6 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
+#include <sys/stat.h>
 #include <sys/utsname.h>
 
 namespace efsw {
@@ -111,7 +112,8 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 		}
 	}
 
-	std::vector<std::shared_ptr<WatcherFSEvents>> watches;
+	std::vector<std::shared_ptr<WatcherFSEvents>>& watches = fileWatcher->mWatchBuffer;
+	watches.clear();
 	{
 		std::lock_guard<std::mutex> lock( fileWatcher->mWatchesMutex );
 		watches.reserve( fileWatcher->mWatches.size() );
@@ -121,7 +123,8 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 
 	// The native stream is shared, so pair rename records before splitting them
 	// into logical watches. Each watch otherwise sees only half of the move.
-	std::vector<bool> paired( eventCount, false );
+	std::vector<bool>& paired = fileWatcher->mPairedEvents;
+	paired.assign( eventCount, false );
 	if ( isGranular() ) {
 		for ( size_t i = 0; i < eventCount; ++i ) {
 			const FSEvent& first = fileWatcher->mEventBuffer[i];
@@ -150,12 +153,16 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 					 !sourceWatch->ReportCrossDirectoryMoves ||
 					 !destinationWatch->ReportCrossDirectoryMoves )
 					continue;
-				FileInfo sourceRoot( sourceWatch->Directory );
-				FileInfo destinationInfo( destination.Path );
-				if ( destinationInfo.Inode != first.inode ||
-					 destinationInfo.Device != sourceRoot.Device ||
-					 !( destinationInfo.isDirectory() ||
-						( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) )
+				struct stat sourceRootStat;
+				if ( stat( sourceWatch->Directory.c_str(), &sourceRootStat ) != 0 )
+					continue;
+				struct stat destinationStat;
+				if ( stat( destination.Path.c_str(), &destinationStat ) != 0 )
+					continue;
+				if ( static_cast<Uint64>( destinationStat.st_ino ) != first.inode ||
+					 destinationStat.st_dev != sourceRootStat.st_dev ||
+					 !( S_ISDIR( destinationStat.st_mode ) ||
+						( S_ISREG( destinationStat.st_mode ) && destinationStat.st_nlink == 1 ) ) )
 					continue;
 				std::string dir = FileSystem::pathRemoveFileName( destination.Path );
 				FileSystem::dirAddSlashAtEnd( dir );
@@ -199,6 +206,7 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			watcher->process();
 		}
 	}
+	watches.clear();
 
 	efDEBUG( "\n" );
 }

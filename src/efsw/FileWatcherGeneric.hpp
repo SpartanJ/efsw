@@ -49,6 +49,7 @@ class FileWatcherGeneric : public FileWatcherImpl {
 
 	/// Map of WatchID to WatchStruct pointers
 	WatchList mWatches;
+	FileActionBatch mSharedActions;
 
 	Mutex mWatchesLock;
 

@@ -83,6 +83,8 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	dispatch_queue_t mDispatchQueue;
 	std::vector<const void*> mStreamPaths;
 	std::vector<FSEvent> mEventBuffer;
+	std::vector<std::shared_ptr<WatcherFSEvents>> mWatchBuffer;
+	std::vector<bool> mPairedEvents;
 	bool mWatching;
 
 	bool pathInWatches( const std::string& path ) override;

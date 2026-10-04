@@ -12,6 +12,7 @@
 
 #include <sys/stat.h>
 
+#include <cstring>
 #include <limits.h>
 #include <stdlib.h>
 
@@ -53,8 +54,8 @@ static void getWindowsFileIdentity( const std::string& filePath, Uint64& device,
 
 	std::wstring heapPath;
 	wchar_t* widePath = stackPath;
-	if ( static_cast<size_t>( wideLength + 1 ) > sizeof( stackPath ) / sizeof( *stackPath ) ) {
-		heapPath.resize( wideLength + 1 );
+	if ( static_cast<size_t>( wideLength ) + 1 > sizeof( stackPath ) / sizeof( *stackPath ) ) {
+		heapPath.resize( static_cast<size_t>( wideLength ) + 1 );
 		widePath = &heapPath[0];
 	}
 	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, widePath, wideLength ) !=
@@ -78,9 +79,48 @@ static void getWindowsFileIdentity( const std::string& filePath, Uint64& device,
 }
 #endif
 
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+static bool existsWithTrailingSlash( const std::string& filePath ) {
+	// FileInfo::exists historically checked the path without its final slash.
+	const size_t pathLength = filePath.size() - 1;
+	char path[PATH_MAX + 1];
+	if ( pathLength >= sizeof( path ) )
+		return false;
+	memcpy( path, filePath.data(), pathLength );
+	path[pathLength] = '\0';
+	struct stat st;
+	return stat( path, &st ) == 0;
+}
+#endif
+
 bool FileInfo::exists( const std::string& filePath ) {
-	FileInfo fi( filePath );
-	return fi.exists();
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+	if ( FileSystem::slashAtEnd( filePath ) )
+		return existsWithTrailingSlash( filePath );
+	struct stat st;
+	return stat( filePath.c_str(), &st ) == 0;
+#else
+	const size_t pathLength = filePath.size() - ( FileSystem::slashAtEnd( filePath ) ? 1 : 0 );
+	if ( pathLength > INT_MAX )
+		return false;
+	const int utf8Length = static_cast<int>( pathLength );
+	const int wideLength = MultiByteToWideChar( CP_UTF8, 0, filePath.data(), utf8Length, NULL, 0 );
+	if ( wideLength <= 0 )
+		return false;
+	wchar_t stackPath[512];
+	std::wstring heapPath;
+	wchar_t* widePath = stackPath;
+	if ( static_cast<size_t>( wideLength ) + 1 > sizeof( stackPath ) / sizeof( *stackPath ) ) {
+		heapPath.resize( static_cast<size_t>( wideLength ) + 1 );
+		widePath = &heapPath[0];
+	}
+	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), utf8Length, widePath, wideLength ) !=
+		 wideLength )
+		return false;
+	widePath[wideLength] = L'\0';
+	struct _stat st;
+	return _wstat( widePath, &st ) == 0;
+#endif
 }
 
 bool FileInfo::isLink( const std::string& filePath ) {
@@ -257,25 +297,7 @@ std::string FileInfo::linksTo() {
 }
 
 bool FileInfo::exists() {
-	bool slashAtEnd = FileSystem::slashAtEnd( Filepath );
-
-	if ( slashAtEnd ) {
-		FileSystem::dirRemoveSlashAtEnd( Filepath );
-	}
-
-#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	struct stat st;
-	int res = stat( Filepath.c_str(), &st );
-#else
-	struct _stat st;
-	int res = _wstat( FileSystem::getWidePath( Filepath ).c_str(), &st );
-#endif
-
-	if ( slashAtEnd ) {
-		FileSystem::dirAddSlashAtEnd( Filepath );
-	}
-
-	return 0 == res;
+	return FileInfo::exists( Filepath );
 }
 
 FileInfo& FileInfo::operator=( const FileInfo& Other ) {

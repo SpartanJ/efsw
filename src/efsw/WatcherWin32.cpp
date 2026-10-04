@@ -123,7 +123,7 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 	} while ( pNotify->NextEntryOffset != 0 );
 
 	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
-		const ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
+		ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
 		const std::string& nfile = event.FileName;
 		bool skip = false;
 

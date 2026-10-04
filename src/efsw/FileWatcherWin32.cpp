@@ -208,8 +208,7 @@ void FileWatcherWin32::run() {
 	} while ( mInitOK );
 }
 
-bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch,
-											  const ExtendedEventWin32& event ) {
+bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch, ExtendedEventWin32& event ) {
 	if ( !watch->ReportCrossDirectoryMoves || event.FileId.QuadPart == 0 ||
 		 ( event.Action != FILE_ACTION_REMOVED && event.Action != FILE_ACTION_ADDED ) )
 		return false;
@@ -255,7 +254,7 @@ bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch,
 			return true;
 		}
 	}
-	CrossWatchEvent stored{ watch, event.FileName, event.FileId, GetTickCount64() };
+	CrossWatchEvent stored{ watch, std::move( event.FileName ), event.FileId, GetTickCount64() };
 	pending.emplace_back( std::move( stored ) );
 	return true;
 }

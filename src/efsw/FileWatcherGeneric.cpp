@@ -121,17 +121,17 @@ void FileWatcherGeneric::run() {
 	do {
 		{
 			Lock lock( mWatchesLock );
-			FileActionBatch sharedActions;
+			mSharedActions.clear();
 
 			WatchList::iterator it = mWatches.begin();
 
 			for ( ; it != mWatches.end(); ++it ) {
 				if ( ( *it )->ReportCrossDirectoryMoves && FileInfo::inodeSupported() )
-					( *it )->SharedActionBatch = &sharedActions;
+					( *it )->SharedActionBatch = &mSharedActions;
 				( *it )->watch();
 				( *it )->SharedActionBatch = NULL;
 			}
-			sharedActions.dispatch( NULL );
+			mSharedActions.dispatch( NULL );
 		}
 
 		if ( mInitOK )

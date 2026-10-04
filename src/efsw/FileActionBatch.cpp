@@ -44,6 +44,20 @@ static bool pathContains( const std::string& directory, const std::string& path 
 }
 
 void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
+	if ( detectMoves ) {
+		bool hasAdd = false;
+		bool hasDelete = false;
+		for ( const Event& event : mEvents ) {
+			if ( event.Info.Inode == 0 )
+				continue;
+			hasAdd |= event.ActionType == Actions::Add;
+			hasDelete |= event.ActionType == Actions::Delete;
+			if ( hasAdd && hasDelete )
+				break;
+		}
+		if ( !hasAdd || !hasDelete )
+			detectMoves = false;
+	}
 	if ( !detectMoves ) {
 		for ( const Event& event : mEvents ) {
 			FileWatchListener* target = event.Listener ? event.Listener : listener;

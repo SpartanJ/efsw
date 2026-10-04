@@ -45,7 +45,7 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	std::vector<std::string> directories() override;
 
 	// Called on the IOCP thread while mWatchesLock is held.
-	bool handleCrossWatchEvent( WatcherWin32* watch, const ExtendedEventWin32& event );
+	bool handleCrossWatchEvent( WatcherWin32* watch, ExtendedEventWin32& event );
 	DWORD crossWatchTimeout() const;
 	void flushCrossWatchEvents();
 	void discardCrossWatchEvents( WatcherWin32* watch );
