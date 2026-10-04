@@ -127,6 +127,8 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 		const std::string& nfile = event.FileName;
 		bool skip = false;
 
+		// Removed and added records may arrive from different watch handles in either order.
+		// The FileWatcher-level matcher owns both pending sides and consumes matched records.
 		if ( static_cast<FileWatcherWin32*>( pWatch->Watch )
 				 ->handleCrossWatchEvent( pWatch, event ) )
 			continue;

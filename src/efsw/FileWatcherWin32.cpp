@@ -214,6 +214,8 @@ bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch, ExtendedEvent
 		return false;
 
 	const bool removed = event.Action == FILE_ACTION_REMOVED;
+	// Search the opposite side across every watch registered on this FileWatcher.
+	// Buffer either side so IOCP completion order does not decide whether a move is found.
 	std::vector<CrossWatchEvent>& opposite = removed ? mCrossWatchAdds : mCrossWatchRemovals;
 	std::vector<CrossWatchEvent>& pending = removed ? mCrossWatchRemovals : mCrossWatchAdds;
 	size_t matches = 0;
@@ -233,6 +235,8 @@ bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch, ExtendedEvent
 		std::string destinationPath = std::string( destination->DirName ) + destinationName;
 		FileInfo destinationInfo( destinationPath );
 		FileInfo sourceRoot( source->DirName );
+		// File IDs are volume-scoped; both watches must opt in and the destination
+		// must still refer to the same unambiguous file or directory.
 		if ( sourcePath != destinationPath && source->ReportCrossDirectoryMoves &&
 			 destination->ReportCrossDirectoryMoves &&
 			 destinationInfo.Inode == static_cast<Uint64>( event.FileId.QuadPart ) &&
@@ -254,6 +258,7 @@ bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch, ExtendedEvent
 			return true;
 		}
 	}
+	// An unmatched half becomes a normal Add/Delete when its wait interval expires.
 	CrossWatchEvent stored{ watch, std::move( event.FileName ), event.FileId, GetTickCount64() };
 	pending.emplace_back( std::move( stored ) );
 	return true;

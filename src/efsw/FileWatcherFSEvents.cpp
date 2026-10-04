@@ -121,8 +121,9 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			watches.push_back( watch.second );
 	}
 
-	// The native stream is shared, so pair rename records before splitting them
-	// into logical watches. Each watch otherwise sees only half of the move.
+	// The native stream contains events for all logical watches. Pair rename records
+	// with the same inode from this callback before routing them, since separate
+	// watches would each see only one half of a cross-watch move.
 	std::vector<bool>& paired = fileWatcher->mPairedEvents;
 	paired.assign( eventCount, false );
 	if ( isGranular() ) {
@@ -136,12 +137,15 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 				if ( paired[j] || second.inode != first.inode || first.Path == second.Path ||
 					 !( second.Flags & efswFSEventStreamEventFlagItemRenamed ) )
 					continue;
+				// FSEvents does not label the old and new paths. After the rename, the
+				// missing path is the source and the existing path is the destination.
 				const bool firstExists = FileInfo::exists( first.Path );
 				const bool secondExists = FileInfo::exists( second.Path );
 				if ( firstExists == secondExists )
 					continue;
 				const FSEvent& source = firstExists ? second : first;
 				const FSEvent& destination = firstExists ? first : second;
+				// Only merge paths owned by different watches that both enabled the option.
 				std::shared_ptr<WatcherFSEvents> sourceWatch, destinationWatch;
 				for ( const auto& watch : watches ) {
 					if ( watch->handlesPath( source.Path ) )
@@ -173,6 +177,8 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 					Actions::Moved,
 					FileSystem::precomposeFileName(
 						FileSystem::canonicalSourcePath( source.Path ) ) );
+				// Suppress both rename records and their duplicate Add/Delete flags so
+				// per-watch processing does not emit a second account of this move.
 				paired[i] = paired[j] = true;
 				for ( size_t k = 0; k < eventCount; ++k ) {
 					const FSEvent& duplicate = fileWatcher->mEventBuffer[k];
