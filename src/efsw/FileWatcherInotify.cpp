@@ -6,10 +6,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/inotify.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -386,14 +386,8 @@ void FileWatcherInotify::run() {
 	};
 
 	do {
-		fd_set rfds;
-		FD_ZERO( &rfds );
-		FD_SET( mFD, &rfds );
-		timeval timeout;
-		timeout.tv_sec = 0;
-		timeout.tv_usec = 100000;
-
-		if ( select( FD_SETSIZE, &rfds, NULL, NULL, &timeout ) > 0 ) {
+		pollfd fd = { mFD, POLLIN, 0 };
+		if ( poll( &fd, 1, 100 ) > 0 && ( fd.revents & POLLIN ) ) {
 			ssize_t len;
 
 			len = read( mFD, buff, BUFF_SIZE );
