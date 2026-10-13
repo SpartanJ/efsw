@@ -22,6 +22,7 @@ option(BUILD_SHARED_LIBS "Build efsw as a shared library" ON)
 option(BUILD_STATIC_LIBS "Build efsw as a static library" ON)
 option(BUILD_TEST_APP "Build the test app" ${ESFW_MAIN_PROJECT})
 option(EFSW_INSTALL "Add efsw install targets" ${ESFW_MAIN_PROJECT})
+option(BUILD_AGENT "Build efsw-agent (remote watching over stdin/stdout)" ${ESFW_MAIN_PROJECT})
 
 add_library(efsw)
 
@@ -174,7 +175,7 @@ if(EFSW_INSTALL)
 
 	install(
 		FILES
-		include/efsw/efsw.h include/efsw/efsw.hpp
+		include/efsw/efsw.h include/efsw/efsw.hpp include/efsw/agent_protocol.hpp
 		DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/efsw
 	)
 
@@ -202,4 +203,15 @@ if(BUILD_TEST_APP)
 	# C test application
 	add_executable(efsw-test-stdc src/test/efsw-test.c)
 	target_link_libraries(efsw-test-stdc efsw-static)
+endif()
+
+if(BUILD_AGENT AND BUILD_STATIC_LIBS)
+	add_executable(efsw-agent src/agent/efsw-agent.cpp)
+	target_link_libraries(efsw-agent efsw-static)
+	if(NOT APPLE AND NOT WIN32 AND NOT(${CMAKE_SYSTEM_NAME} MATCHES "Haiku"))
+		target_link_libraries(efsw-agent Threads::Threads)
+	endif()
+	if(EFSW_INSTALL)
+		install(TARGETS efsw-agent RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+	endif()
 endif()
