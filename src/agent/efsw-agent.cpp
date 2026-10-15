@@ -28,6 +28,8 @@
 #include <fcntl.h>
 #include <io.h>
 #else
+#include <climits>
+#include <cstdlib>
 #include <unistd.h>
 #endif
 
@@ -163,17 +165,17 @@ class Agent {
 				  const std::string& filename, efsw::Action action,
 				  const std::string& oldFilename ) {
 		uint32_t watchId;
-		std::string root;
-		if ( !lookup( key, efswId, watchId, root ) )
+		Watch watch;
+		if ( !lookup( key, efswId, watchId, watch ) )
 			return;
 		WatchEventRecord record;
 		record.action = static_cast<uint8_t>( action );
-		record.path = relative( root, dir + filename );
+		record.path = relative( watch, dir + filename );
 		if ( action == efsw::Actions::Moved ) {
 			bool absolute = !oldFilename.empty() &&
 							( oldFilename[0] == '/' ||
 							  ( oldFilename.size() > 1 && oldFilename[1] == ':' ) );
-			record.oldPath = relative( root, absolute ? oldFilename : dir + oldFilename );
+			record.oldPath = relative( watch, absolute ? oldFilename : dir + oldFilename );
 		}
 		{
 			std::lock_guard<std::mutex> lock( mOutMutex );
@@ -184,8 +186,8 @@ class Agent {
 
 	void onMissed( int key, efsw::WatchID efswId ) {
 		uint32_t watchId;
-		std::string root;
-		if ( !lookup( key, efswId, watchId, root ) )
+		Watch watch;
+		if ( !lookup( key, efswId, watchId, watch ) )
 			return;
 		{
 			std::lock_guard<std::mutex> lock( mOutMutex );
@@ -206,10 +208,34 @@ class Agent {
 		int key;
 		efsw::WatchID efswId;
 		std::string root;
+		/** root with its symlinks resolved, when that differs: FSEvents reports resolved paths
+		 * (/private/var/... for a root under /var). Empty elsewhere. */
+		std::string realRoot;
 	};
 
-	static std::string relative( const std::string& root, const std::string& path ) {
+	static std::string resolvedRoot( const std::string& path, const std::string& root ) {
+#if defined( __APPLE__ )
+		char resolved[PATH_MAX];
+		if ( realpath( path.c_str(), resolved ) ) {
+			std::string real = normalizeSlashes( resolved );
+			if ( real.empty() || real[real.size() - 1] != '/' )
+				real += '/';
+			if ( real != root )
+				return real;
+		}
+#endif
+		(void)path;
+		(void)root;
+		return std::string();
+	}
+
+	static std::string relative( const Watch& watch, const std::string& path ) {
 		std::string normalized = normalizeSlashes( path );
+		const std::string& root =
+			!watch.realRoot.empty() &&
+					normalized.compare( 0, watch.realRoot.size(), watch.realRoot ) == 0
+				? watch.realRoot
+				: watch.root;
 		if ( normalized.compare( 0, root.size(), root ) == 0 )
 			normalized.erase( 0, root.size() );
 		while ( !normalized.empty() && normalized[normalized.size() - 1] == '/' )
@@ -219,14 +245,14 @@ class Agent {
 
 	/** Events of an efsw watch that is not registered yet are dropped: they happened before
 	 * WATCH_OK was sent, and clients list the directory only after WATCH_OK. */
-	bool lookup( int key, efsw::WatchID efswId, uint32_t& watchId, std::string& root ) {
+	bool lookup( int key, efsw::WatchID efswId, uint32_t& watchId, Watch& watch ) {
 		std::lock_guard<std::mutex> lock( mWatchesMutex );
 		std::map<std::pair<int, efsw::WatchID>, uint32_t>::iterator it =
 			mByEfsw.find( std::make_pair( key, efswId ) );
 		if ( it == mByEfsw.end() )
 			return false;
 		watchId = it->second;
-		root = mWatches[watchId].root;
+		watch = mWatches[watchId];
 		return true;
 	}
 
@@ -314,7 +340,7 @@ class Agent {
 				}
 				{
 					std::lock_guard<std::mutex> lock( mWatchesMutex );
-					Watch watch = { key, efswId, root };
+					Watch watch = { key, efswId, root, resolvedRoot( path, root ) };
 					mWatches[id] = watch;
 					mByEfsw[std::make_pair( key, efswId )] = id;
 				}
