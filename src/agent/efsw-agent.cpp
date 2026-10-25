@@ -491,5 +491,13 @@ int main( int argc, char** argv ) {
 	_setmode( 1, _O_BINARY );
 #endif
 	Agent agent( pollingMs );
-	return agent.run();
+	const int code = agent.run();
+	// Closed input means the client is gone, so nothing remains to deliver. Exit without joining
+	// the watcher threads: their shutdown can wait a polling interval (100 ms for inotify, the
+	// polling period for generic watches), and the SSH server keeps the channel, counted against
+	// its session limit, until this process exits. Output is unbuffered, so nothing is lost.
+	if ( code == 0 )
+		std::_Exit( 0 );
+	// Protocol errors return through ~Agent so the writer still flushes the error frame.
+	return code;
 }
