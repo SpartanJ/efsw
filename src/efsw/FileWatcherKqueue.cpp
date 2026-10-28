@@ -32,6 +32,10 @@ FileWatcherKqueue::FileWatcherKqueue( FileWatcher* parent, unsigned int pollingF
 }
 
 FileWatcherKqueue::~FileWatcherKqueue() {
+	mInitOK = false;
+	// The worker and its callbacks must finish before their watch objects are freed.
+	efSAFE_DELETE( mThread );
+
 	WatchMap::iterator iter = mWatches.begin();
 
 	for ( ; iter != mWatches.end(); ++iter ) {
@@ -39,10 +43,6 @@ FileWatcherKqueue::~FileWatcherKqueue() {
 	}
 
 	mWatches.clear();
-
-	mInitOK = false;
-
-	efSAFE_DELETE( mThread );
 }
 
 WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,

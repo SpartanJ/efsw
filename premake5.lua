@@ -6,7 +6,7 @@ newoption { trigger = "force-kqueue", description ="Force Kqueue in macOS." }
 
 efsw_major_version	= "1"
 efsw_minor_version	= "7"
-efsw_patch_version	= "2"
+efsw_patch_version	= "3"
 efsw_version		= efsw_major_version .. "." .. efsw_minor_version .. "." .. efsw_patch_version
 
 function string.starts(String,Start)
@@ -160,6 +160,33 @@ workspace "efsw"
 			symbols "On"
 			optimize "On"
 			targetname "efsw-test-reldbginfo"
+			conf_warnings()
+
+	project "efsw-agent"
+		kind "ConsoleApp"
+		language "C++"
+		links { "efsw-static-lib" }
+		files { "src/agent/*.cpp" }
+		includedirs { "include", "src" }
+		conf_links()
+
+		filter "configurations:debug"
+			defines { "DEBUG" }
+			symbols "On"
+			targetname "efsw-agent-debug"
+			conf_warnings()
+
+		filter "configurations:release"
+			defines { "NDEBUG" }
+			optimize "On"
+			targetname "efsw-agent"
+			conf_warnings()
+
+		filter "configurations:relwithdbginfo"
+			defines { "NDEBUG" }
+			symbols "On"
+			optimize "On"
+			targetname "efsw-agent-reldbginfo"
 			conf_warnings()
 
 	project "efsw-unit_tests"

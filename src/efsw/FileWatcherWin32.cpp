@@ -141,7 +141,19 @@ void FileWatcherWin32::removeAllWatches() {
 	mWatches.clear();
 }
 
+static void releaseRetiredWatches( FileWatcherWin32::Watches& watches ) {
+	for ( auto it = watches.begin(); it != watches.end(); ) {
+		if ( !( *it )->Watch->IoPending ) {
+			DestroyWatch( *it );
+			it = watches.erase( it );
+		} else {
+			++it;
+		}
+	}
+}
+
 void FileWatcherWin32::drainRetiredWatches() {
+	releaseRetiredWatches( mRetiredWatches );
 	while ( !mRetiredWatches.empty() ) {
 		DWORD numOfBytes = 0;
 		OVERLAPPED* ov = NULL;
@@ -164,6 +176,8 @@ void FileWatcherWin32::run() {
 		bool hasWatches = false;
 		{
 			Lock lock( mWatchesLock );
+			// Callbacks may remove their own watch; reclaim only after they return.
+			releaseRetiredWatches( mRetiredWatches );
 			hasWatches = !mWatches.empty() || !mRetiredWatches.empty();
 		}
 		if ( mInitOK && hasWatches ) {
@@ -183,6 +197,7 @@ void FileWatcherWin32::run() {
 
 			if ( ov != NULL ) {
 				Lock lock( mWatchesLock );
+				( (WatcherStructWin32*)ov )->Watch->IoPending = false;
 				auto retired = mRetiredWatches.find( (WatcherStructWin32*)ov );
 				if ( retired != mRetiredWatches.end() ) {
 					DestroyWatch( *retired );
