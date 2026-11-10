@@ -64,6 +64,8 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	/// Events of every watch that enabled Options::ReportCrossDirectoryMoves, collected during
 	/// one polling pass so moves between those watches can be paired.
 	FileActionBatch mSharedActions;
+	/// Scan order of the current pass, reused between passes.
+	std::vector<std::pair<Watcher*, size_t>> mScanned;
 
 	/// @return The batch a new watch must collect into, or NULL.
 	FileActionBatch* sharedActionsFor( bool reportCrossDirectoryMoves );

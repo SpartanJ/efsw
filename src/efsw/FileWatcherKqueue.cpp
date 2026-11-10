@@ -187,8 +187,13 @@ void FileWatcherKqueue::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it )
+			mScanned.clear();
+			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 				it->second->watch();
+				mScanned.emplace_back( it->second, mSharedActions.size() );
+			}
+			mSharedActions.rescanForUnpairedHalf( mScanned );
+
 			// Events of opted-in watches were collected during the scans above.
 			mSharedActions.dispatch( NULL );
 		}

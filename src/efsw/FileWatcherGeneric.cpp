@@ -125,8 +125,13 @@ void FileWatcherGeneric::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			for ( WatcherGeneric* watch : mWatches )
+			mScanned.clear();
+			for ( WatcherGeneric* watch : mWatches ) {
 				watch->watch();
+				mScanned.emplace_back( watch, mSharedActions.size() );
+			}
+			mSharedActions.rescanForUnpairedHalf( mScanned );
+
 			// Events of opted-in watches were collected during the scans above.
 			mSharedActions.dispatch( NULL );
 		}

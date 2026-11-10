@@ -17,6 +17,10 @@ class Watcher {
 
 	virtual void watch() {}
 
+	/// @return True when the watch collects its events into the file watcher's shared batch,
+	/// to pair moves with other watches. Only polling backends use a shared batch.
+	virtual bool collectsSharedActions() const { return false; }
+
 	WatchID ID;
 	std::string Directory;
 	FileWatchListener* Listener;

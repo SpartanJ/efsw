@@ -50,6 +50,49 @@ static bool pathContains( const std::string& directory, const std::string& path 
 		   path[directory.size()] == FileSystem::getOSSlash();
 }
 
+bool FileActionBatch::lastUnpairedHalf( size_t& position ) const {
+	typedef std::pair<Uint64, Uint64> Identity;
+	struct Halves {
+		bool Added{ false };
+		bool Deleted{ false };
+	};
+	std::map<Identity, Halves> identities;
+	for ( const Event& event : mEvents ) {
+		if ( event.Info.Inode == 0 )
+			continue;
+		if ( event.ActionType == Actions::Add )
+			identities[Identity( event.Info.Device, event.Info.Inode )].Added = true;
+		else if ( event.ActionType == Actions::Delete )
+			identities[Identity( event.Info.Device, event.Info.Inode )].Deleted = true;
+	}
+	for ( size_t i = mEvents.size(); i-- > 0; ) {
+		const Event& event = mEvents[i];
+		if ( event.Info.Inode == 0 ||
+			 ( event.ActionType != Actions::Add && event.ActionType != Actions::Delete ) )
+			continue;
+		const Halves& halves = identities[Identity( event.Info.Device, event.Info.Inode )];
+		if ( !halves.Added || !halves.Deleted ) {
+			position = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+void FileActionBatch::rescanForUnpairedHalf(
+	const std::vector<std::pair<Watcher*, size_t>>& scanned ) {
+	size_t unpaired;
+	if ( !lastUnpairedHalf( unpaired ) )
+		return;
+	for ( const auto& entry : scanned ) {
+		// The first watch whose scan ended past the event is the one that collected it.
+		if ( unpaired < entry.second )
+			break;
+		if ( entry.first->collectsSharedActions() )
+			entry.first->watch();
+	}
+}
+
 void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
 	if ( detectMoves ) {
 		bool hasAdd = false;

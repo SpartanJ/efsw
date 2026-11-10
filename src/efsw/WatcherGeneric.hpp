@@ -17,6 +17,8 @@ class WatcherGeneric : public Watcher {
 	/// dispatches it after scanning every watch. Set once when the watch is created.
 	FileActionBatch* SharedActionBatch{ NULL };
 
+	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
+
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
 					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );
 

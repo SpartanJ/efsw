@@ -64,6 +64,8 @@ class WatcherKqueue : public Watcher {
 	/// watcher, which dispatches it after polling every watch. Set once at creation.
 	FileActionBatch* SharedActionBatch{ NULL };
 
+	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
+
 	int lastErrno();
 
   protected:
