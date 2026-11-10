@@ -47,6 +47,10 @@ class WatcherKqueue : public Watcher {
 
 	void addAll();
 
+	/// Reports the directories of a created directory's tree, each before the directories
+	/// inside it. addAll() adds their watches without reporting them.
+	void reportDirectories();
+
 	void removeAll();
 
 	WatchID watchingDirectory( std::string dir );

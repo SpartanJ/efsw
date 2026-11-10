@@ -130,13 +130,9 @@ void WatcherKqueue::addAll() {
 			// Add the regular files kevent
 			addFile( fi.Filepath, false );
 		} else if ( Recursive && fi.isDirectory() && fi.isReadable() ) {
-			// Create another watcher for the subfolders ( if recursive )
-			WatchID id = addWatch( fi.Filepath, Listener, Recursive, this );
-
-			// If the watcher is not adding the watcher means that the directory was created
-			if ( id > 0 && !mWatcher->isAddingWatcher() ) {
-				handleFolderAction( fi.Filepath, Actions::Add, "", fi );
-			}
+			// Create another watcher for the subfolders ( if recursive ). A created directory
+			// reports them with reportDirectories(), once every watch of its tree exists.
+			addWatch( fi.Filepath, Listener, Recursive, this );
 		}
 	}
 }
@@ -297,8 +293,15 @@ void WatcherKqueue::rescan() {
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
-			addWatch( ( *it ).Filepath, Listener, Recursive, this );
+			// Reported once its watch exists, so that an entry created inside it by a listener
+			// reacting to the event is not missed, but before the directories found inside it.
+			WatchID id = addWatch( ( *it ).Filepath, Listener, Recursive, this );
 			handleFolderAction( ( *it ).Filepath, Actions::Add, "", *it );
+			auto added = id > 0 ? mWatches.find( id ) : mWatches.end();
+			WatcherKqueue* child =
+				added != mWatches.end() ? dynamic_cast<WatcherKqueue*>( added->second ) : NULL;
+			if ( child )
+				child->reportDirectories();
 		}
 
 		DiffIterator( DirsModified ) {
@@ -455,6 +458,20 @@ bool WatcherKqueue::snapshotHasAny( const std::set<FileIdentity>& identities ) c
 			return true;
 	}
 	return false;
+}
+
+void WatcherKqueue::reportDirectories() {
+	for ( const auto& entry : mWatches ) {
+		WatcherKqueue* child = dynamic_cast<WatcherKqueue*>( entry.second );
+		if ( child ) {
+			handleFolderAction( entry.second->Directory, Actions::Add, "",
+								child->mDirSnap.DirectoryInfo );
+			child->reportDirectories();
+		} else {
+			handleFolderAction( entry.second->Directory, Actions::Add, "",
+								FileInfo( entry.second->Directory ) );
+		}
+	}
 }
 
 WatcherKqueue* WatcherKqueue::root() {

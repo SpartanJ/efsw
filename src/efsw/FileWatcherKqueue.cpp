@@ -24,7 +24,6 @@ FileWatcherKqueue::FileWatcherKqueue( FileWatcher* parent, unsigned int pollingF
 	mLastWatchID( 0 ),
 	mThread( NULL ),
 	mFileDescriptorCount( 1 ),
-	mAddingWatcher( false ),
 	mPollingFreq( pollingFreq ) {
 	mTimeOut.tv_sec = 0;
 	mTimeOut.tv_nsec = 0;
@@ -81,8 +80,6 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 	bool reportCrossDirectoryMoves =
 		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
 	if ( availablesFD() ) {
-		mAddingWatcher = true;
-
 		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this,
 												  NULL, reportCrossDirectoryMoves );
 		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
@@ -116,8 +113,6 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 				return Errors::Log::createLastError( Errors::Unspecified, link );
 			}
 		}
-
-		mAddingWatcher = false;
 	} else {
 		if ( !s_ug ) {
 			efDEBUG( "Started using generic watcher, file descriptor limit reached: %ld\n",
@@ -166,10 +161,6 @@ void FileWatcherKqueue::removeWatch( WatchID watchid ) {
 	mSharedActions.forget( watch );
 
 	efSAFE_DELETE( watch );
-}
-
-bool FileWatcherKqueue::isAddingWatcher() const {
-	return mAddingWatcher;
 }
 
 FileActionBatch* FileWatcherKqueue::sharedActionsFor( bool reportCrossDirectoryMoves ) {
