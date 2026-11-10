@@ -1,6 +1,8 @@
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileSystem.hpp>
-#include <map>
+#include <algorithm>
+#include <iterator>
+#include <set>
 
 namespace efsw {
 
@@ -50,47 +52,132 @@ static bool pathContains( const std::string& directory, const std::string& path 
 		   path[directory.size()] == FileSystem::getOSSlash();
 }
 
-bool FileActionBatch::lastUnpairedHalf( size_t& position ) const {
-	typedef std::pair<Uint64, Uint64> Identity;
-	struct Halves {
-		bool Added{ false };
-		bool Deleted{ false };
-	};
-	std::map<Identity, Halves> identities;
-	for ( const Event& event : mEvents ) {
+void FileActionBatch::beginPass() {
+	mSegments.clear();
+	mEvents.insert( mEvents.begin(), std::make_move_iterator( mHeld.begin() ),
+					std::make_move_iterator( mHeld.end() ) );
+	mHeld.clear();
+	mReleased = mEvents.size();
+}
+
+void FileActionBatch::scanned( Watcher* watcher ) {
+	if ( !watcher->collectsSharedActions() )
+		return;
+	size_t begin = mSegments.empty() ? mReleased : mSegments.back().End;
+	mSegments.push_back( { watcher, begin, mEvents.size() } );
+}
+
+void FileActionBatch::forget( Watcher* watcher ) {
+	mHeld.erase( std::remove_if( mHeld.begin(), mHeld.end(),
+								 [watcher]( const Event& event ) { return event.Owner == watcher; } ),
+				 mHeld.end() );
+}
+
+void FileActionBatch::addHalves( HalvesMap& halves, size_t begin ) const {
+	for ( size_t i = begin; i < mEvents.size(); i++ ) {
+		const Event& event = mEvents[i];
 		if ( event.Info.Inode == 0 )
 			continue;
 		if ( event.ActionType == Actions::Add )
-			identities[Identity( event.Info.Device, event.Info.Inode )].Added = true;
+			halves[FileIdentity( event.Info.Device, event.Info.Inode )].Added = true;
 		else if ( event.ActionType == Actions::Delete )
-			identities[Identity( event.Info.Device, event.Info.Inode )].Deleted = true;
+			halves[FileIdentity( event.Info.Device, event.Info.Inode )].Deleted = true;
 	}
-	for ( size_t i = mEvents.size(); i-- > 0; ) {
-		const Event& event = mEvents[i];
-		if ( event.Info.Inode == 0 ||
-			 ( event.ActionType != Actions::Add && event.ActionType != Actions::Delete ) )
-			continue;
-		const Halves& halves = identities[Identity( event.Info.Device, event.Info.Inode )];
-		if ( !halves.Added || !halves.Deleted ) {
-			position = i;
-			return true;
-		}
-	}
-	return false;
 }
 
-void FileActionBatch::rescanForUnpairedHalf(
-	const std::vector<std::pair<Watcher*, size_t>>& scanned ) {
-	size_t unpaired;
-	if ( !lastUnpairedHalf( unpaired ) )
-		return;
-	for ( const auto& entry : scanned ) {
-		// The first watch whose scan ended past the event is the one that collected it.
-		if ( unpaired < entry.second )
-			break;
-		if ( entry.first->collectsSharedActions() )
-			entry.first->watch();
+std::vector<bool> FileActionBatch::rescanMoveSources( HalvesMap& halves ) {
+	const size_t count = mSegments.size();
+	std::vector<bool> rescanned( count, false );
+	// Identities of the unpaired Adds collected after the segment being considered.
+	std::set<FileIdentity> later;
+	for ( size_t s = count; s-- > 0; ) {
+		for ( auto it = later.begin(); it != later.end(); ) {
+			if ( halves[*it].paired() )
+				it = later.erase( it );
+			else
+				++it;
+		}
+		// Copied, a rescan adds a segment.
+		const Segment segment = mSegments[s];
+		if ( !later.empty() && segment.Owner->snapshotHasAny( later ) ) {
+			size_t begin = mEvents.size();
+			segment.Owner->watch();
+			addHalves( halves, begin );
+			mSegments.push_back( { segment.Owner, begin, mEvents.size() } );
+			rescanned[s] = true;
+		}
+		for ( size_t i = segment.Begin; i < segment.End; i++ ) {
+			const Event& event = mEvents[i];
+			if ( event.ActionType != Actions::Add || event.Info.Inode == 0 )
+				continue;
+			FileIdentity identity( event.Info.Device, event.Info.Inode );
+			if ( !halves[identity].paired() )
+				later.insert( identity );
+		}
 	}
+	return rescanned;
+}
+
+void FileActionBatch::holdMoveSources( const HalvesMap& halves,
+									   const std::vector<bool>& rescanned ) {
+	// For each watch, the position of its first held event.
+	std::map<Watcher*, size_t> holdFrom;
+	// Whether a watch scanned before the segment was not scanned again since. When the
+	// segment has a Delete, that watch may only see the destination on its next scan.
+	bool canWait = false;
+	for ( size_t s = 0; s < rescanned.size(); s++ ) {
+		const Segment& segment = mSegments[s];
+		for ( size_t i = segment.Begin; canWait && i < segment.End; i++ ) {
+			const Event& event = mEvents[i];
+			if ( event.ActionType == Actions::Delete && event.Info.Inode != 0 &&
+				 !halves.at( FileIdentity( event.Info.Device, event.Info.Inode ) ).paired() ) {
+				holdFrom.emplace( segment.Owner, i );
+				break;
+			}
+		}
+		if ( !rescanned[s] )
+			canWait = true;
+	}
+	if ( holdFrom.empty() )
+		return;
+
+	// Later events of a held watch are held too, including those of its rescan.
+	std::vector<Watcher*> owners( mEvents.size(), NULL );
+	for ( const Segment& segment : mSegments )
+		for ( size_t i = segment.Begin; i < segment.End; i++ )
+			owners[i] = segment.Owner;
+
+	std::vector<Event> kept;
+	kept.reserve( mEvents.size() );
+	for ( size_t i = 0; i < mEvents.size(); i++ ) {
+		auto hold = owners[i] ? holdFrom.find( owners[i] ) : holdFrom.end();
+		if ( hold != holdFrom.end() && i >= hold->second ) {
+			mEvents[i].Owner = owners[i];
+			mHeld.push_back( std::move( mEvents[i] ) );
+		} else {
+			kept.push_back( std::move( mEvents[i] ) );
+		}
+	}
+	mEvents.swap( kept );
+}
+
+void FileActionBatch::finishPass() {
+	HalvesMap halves;
+	addHalves( halves, 0 );
+	bool unpaired = false;
+	for ( const auto& identity : halves ) {
+		if ( !identity.second.paired() ) {
+			unpaired = true;
+			break;
+		}
+	}
+	if ( unpaired ) {
+		std::vector<bool> rescanned = rescanMoveSources( halves );
+		holdMoveSources( halves, rescanned );
+	}
+	mSegments.clear();
+	mReleased = 0;
+	dispatch( NULL );
 }
 
 void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {

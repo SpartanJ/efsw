@@ -163,6 +163,7 @@ void FileWatcherKqueue::removeWatch( WatchID watchid ) {
 	Watcher* watch = iter->second;
 
 	mWatches.erase( iter );
+	mSharedActions.forget( watch );
 
 	efSAFE_DELETE( watch );
 }
@@ -187,15 +188,13 @@ void FileWatcherKqueue::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			mScanned.clear();
+			// Events of opted-in watches are collected during the scans, and dispatched after.
+			mSharedActions.beginPass();
 			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 				it->second->watch();
-				mScanned.emplace_back( it->second, mSharedActions.size() );
+				mSharedActions.scanned( it->second );
 			}
-			mSharedActions.rescanForUnpairedHalf( mScanned );
-
-			// Events of opted-in watches were collected during the scans above.
-			mSharedActions.dispatch( NULL );
+			mSharedActions.finishPass();
 		}
 
 		System::sleep( mPollingFreq );

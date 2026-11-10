@@ -50,6 +50,10 @@ void WatcherGeneric::watchDir( std::string dir ) {
 		DirWatch->watchDir( dir );
 }
 
+bool WatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
+	return DirWatch->snapshotHasAny( identities );
+}
+
 bool WatcherGeneric::pathInWatches( std::string path ) {
 	return DirWatch->pathInWatches( path );
 }

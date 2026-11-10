@@ -50,8 +50,6 @@ class FileWatcherGeneric : public FileWatcherImpl {
 	/// Map of WatchID to WatchStruct pointers
 	WatchList mWatches;
 	FileActionBatch mSharedActions;
-	/// Scan order of the current pass, reused between passes.
-	std::vector<std::pair<Watcher*, size_t>> mScanned;
 
 	Mutex mWatchesLock;
 

@@ -87,6 +87,7 @@ void FileWatcherGeneric::removeWatch( const std::string& directory ) {
 			Lock lock( mWatchesLock );
 
 			mWatches.erase( it );
+			mSharedActions.forget( watch );
 
 			efSAFE_DELETE( watch );
 
@@ -105,6 +106,7 @@ void FileWatcherGeneric::removeWatch( WatchID watchid ) {
 			Lock lock( mWatchesLock );
 
 			mWatches.erase( it );
+			mSharedActions.forget( watch );
 
 			efSAFE_DELETE( watch );
 
@@ -125,15 +127,13 @@ void FileWatcherGeneric::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			mScanned.clear();
+			// Events of opted-in watches are collected during the scans, and dispatched after.
+			mSharedActions.beginPass();
 			for ( WatcherGeneric* watch : mWatches ) {
 				watch->watch();
-				mScanned.emplace_back( watch, mSharedActions.size() );
+				mSharedActions.scanned( watch );
 			}
-			mSharedActions.rescanForUnpairedHalf( mScanned );
-
-			// Events of opted-in watches were collected during the scans above.
-			mSharedActions.dispatch( NULL );
+			mSharedActions.finishPass();
 		}
 
 		if ( mInitOK )

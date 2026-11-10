@@ -447,6 +447,18 @@ void WatcherKqueue::watch() {
 	}
 }
 
+bool WatcherKqueue::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
+	for ( const FileInfo& file : mDirSnap.Files ) {
+		if ( file.Inode != 0 && identities.count( FileIdentity( file.Device, file.Inode ) ) )
+			return true;
+	}
+	for ( const auto& child : mWatches ) {
+		if ( child.second->snapshotHasAny( identities ) )
+			return true;
+	}
+	return false;
+}
+
 WatcherKqueue* WatcherKqueue::root() {
 	WatcherKqueue* watch = this;
 	while ( watch->mParent )

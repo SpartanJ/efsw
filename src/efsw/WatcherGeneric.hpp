@@ -19,6 +19,8 @@ class WatcherGeneric : public Watcher {
 
 	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
 
+	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
+
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
 					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );
 

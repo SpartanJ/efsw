@@ -158,15 +158,19 @@ versions when the filesystem provides stable volume and file identifiers.
 
 Moves between watches without the option on both ends, moves into or out of the watched tree, and
 moves whose native event pair is incomplete or whose filesystem identity is ambiguous continue to
-be reported as `Delete` and/or `Add` events. The polling backends (generic and kqueue) only pair a
-move whose both halves are seen in the same polling pass. When registrations are nested, a watch
+be reported as `Delete` and/or `Add` events. The polling backends (generic and kqueue) scan their
+watches one after another, and also pair a move between two watches that happens between their
+scans. Within one recursive watch, a move whose halves are seen in different polling passes is
+reported as `Delete` and `Add`. When registrations are nested, a watch
 that covers both paths reports the move itself, and a nested watch that covers only one path gets
 its half as `Delete` or `Add`.
 
 To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
-until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. The
-order of events within one watch is preserved, but events of watches with the option can be
-delivered after later events of watches without it.
+until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the
+polling backends, a `Delete` in a watch scanned after another watch with the option is delayed by
+one more polling pass, with the later events of its watch, since that other watch may only see the
+destination on its next scan. The order of events within one watch is preserved, but events of
+watches with the option can be delivered after later events of other watches.
 
 On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
 recursively covers the other watch root. Recursive watching is implemented using one inotify

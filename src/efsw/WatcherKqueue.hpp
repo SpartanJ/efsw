@@ -66,6 +66,8 @@ class WatcherKqueue : public Watcher {
 
 	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
 
+	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
+
 	int lastErrno();
 
   protected:
