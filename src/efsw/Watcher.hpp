@@ -1,15 +1,11 @@
 #ifndef EFSW_WATCHERIMPL_HPP
 #define EFSW_WATCHERIMPL_HPP
 
-#include <efsw/base.hpp>
+#include <efsw/FileInfo.hpp>
 #include <efsw/efsw.hpp>
 #include <set>
-#include <utility>
 
 namespace efsw {
-
-/// Device and inode of a file.
-typedef std::pair<Uint64, Uint64> FileIdentity;
 
 /** @brief Base Watcher class */
 class Watcher {

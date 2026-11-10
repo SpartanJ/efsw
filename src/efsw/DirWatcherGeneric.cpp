@@ -377,10 +377,8 @@ void DirWatcherGeneric::moveDirectory( std::string oldDir, std::string newDir ) 
 }
 
 bool DirWatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
-	for ( const FileInfo& file : DirSnap.Files ) {
-		if ( file.Inode != 0 && identities.count( FileIdentity( file.Device, file.Inode ) ) )
-			return true;
-	}
+	if ( DirSnap.hasAny( identities ) )
+		return true;
 	for ( const auto& directory : Directories ) {
 		if ( directory.second->snapshotHasAny( identities ) )
 			return true;

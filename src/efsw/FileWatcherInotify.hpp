@@ -113,6 +113,11 @@ class FileWatcherInotify : public FileWatcherImpl {
 	/// The native descriptor is removed with its last owner. mWatchesLock must be held.
 	void removeWatchLocked( WatcherInotify* watch, bool skipInotifyRemove = false );
 
+	/// Unregisters one logical watch, without its descendants. The native descriptor is removed
+	/// with its last owner, and the watch is deleted after the current event batch.
+	/// mWatchesLock must be held.
+	void unregisterWatchLocked( WatcherInotify* watch, bool skipInotifyRemove );
+
 	/// @return The watch of the registration for the directory, or NULL. mWatchesLock must be
 	/// held.
 	WatcherInotify* findWatchLocked( const std::string& directory, WatchID registration );

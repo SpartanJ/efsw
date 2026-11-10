@@ -6,6 +6,9 @@
 
 namespace efsw {
 
+// Required before C++17, where Moves::None is odr-used by assign().
+constexpr size_t FileActionBatch::Moves::None;
+
 FileActionBatch::Event::Event( WatchID watchid, const std::string& directory,
 							   const std::string& filename, Action action,
 							   const std::string& oldFilename, const FileInfo& fileInfo,
@@ -60,17 +63,31 @@ void FileActionBatch::beginPass() {
 	mReleased = mEvents.size();
 }
 
+void FileActionBatch::addSegment( Watcher* owner, size_t begin ) {
+	for ( size_t i = begin; i < mEvents.size(); i++ )
+		mEvents[i].Owner = owner;
+	mSegments.push_back( { owner, begin, mEvents.size() } );
+}
+
 void FileActionBatch::scanned( Watcher* watcher ) {
 	if ( !watcher->collectsSharedActions() )
 		return;
-	size_t begin = mSegments.empty() ? mReleased : mSegments.back().End;
-	mSegments.push_back( { watcher, begin, mEvents.size() } );
+	addSegment( watcher, mSegments.empty() ? mReleased : mSegments.back().End );
 }
 
 void FileActionBatch::forget( Watcher* watcher ) {
 	mHeld.erase( std::remove_if( mHeld.begin(), mHeld.end(),
 								 [watcher]( const Event& event ) { return event.Owner == watcher; } ),
 				 mHeld.end() );
+	// A dispatch may be iterating mEvents: flag the events instead of erasing them.
+	for ( Event& event : mEvents ) {
+		if ( event.Owner == watcher )
+			event.Canceled = true;
+	}
+	for ( Segment& segment : mSegments ) {
+		if ( segment.Owner == watcher )
+			segment.Owner = NULL;
+	}
 }
 
 void FileActionBatch::addHalves( HalvesMap& halves, size_t begin ) const {
@@ -79,9 +96,9 @@ void FileActionBatch::addHalves( HalvesMap& halves, size_t begin ) const {
 		if ( event.Info.Inode == 0 )
 			continue;
 		if ( event.ActionType == Actions::Add )
-			halves[FileIdentity( event.Info.Device, event.Info.Inode )].Added = true;
+			halves[event.Info.identity()].Added = true;
 		else if ( event.ActionType == Actions::Delete )
-			halves[FileIdentity( event.Info.Device, event.Info.Inode )].Deleted = true;
+			halves[event.Info.identity()].Deleted = true;
 	}
 }
 
@@ -99,27 +116,26 @@ std::vector<bool> FileActionBatch::rescanMoveSources( HalvesMap& halves ) {
 		}
 		// Copied, a rescan adds a segment.
 		const Segment segment = mSegments[s];
-		if ( !later.empty() && segment.Owner->snapshotHasAny( later ) ) {
+		if ( segment.Owner && !later.empty() && segment.Owner->snapshotHasAny( later ) ) {
 			size_t begin = mEvents.size();
 			segment.Owner->watch();
 			addHalves( halves, begin );
-			mSegments.push_back( { segment.Owner, begin, mEvents.size() } );
+			addSegment( segment.Owner, begin );
 			rescanned[s] = true;
 		}
 		for ( size_t i = segment.Begin; i < segment.End; i++ ) {
 			const Event& event = mEvents[i];
 			if ( event.ActionType != Actions::Add || event.Info.Inode == 0 )
 				continue;
-			FileIdentity identity( event.Info.Device, event.Info.Inode );
-			if ( !halves[identity].paired() )
-				later.insert( identity );
+			if ( !halves[event.Info.identity()].paired() )
+				later.insert( event.Info.identity() );
 		}
 	}
 	return rescanned;
 }
 
-void FileActionBatch::holdMoveSources( const HalvesMap& halves,
-									   const std::vector<bool>& rescanned ) {
+bool FileActionBatch::holdMoveSources( const HalvesMap& halves,
+									   const std::vector<bool>& rescanned, const Moves& moves ) {
 	// For each watch, the position of its first held event.
 	std::map<Watcher*, size_t> holdFrom;
 	// Whether a watch scanned before the segment was not scanned again since. When the
@@ -127,10 +143,11 @@ void FileActionBatch::holdMoveSources( const HalvesMap& halves,
 	bool canWait = false;
 	for ( size_t s = 0; s < rescanned.size(); s++ ) {
 		const Segment& segment = mSegments[s];
-		for ( size_t i = segment.Begin; canWait && i < segment.End; i++ ) {
+		for ( size_t i = segment.Begin; canWait && segment.Owner && i < segment.End; i++ ) {
 			const Event& event = mEvents[i];
 			if ( event.ActionType == Actions::Delete && event.Info.Inode != 0 &&
-				 !halves.at( FileIdentity( event.Info.Device, event.Info.Inode ) ).paired() ) {
+				 moves.MoveOf[i] == Moves::None &&
+				 !halves.at( event.Info.identity() ).paired() ) {
 				holdFrom.emplace( segment.Owner, i );
 				break;
 			}
@@ -139,26 +156,27 @@ void FileActionBatch::holdMoveSources( const HalvesMap& halves,
 			canWait = true;
 	}
 	if ( holdFrom.empty() )
-		return;
+		return false;
 
 	// Later events of a held watch are held too, including those of its rescan.
-	std::vector<Watcher*> owners( mEvents.size(), NULL );
-	for ( const Segment& segment : mSegments )
-		for ( size_t i = segment.Begin; i < segment.End; i++ )
-			owners[i] = segment.Owner;
-
+	auto inHeldRange = [&]( size_t i ) {
+		auto hold = i < mReleased ? holdFrom.end() : holdFrom.find( mEvents[i].Owner );
+		return hold != holdFrom.end() && i >= hold->second;
+	};
+	// A complete move follows its destination, where its Moved event is delivered. Held, it
+	// still pairs on the next pass. A released event can be held once more this way, but
+	// not after: its destination is then released too.
 	std::vector<Event> kept;
 	kept.reserve( mEvents.size() );
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
-		auto hold = owners[i] ? holdFrom.find( owners[i] ) : holdFrom.end();
-		if ( hold != holdFrom.end() && i >= hold->second ) {
-			mEvents[i].Owner = owners[i];
+		size_t move = moves.MoveOf[i];
+		if ( inHeldRange( move == Moves::None ? i : move ) )
 			mHeld.push_back( std::move( mEvents[i] ) );
-		} else {
+		else
 			kept.push_back( std::move( mEvents[i] ) );
-		}
 	}
 	mEvents.swap( kept );
+	return true;
 }
 
 void FileActionBatch::finishPass() {
@@ -171,63 +189,54 @@ void FileActionBatch::finishPass() {
 			break;
 		}
 	}
-	if ( unpaired ) {
-		std::vector<bool> rescanned = rescanMoveSources( halves );
-		holdMoveSources( halves, rescanned );
-	}
+	std::vector<bool> rescanned;
+	if ( unpaired )
+		rescanned = rescanMoveSources( halves );
+
+	Moves moves;
+	bool hasMoves = matchMoves( moves );
+	if ( unpaired && holdMoveSources( halves, rescanned, moves ) )
+		hasMoves = matchMoves( moves );
 	mSegments.clear();
 	mReleased = 0;
-	dispatch( NULL );
+	deliver( NULL, hasMoves ? &moves : NULL );
 }
 
-void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
-	if ( detectMoves ) {
-		bool hasAdd = false;
-		bool hasDelete = false;
-		for ( const Event& event : mEvents ) {
-			if ( event.Info.Inode == 0 )
-				continue;
-			hasAdd |= event.ActionType == Actions::Add;
-			hasDelete |= event.ActionType == Actions::Delete;
-			if ( hasAdd && hasDelete )
-				break;
-		}
-		if ( !hasAdd || !hasDelete )
-			detectMoves = false;
+bool FileActionBatch::matchMoves( Moves& moves ) const {
+	moves.MoveOf.assign( mEvents.size(), Moves::None );
+	moves.SourceOf.clear();
+	bool hasAdd = false;
+	bool hasDelete = false;
+	for ( const Event& event : mEvents ) {
+		if ( event.Info.Inode == 0 )
+			continue;
+		hasAdd |= event.ActionType == Actions::Add;
+		hasDelete |= event.ActionType == Actions::Delete;
+		if ( hasAdd && hasDelete )
+			break;
 	}
-	if ( !detectMoves ) {
-		for ( const Event& event : mEvents ) {
-			FileWatchListener* target = event.Listener ? event.Listener : listener;
-			if ( target )
-				target->handleFileAction( event.Watch, event.Directory, event.Filename,
-										  event.ActionType, event.OldFilename );
-		}
-		clear();
-		return;
-	}
+	if ( !hasAdd || !hasDelete )
+		return false;
 
-	typedef std::pair<Uint64, Uint64> Identity;
 	struct Candidates {
 		std::vector<size_t> Created;
 		std::vector<size_t> Deleted;
 	};
 
-	std::map<Identity, Candidates> candidates;
+	std::map<FileIdentity, Candidates> candidates;
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		const Event& event = mEvents[i];
 		if ( event.Info.Inode == 0 ||
 			 ( event.ActionType != Actions::Add && event.ActionType != Actions::Delete ) )
 			continue;
 
-		Candidates& identity = candidates[Identity( event.Info.Device, event.Info.Inode )];
+		Candidates& identity = candidates[event.Info.identity()];
 		if ( event.ActionType == Actions::Add )
 			identity.Created.push_back( i );
 		else
 			identity.Deleted.push_back( i );
 	}
 
-	std::vector<bool> suppressed( mEvents.size(), false );
-	std::map<size_t, size_t> moves;
 	for ( const auto& identity : candidates ) {
 		const Candidates& entries = identity.second;
 		if ( entries.Created.size() != 1 || entries.Deleted.size() != 1 )
@@ -242,42 +251,56 @@ void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) 
 			 !metadataMatches( source.Info, destination.Info ) )
 			continue;
 
-		suppressed[entries.Deleted[0]] = true;
-		suppressed[entries.Created[0]] = true;
-		moves[entries.Created[0]] = entries.Deleted[0];
+		moves.MoveOf[entries.Deleted[0]] = entries.Created[0];
+		moves.MoveOf[entries.Created[0]] = entries.Created[0];
+		moves.SourceOf[entries.Created[0]] = entries.Deleted[0];
 
 		if ( source.Info.isDirectory() ) {
 			for ( size_t i = 0; i < mEvents.size(); i++ ) {
-				if ( mEvents[i].ActionType == Actions::Delete &&
-					 pathContains( source.Info.Filepath, mEvents[i].Info.Filepath ) )
-					suppressed[i] = true;
-				else if ( mEvents[i].ActionType == Actions::Add &&
-						  pathContains( destination.Info.Filepath, mEvents[i].Info.Filepath ) )
-					suppressed[i] = true;
+				if ( moves.MoveOf[i] != Moves::None )
+					continue;
+				if ( ( mEvents[i].ActionType == Actions::Delete &&
+					   pathContains( source.Info.Filepath, mEvents[i].Info.Filepath ) ) ||
+					 ( mEvents[i].ActionType == Actions::Add &&
+					   pathContains( destination.Info.Filepath, mEvents[i].Info.Filepath ) ) )
+					moves.MoveOf[i] = entries.Created[0];
 			}
 		}
 	}
+	return !moves.SourceOf.empty();
+}
 
+void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves ) {
+	// Indexed, and the flags read at each step: a listener may cancel events of a removed watch.
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
-		auto move = moves.find( i );
-		if ( move != moves.end() ) {
-			const Event& destination = mEvents[i];
-			const Event& source = mEvents[move->second];
-			FileWatchListener* target = destination.Listener ? destination.Listener : listener;
-			if ( target )
-				target->handleFileAction( destination.Watch, destination.Directory,
-										  destination.Filename, Actions::Moved,
-										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
-		} else if ( !suppressed[i] ) {
-			const Event& event = mEvents[i];
-			FileWatchListener* target = event.Listener ? event.Listener : listener;
-			if ( target )
+		const Event& event = mEvents[i];
+		if ( event.Canceled )
+			continue;
+		FileWatchListener* target = event.Listener ? event.Listener : listener;
+		if ( !target )
+			continue;
+		if ( moves ) {
+			auto move = moves->SourceOf.find( i );
+			if ( move != moves->SourceOf.end() ) {
+				const Event& source = mEvents[move->second];
 				target->handleFileAction( event.Watch, event.Directory, event.Filename,
-										  event.ActionType, event.OldFilename );
+										  Actions::Moved,
+										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
+				continue;
+			}
+			if ( moves->MoveOf[i] != Moves::None )
+				continue;
 		}
+		target->handleFileAction( event.Watch, event.Directory, event.Filename, event.ActionType,
+								  event.OldFilename );
 	}
-
 	clear();
+}
+
+void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
+	Moves moves;
+	bool hasMoves = detectMoves && matchMoves( moves );
+	deliver( listener, hasMoves ? &moves : NULL );
 }
 
 } // namespace efsw

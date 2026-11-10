@@ -156,6 +156,34 @@ UTEST( CrossWatchMoves, CreateThenModifyKeepsOrder ) {
 		EXPECT_LT( added, modified );
 }
 
+// A move into a new directory must not be reported before the Add of that directory, even
+// when the polling backends hold the destination's events for a pass because of an unrelated
+// Delete. A directory is moved: entries already inside a new directory are only reported when
+// they are directories, and only by the polling backends.
+UTEST( CrossWatchMoves, MoveIntoNewDirectoryFollowsItsAdd ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/moved" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/unrelated.txt", "content" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( removeFile( watches.Destination + "/unrelated.txt" ) );
+	EXPECT_TRUE( createDirectory( watches.Destination + "/newparent" ) );
+	EXPECT_TRUE( renameFile( watches.Source + "/moved", watches.Destination + "/newparent/moved" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "newparent" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.waitForActions( efsw::Actions::Delete, "unrelated.txt" ) );
+	sleepMs( 500 );
+
+	const int parent = watches.DestinationListener.indexOf( efsw::Actions::Add, "newparent" );
+	int moved = watches.DestinationListener.indexOf( efsw::Actions::Moved, "moved" );
+	if ( moved == -1 )
+		moved = watches.DestinationListener.indexOf( efsw::Actions::Add, "moved" );
+	if ( pollsSnapshots() )
+		EXPECT_NE( -1, moved );
+	if ( moved != -1 )
+		EXPECT_LT( parent, moved );
+}
+
 UTEST( CrossWatchMoves, CreateThenDeleteKeepsOrder ) {
 	TwoWatches watches;
 	ASSERT_TRUE( watches.start( true, true ) );

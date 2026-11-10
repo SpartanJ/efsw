@@ -252,20 +252,25 @@ WatcherInotify* FileWatcherInotify::findWatchLocked( const std::string& director
 void FileWatcherInotify::removeWatchLocked( WatcherInotify* watch, bool skipInotifyRemove ) {
 	if ( watch->Removed )
 		return;
-	watch->Removed = true;
 
 	// Every watch below this one belongs to the same registration and must go with it;
-	// otherwise their Parent chain would point to a deleted watch.
+	// otherwise their Parent chain would point to a deleted watch. They are all found in one
+	// pass: searching again for the descendants of each removed watch would be quadratic.
 	std::vector<WatcherInotify*> children;
 	for ( const auto& native : mWatches ) {
 		for ( WatcherInotify* child : native.second ) {
-			if ( child != watch && child->inParentTree( watch ) )
+			if ( child != watch && !child->Removed && child->inParentTree( watch ) )
 				children.push_back( child );
 		}
 	}
-	for ( WatcherInotify* child : children )
-		removeWatchLocked( child );
 
+	unregisterWatchLocked( watch, skipInotifyRemove );
+	for ( WatcherInotify* child : children )
+		unregisterWatchLocked( child, false );
+}
+
+void FileWatcherInotify::unregisterWatchLocked( WatcherInotify* watch, bool skipInotifyRemove ) {
+	watch->Removed = true;
 	unindexWatchLocked( watch );
 
 	auto native = mWatches.find( watch->InotifyID );

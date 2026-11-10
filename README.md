@@ -168,8 +168,8 @@ its half as `Delete` or `Add`.
 To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
 until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the
 polling backends, a `Delete` in a watch scanned after another watch with the option is delayed by
-one more polling pass, with the later events of its watch, since that other watch may only see the
-destination on its next scan. The order of events within one watch is preserved, but events of
+one more polling pass, with the later events of its watch, including the moves into it, since that
+other watch may only see the destination on its next scan. The order of events within one watch is preserved, but events of
 watches with the option can be delivered after later events of other watches.
 
 On Linux, efsw rejects overlapping explicit watches when at least one of the registrations

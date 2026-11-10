@@ -2,6 +2,7 @@
 #define EFSW_DIRECTORYSNAPSHOT_HPP
 
 #include <efsw/DirectorySnapshotDiff.hpp>
+#include <set>
 
 namespace efsw {
 
@@ -34,6 +35,9 @@ class DirectorySnapshot {
 	void moveFile( std::string oldPath, std::string newPath );
 
 	void updateFile( std::string path );
+
+	/// @return True when the snapshot lists a file with one of the identities.
+	bool hasAny( const std::set<FileIdentity>& identities ) const;
 
   protected:
 	void initFiles();

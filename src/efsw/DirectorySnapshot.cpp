@@ -42,6 +42,14 @@ void removeUnsupportedFiles( FileInfoList& files ) {
 
 DirectorySnapshot::DirectorySnapshot() {}
 
+bool DirectorySnapshot::hasAny( const std::set<FileIdentity>& identities ) const {
+	for ( const FileInfo& file : Files ) {
+		if ( file.Inode != 0 && identities.count( file.identity() ) )
+			return true;
+	}
+	return false;
+}
+
 DirectorySnapshot::DirectorySnapshot( std::string directory ) {
 	init( directory );
 }
