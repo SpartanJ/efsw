@@ -3,6 +3,7 @@
 #include <efsw/Lock.hpp>
 #include <efsw/String.hpp>
 #include <efsw/System.hpp>
+#include <iterator>
 #include <utility>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
@@ -208,106 +209,165 @@ void FileWatcherWin32::run() {
 	} while ( mInitOK );
 }
 
-bool FileWatcherWin32::handleCrossWatchEvent( WatcherWin32* watch, ExtendedEventWin32& event ) {
-	if ( !watch->ReportCrossDirectoryMoves || event.FileId.QuadPart == 0 ||
-		 ( event.Action != FILE_ACTION_REMOVED && event.Action != FILE_ACTION_ADDED ) )
-		return false;
+static constexpr ULONGLONG crossWatchTimeoutMs = 100;
 
-	const bool removed = event.Action == FILE_ACTION_REMOVED;
-	// Search the opposite side across every watch registered on this FileWatcher.
-	// Buffer either side so IOCP completion order does not decide whether a move is found.
-	std::vector<CrossWatchEvent>& opposite = removed ? mCrossWatchAdds : mCrossWatchRemovals;
-	std::vector<CrossWatchEvent>& pending = removed ? mCrossWatchRemovals : mCrossWatchAdds;
-	size_t matches = 0;
-	auto match = opposite.end();
-	for ( auto it = opposite.begin(); it != opposite.end(); ++it ) {
-		if ( it->FileId.QuadPart == event.FileId.QuadPart ) {
-			match = it;
-			matches++;
+bool FileWatcherWin32::isCrossWatchCandidate( const WatcherWin32* watch, DWORD action,
+											  const LARGE_INTEGER& fileId ) {
+	return watch->ReportCrossDirectoryMoves && fileId.QuadPart != 0 &&
+		   ( action == FILE_ACTION_REMOVED || action == FILE_ACTION_ADDED );
+}
+
+void FileWatcherWin32::eraseCrossWatchEvent( CrossWatchEvents::iterator it ) {
+	auto ids = mCrossWatchById.equal_range( it->FileId );
+	for ( auto id = ids.first; id != ids.second; ++id ) {
+		if ( id->second == it ) {
+			mCrossWatchById.erase( id );
+			break;
 		}
 	}
-	if ( matches == 1 ) {
+	auto names = mCrossWatchByName.equal_range( it->FileName );
+	for ( auto name = names.first; name != names.second; ++name ) {
+		if ( name->second == it ) {
+			mCrossWatchByName.erase( name );
+			break;
+		}
+	}
+	mCrossWatchEvents.erase( it );
+}
+
+void FileWatcherWin32::emitCrossWatchEvent( CrossWatchEvents::iterator it ) {
+	// Erase before calling out: the listener may re-enter and remove watches.
+	WatcherWin32* watch = it->Watch;
+	const DWORD action = it->Removed ? FILE_ACTION_REMOVED : FILE_ACTION_ADDED;
+	std::string fileName( it->FileName );
+	eraseCrossWatchEvent( it );
+	handleAction( watch, fileName, action );
+}
+
+void FileWatcherWin32::holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD action,
+												   std::string fileName,
+												   const LARGE_INTEGER& fileId ) {
+	const bool removed = action == FILE_ACTION_REMOVED;
+	const LONGLONG id = fileId.QuadPart;
+
+	// Removed and added halves may arrive from different watch handles in either order.
+	// An opposite half held by the same watch wins, since nested registrations can each
+	// report a half of one move; otherwise the opposite half must be unique.
+	CrossWatchEvents::iterator sameWatch = mCrossWatchEvents.end();
+	CrossWatchEvents::iterator otherWatch = mCrossWatchEvents.end();
+	size_t sameWatchCount = 0;
+	size_t otherWatchCount = 0;
+	auto candidates = mCrossWatchById.equal_range( id );
+	for ( auto candidate = candidates.first; candidate != candidates.second; ++candidate ) {
+		CrossWatchEvents::iterator held = candidate->second;
+		if ( held->Removed == removed )
+			continue;
+		if ( held->Watch == watch ) {
+			sameWatch = held;
+			sameWatchCount++;
+		} else {
+			otherWatch = held;
+			otherWatchCount++;
+		}
+	}
+	CrossWatchEvents::iterator match = mCrossWatchEvents.end();
+	if ( sameWatchCount == 1 )
+		match = sameWatch;
+	else if ( sameWatchCount == 0 && otherWatchCount == 1 )
+		match = otherWatch;
+
+	if ( match != mCrossWatchEvents.end() ) {
 		WatcherWin32* source = removed ? watch : match->Watch;
 		WatcherWin32* destination = removed ? match->Watch : watch;
-		const std::string& sourceName = removed ? event.FileName : match->FileName;
-		const std::string& destinationName = removed ? match->FileName : event.FileName;
-		std::string sourcePath = std::string( source->DirName ) + sourceName;
-		std::string destinationPath = std::string( destination->DirName ) + destinationName;
-		FileInfo destinationInfo( destinationPath );
-		FileInfo sourceRoot( source->DirName );
-		// File IDs are volume-scoped; both watches must opt in and the destination
-		// must still refer to the same unambiguous file or directory.
-		if ( sourcePath != destinationPath && source->ReportCrossDirectoryMoves &&
-			 destination->ReportCrossDirectoryMoves &&
-			 destinationInfo.Inode == static_cast<Uint64>( event.FileId.QuadPart ) &&
-			 destinationInfo.Device == sourceRoot.Device &&
-			 ( destinationInfo.isDirectory() ||
-			   ( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) ) {
-			// A move within one registered tree uses the same relative-name handling.
-			if ( source == destination ) {
-				handleAction( destination, destinationName, FILE_ACTION_RENAMED_NEW_NAME,
-							  sourceName );
-			} else {
-				std::string folder = FileSystem::pathRemoveFileName( destinationPath );
-				FileSystem::dirAddSlashAtEnd( folder );
-				destination->Listener->handleFileAction(
-					destination->ID, folder, FileSystem::fileNameFromPath( destinationPath ),
-					Actions::Moved, FileSystem::canonicalSourcePath( sourcePath ) );
+		std::string sourceName( removed ? fileName : match->FileName );
+		std::string destinationName( removed ? match->FileName : fileName );
+		std::string sourcePath( std::string( source->DirName ) + sourceName );
+		std::string destinationPath( std::string( destination->DirName ) + destinationName );
+		if ( sourcePath != destinationPath ) {
+			// File IDs are volume-scoped; the destination must still refer to the same
+			// unambiguous file or directory on the source volume.
+			FileInfo destinationInfo( destinationPath );
+			FileInfo sourceRoot( source->DirName );
+			if ( destinationInfo.Inode == static_cast<Uint64>( id ) &&
+				 destinationInfo.Device == sourceRoot.Device &&
+				 ( destinationInfo.isDirectory() ||
+				   ( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) ) {
+				eraseCrossWatchEvent( match );
+				// Older held halves for either path happened before this move.
+				flushCrossWatchEventsFor( source, sourceName );
+				flushCrossWatchEventsFor( destination, destinationName );
+				if ( source == destination ) {
+					// A move within one registration uses the same relative-name handling.
+					handleAction( destination, destinationName, FILE_ACTION_RENAMED_NEW_NAME,
+								  sourceName );
+				} else {
+					std::string folder = FileSystem::pathRemoveFileName( destinationPath );
+					FileSystem::dirAddSlashAtEnd( folder );
+					destination->Listener->handleFileAction(
+						destination->ID, folder, FileSystem::fileNameFromPath( destinationPath ),
+						Actions::Moved, FileSystem::canonicalSourcePath( sourcePath ) );
+				}
+				return;
 			}
-			opposite.erase( match );
-			return true;
 		}
 	}
+
 	// An unmatched half becomes a normal Add/Delete when its wait interval expires.
-	CrossWatchEvent stored{ watch, std::move( event.FileName ), event.FileId, GetTickCount64() };
-	pending.emplace_back( std::move( stored ) );
-	return true;
+	mCrossWatchEvents.push_back(
+		CrossWatchEvent{ watch, std::move( fileName ), id, GetTickCount64(), removed,
+						 ++mCrossWatchSequence } );
+	CrossWatchEvents::iterator held = std::prev( mCrossWatchEvents.end() );
+	mCrossWatchById.emplace( id, held );
+	mCrossWatchByName.emplace( held->FileName, held );
+}
+
+void FileWatcherWin32::flushCrossWatchEventsFor( WatcherWin32* watch,
+												 const std::string& fileName ) {
+	// Report one half per iteration, oldest first, and search again afterwards: the listener
+	// may re-enter and remove watches, which invalidates any iterator kept across the call.
+	while ( !mCrossWatchEvents.empty() ) {
+		CrossWatchEvents::iterator oldest = mCrossWatchEvents.end();
+		auto consider = [&]( const std::string& name ) {
+			auto range = mCrossWatchByName.equal_range( name );
+			for ( auto it = range.first; it != range.second; ++it ) {
+				if ( it->second->Watch == watch &&
+					 ( oldest == mCrossWatchEvents.end() ||
+					   it->second->Sequence < oldest->Sequence ) )
+					oldest = it->second;
+			}
+		};
+		consider( fileName );
+		for ( size_t separator = fileName.find_first_of( "\\/" ); separator != std::string::npos;
+			  separator = fileName.find_first_of( "\\/", separator + 1 ) )
+			consider( fileName.substr( 0, separator ) );
+		if ( oldest == mCrossWatchEvents.end() )
+			return;
+		emitCrossWatchEvent( oldest );
+	}
 }
 
 DWORD FileWatcherWin32::crossWatchTimeout() const {
-	const ULONGLONG now = GetTickCount64();
-	DWORD timeout = INFINITE;
-	for ( const auto& list : { &mCrossWatchRemovals, &mCrossWatchAdds } ) {
-		for ( const CrossWatchEvent& event : *list ) {
-			const ULONGLONG elapsed = now - event.CreatedAt;
-			const DWORD remaining = elapsed >= 100 ? 0 : static_cast<DWORD>( 100 - elapsed );
-			if ( remaining < timeout )
-				timeout = remaining;
-		}
-	}
-	return timeout;
+	if ( mCrossWatchEvents.empty() )
+		return INFINITE;
+	const ULONGLONG elapsed = GetTickCount64() - mCrossWatchEvents.front().CreatedAt;
+	return elapsed >= crossWatchTimeoutMs
+			   ? 0
+			   : static_cast<DWORD>( crossWatchTimeoutMs - elapsed );
 }
 
 void FileWatcherWin32::flushCrossWatchEvents() {
 	const ULONGLONG now = GetTickCount64();
-	for ( auto it = mCrossWatchRemovals.begin(); it != mCrossWatchRemovals.end(); ) {
-		if ( now - it->CreatedAt >= 100 ) {
-			handleAction( it->Watch, it->FileName, FILE_ACTION_REMOVED );
-			it = mCrossWatchRemovals.erase( it );
-		} else
-			++it;
-	}
-	for ( auto it = mCrossWatchAdds.begin(); it != mCrossWatchAdds.end(); ) {
-		if ( now - it->CreatedAt >= 100 ) {
-			handleAction( it->Watch, it->FileName, FILE_ACTION_ADDED );
-			it = mCrossWatchAdds.erase( it );
-		} else
-			++it;
-	}
+	while ( !mCrossWatchEvents.empty() &&
+			now - mCrossWatchEvents.front().CreatedAt >= crossWatchTimeoutMs )
+		emitCrossWatchEvent( mCrossWatchEvents.begin() );
 }
 
 void FileWatcherWin32::discardCrossWatchEvents( WatcherWin32* watch ) {
-	for ( auto it = mCrossWatchRemovals.begin(); it != mCrossWatchRemovals.end(); ) {
+	for ( auto it = mCrossWatchEvents.begin(); it != mCrossWatchEvents.end(); ) {
+		auto next = std::next( it );
 		if ( it->Watch == watch )
-			it = mCrossWatchRemovals.erase( it );
-		else
-			++it;
-	}
-	for ( auto it = mCrossWatchAdds.begin(); it != mCrossWatchAdds.end(); ) {
-		if ( it->Watch == watch )
-			it = mCrossWatchAdds.erase( it );
-		else
-			++it;
+			eraseCrossWatchEvent( it );
+		it = next;
 	}
 }
 

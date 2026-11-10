@@ -38,6 +38,11 @@ bool WatcherFSEvents::handlesPath( const std::string& path ) const {
 	return path.size() > Directory.size() && 0 == path.compare( 0, Directory.size(), Directory );
 }
 
+bool WatcherFSEvents::reportsPath( const std::string& path ) const {
+	return handlesPath( path ) &&
+		   ( Recursive || path.find_last_of( FileSystem::getOSSlash() ) == Directory.size() - 1 );
+}
+
 void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 									  const std::string& filename, Action action,
 									  const std::string& oldFilename ) {
@@ -143,6 +148,16 @@ void WatcherFSEvents::handleActions( std::vector<FSEvent>& events, size_t eventC
 		if ( FileWatcherFSEvents::isGranular() ) {
 			std::string dirPath( FileSystem::pathRemoveFileName( event.Path ) );
 			std::string filePath( FileSystem::fileNameFromPath( event.Path ) );
+
+			if ( !event.MovedFrom.empty() ) {
+				// The other half of this move was routed to the source registration and was
+				// suppressed there; see FileWatcherFSEvents::pairCrossWatchMoves.
+				sendFileAction( ID, dirPath, filePath, Actions::Moved,
+								FileSystem::canonicalSourcePath( event.MovedFrom ) );
+				if ( dirPath != Directory )
+					DirsChanged.insert( dirPath );
+				continue;
+			}
 
 			if ( event.Flags &
 				 ( efswFSEventStreamEventFlagItemCreated | efswFSEventStreamEventFlagItemRemoved |

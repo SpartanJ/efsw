@@ -15,6 +15,7 @@ UTEST( FileInfo, Exists ) {
 
 	EXPECT_TRUE( efsw::FileInfo::exists( file ) );
 	EXPECT_TRUE( efsw::FileInfo::exists( directory + slash ) );
+	// Historical behavior: a trailing slash is stripped before checking, even for files.
 	EXPECT_TRUE( efsw::FileInfo::exists( file + slash ) );
 	EXPECT_FALSE( efsw::FileInfo::exists( missing ) );
 

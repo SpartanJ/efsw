@@ -158,14 +158,24 @@ versions when the filesystem provides stable volume and file identifiers.
 
 Moves between watches without the option on both ends, moves into or out of the watched tree, and
 moves whose native event pair is incomplete or whose filesystem identity is ambiguous continue to
-be reported as `Delete` and/or `Add` events.
+be reported as `Delete` and/or `Add` events. The polling backends (generic and kqueue) only pair a
+move whose both halves are seen in the same polling pass. When registrations are nested, a watch
+that covers both paths reports the move itself, and a nested watch that covers only one path gets
+its half as `Delete` or `Add`.
+
+To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
+until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. The
+order of events within one watch is preserved, but events of watches with the option can be
+delivered after later events of watches without it.
 
 On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
 recursively covers the other watch root. Recursive watching is implemented using one inotify
-watch per directory, and sharing the same native directory watch between independent logical
-registrations is intentionally unsupported. `addWatch()` returns `Errors::FileOverlapping` for these
-overlapping registrations. Applications that need multiple consumers for the same subtree should
-register it once and multiplex the resulting events internally.
+watch per directory. `addWatch()` returns `Errors::FileOverlapping` for these overlapping
+registrations. Applications that need multiple consumers for the same subtree should register it
+once and multiplex the resulting events internally. Registrations can still come to overlap later,
+for example when a directory holding a registration is moved into a recursively watched tree.
+efsw then shares the native watch: events are delivered to every registration covering the
+directory, and removing one of them keeps the others working.
 
 Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
 

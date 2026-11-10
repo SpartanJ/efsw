@@ -61,8 +61,12 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	bool mAddingWatcher;
 
 	unsigned int mPollingFreq{ 500 };
+	/// Events of every watch that enabled Options::ReportCrossDirectoryMoves, collected during
+	/// one polling pass so moves between those watches can be paired.
 	FileActionBatch mSharedActions;
-	FileActionBatch* mSharedActionBatch{ NULL };
+
+	/// @return The batch a new watch must collect into, or NULL.
+	FileActionBatch* sharedActionsFor( bool reportCrossDirectoryMoves );
 
 	bool isAddingWatcher() const;
 

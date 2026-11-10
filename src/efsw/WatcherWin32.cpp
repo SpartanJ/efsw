@@ -122,16 +122,23 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 		}
 	} while ( pNotify->NextEntryOffset != 0 );
 
+	FileWatcherWin32* fileWatcher = static_cast<FileWatcherWin32*>( pWatch->Watch );
 	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
 		ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
-		const std::string& nfile = event.FileName;
-		bool skip = false;
 
 		// Removed and added records may arrive from different watch handles in either order.
-		// The FileWatcher-level matcher owns both pending sides and consumes matched records.
-		if ( static_cast<FileWatcherWin32*>( pWatch->Watch )
-				 ->handleCrossWatchEvent( pWatch, event ) )
+		// The FileWatcher-level matcher owns both held sides and consumes matched records.
+		if ( FileWatcherWin32::isCrossWatchCandidate( pWatch, event.Action, event.FileId ) ) {
+			fileWatcher->holdOrMatchCrossWatchEvent( pWatch, event.Action,
+													 std::move( event.FileName ), event.FileId );
 			continue;
+		}
+		// Anything reported immediately must not overtake a held Add/Remove of its path.
+		if ( pWatch->ReportCrossDirectoryMoves )
+			fileWatcher->flushCrossWatchEventsFor( pWatch, event.FileName );
+
+		const std::string& nfile = event.FileName;
+		bool skip = false;
 
 		if ( FILE_ACTION_MODIFIED == event.Action ) {
 			FileInfo fifile( std::string( pWatch->DirName ) + nfile );

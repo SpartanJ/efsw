@@ -13,6 +13,8 @@ class WatcherGeneric : public Watcher {
 	FileWatcherImpl* WatcherImpl;
 	DirWatcherGeneric* DirWatch;
 	bool ReportCrossDirectoryMoves;
+	/// When set, scans collect events into this batch, owned by the file watcher, which
+	/// dispatches it after scanning every watch. Set once when the watch is created.
 	FileActionBatch* SharedActionBatch{ NULL };
 
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,

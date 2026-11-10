@@ -50,11 +50,9 @@ FileWatcherInotify::~FileWatcherInotify() {
 	Lock l( mWatchesLock );
 	Lock l2( mRealWatchesLock );
 
-	WatchMap::iterator iter = mWatches.begin();
-	WatchMap::iterator end = mWatches.end();
-
-	for ( ; iter != end; ++iter ) {
-		efSAFE_DELETE( iter->second );
+	for ( auto& native : mWatches ) {
+		for ( WatcherInotify* watch : native.second )
+			delete watch;
 	}
 
 	mWatches.clear();
@@ -97,11 +95,6 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( NULL != parent && pathInWatches( dir ) ) {
-		/// Internal recursive watches keep the exact-duplicate check: a newly
-		/// traversed subdirectory must not register over an existing explicit
-		/// watch root.
-		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	} else if ( NULL != parent && FileSystem::isRemoteFS( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRemote, dir );
 	}
@@ -154,17 +147,25 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 		}
 	}
 
-	// Explicit overlapping user watches are rejected before calling
-	// inotify_add_watch(). Therefore an existing wd here must not represent
-	// a second explicit registration of the same physical directory.
-	//
-	// This path is retained for inotify identity reuse caused by filesystem
-	// topology changes (for example, an already watched directory being moved).
+	// inotify returns the existing descriptor when the inode is already watched. Explicit
+	// overlapping registrations are rejected above, so this only happens after topology
+	// changes, for example when a watched directory was moved into a recursive registration.
 	{
 		Lock lock( mWatchesLock );
-		auto watchIdExists = mWatches.find( wd );
-		if ( watchIdExists != mWatches.end() )
-			removeWatchLocked( wd, true );
+		std::vector<WatcherInotify*> owners;
+		ownersLocked( wd, owners );
+		for ( WatcherInotify* owner : owners ) {
+			// The same directory reached through another path is still one registration.
+			if ( NULL == parent && NULL == owner->Parent )
+				return Errors::Log::createLastError( Errors::FileRepeated, directory );
+			if ( NULL != parent && owner->ID == parent->ID ) {
+				// This registration already watches the directory under a stale path.
+				if ( NULL == owner->Parent )
+					return Errors::Log::createLastError( Errors::FileRepeated, directory );
+				removeWatchLocked( owner, true );
+			}
+		}
+		// Owners from other registrations keep the descriptor; this watch joins them.
 	}
 
 	efDEBUG( "Added watch %s with id: %d\n", dir.c_str(), wd );
@@ -181,13 +182,12 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 	{
 		Lock lock( mWatchesLock );
-		mWatches[wd] = pWatch;
-		mWatchesRef[pWatch->Directory] = wd;
+		registerWatchLocked( pWatch );
 	}
 
 	if ( NULL == pWatch->Parent ) {
 		Lock l( mRealWatchesLock );
-		mRealWatches[pWatch->InotifyID] = pWatch;
+		mRealWatches[pWatch->ID] = pWatch;
 	}
 
 	if ( pWatch->Recursive ) {
@@ -217,46 +217,79 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 	return wd;
 }
 
-void FileWatcherInotify::removeWatchLocked( WatchID watchid, bool skipInotifyRemove ) {
-	WatchMap::iterator iter = mWatches.find( watchid );
-	if ( iter == mWatches.end() )
-		return;
+void FileWatcherInotify::registerWatchLocked( WatcherInotify* watch ) {
+	mWatches[watch->InotifyID].push_back( watch );
+	mWatchesRef.emplace( watch->Directory, watch );
+}
 
-	WatcherInotify* watch = iter->second;
-
-	if ( watch->Recursive && NULL == watch->Parent ) {
-		WatchMap::iterator it = mWatches.begin();
-		std::vector<WatchID> eraseWatches;
-
-		for ( ; it != mWatches.end(); ++it )
-			if ( it->second != watch && it->second->inParentTree( watch ) )
-				eraseWatches.push_back( it->second->InotifyID );
-
-		for ( std::vector<WatchID>::iterator eit = eraseWatches.begin(); eit != eraseWatches.end();
-			  ++eit ) {
-			removeWatch( *eit );
+void FileWatcherInotify::unindexWatchLocked( WatcherInotify* watch ) {
+	auto range = mWatchesRef.equal_range( watch->Directory );
+	for ( auto it = range.first; it != range.second; ++it ) {
+		if ( it->second == watch ) {
+			mWatchesRef.erase( it );
+			return;
 		}
 	}
+}
 
-	mWatchesRef.erase( watch->Directory );
-	mWatches.erase( iter );
+void FileWatcherInotify::ownersLocked( int wd, std::vector<WatcherInotify*>& owners ) const {
+	owners.clear();
+	auto native = mWatches.find( wd );
+	if ( native != mWatches.end() )
+		owners.insert( owners.end(), native->second.begin(), native->second.end() );
+}
+
+WatcherInotify* FileWatcherInotify::findWatchLocked( const std::string& directory,
+													 WatchID registration ) {
+	auto range = mWatchesRef.equal_range( directory );
+	for ( auto it = range.first; it != range.second; ++it ) {
+		if ( it->second->ID == registration )
+			return it->second;
+	}
+	return NULL;
+}
+
+void FileWatcherInotify::removeWatchLocked( WatcherInotify* watch, bool skipInotifyRemove ) {
+	if ( watch->Removed )
+		return;
+	watch->Removed = true;
+
+	// Every watch below this one belongs to the same registration and must go with it;
+	// otherwise their Parent chain would point to a deleted watch.
+	std::vector<WatcherInotify*> children;
+	for ( const auto& native : mWatches ) {
+		for ( WatcherInotify* child : native.second ) {
+			if ( child != watch && child->inParentTree( watch ) )
+				children.push_back( child );
+		}
+	}
+	for ( WatcherInotify* child : children )
+		removeWatchLocked( child );
+
+	unindexWatchLocked( watch );
+
+	auto native = mWatches.find( watch->InotifyID );
+	if ( native != mWatches.end() ) {
+		std::vector<WatcherInotify*>& owners = native->second;
+		owners.erase( std::remove( owners.begin(), owners.end(), watch ), owners.end() );
+		if ( owners.empty() ) {
+			mWatches.erase( native );
+			if ( !skipInotifyRemove ) {
+				if ( inotify_rm_watch( mFD, watch->InotifyID ) < 0 ) {
+					efDEBUG( "Error removing watch %d: %s\n", watch->InotifyID, strerror( errno ) );
+				} else {
+					efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(),
+							 watch->InotifyID );
+				}
+			}
+		}
+	}
 
 	if ( NULL == watch->Parent ) {
-		WatchMap::iterator eraseit = mRealWatches.find( watch->InotifyID );
-
-		if ( eraseit != mRealWatches.end() ) {
-			mRealWatches.erase( eraseit );
-		}
-	}
-
-	if ( !skipInotifyRemove ) {
-		int err = inotify_rm_watch( mFD, watchid );
-
-		if ( err < 0 ) {
-			efDEBUG( "Error removing watch %d: %s\n", watchid, strerror( errno ) );
-		} else {
-			efDEBUG( "Removed watch %s with id: %d\n", watch->Directory.c_str(), watchid );
-		}
+		Lock l( mRealWatchesLock );
+		auto real = mRealWatches.find( watch->ID );
+		if ( real != mRealWatches.end() && real->second == watch )
+			mRealWatches.erase( real );
 	}
 
 	mDeletedWatches.push_back( watch );
@@ -267,16 +300,29 @@ void FileWatcherInotify::removeWatch( const std::string& directory ) {
 		return;
 	Lock initLock( mInitLock );
 	Lock lock( mWatchesLock );
-	Lock l( mRealWatchesLock );
 
 	std::string dir( directory );
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	std::unordered_map<std::string, WatchID>::iterator ref = mWatchesRef.find( dir );
-	if ( ref == mWatchesRef.end() )
-		return;
+	// Prefer the explicit registration when other registrations share the directory.
+	WatcherInotify* watch = NULL;
+	{
+		Lock l( mRealWatchesLock );
+		for ( const auto& real : mRealWatches ) {
+			if ( real.second->Directory == dir ) {
+				watch = real.second;
+				break;
+			}
+		}
+	}
+	if ( NULL == watch ) {
+		auto ref = mWatchesRef.find( dir );
+		if ( ref == mWatchesRef.end() )
+			return;
+		watch = ref->second;
+	}
 
-	removeWatchLocked( ref->second );
+	removeWatchLocked( watch );
 }
 
 void FileWatcherInotify::removeWatch( WatchID watchid ) {
@@ -284,7 +330,15 @@ void FileWatcherInotify::removeWatch( WatchID watchid ) {
 		return;
 	Lock initLock( mInitLock );
 	Lock lock( mWatchesLock );
-	removeWatchLocked( watchid );
+	WatcherInotify* watch = NULL;
+	{
+		Lock l( mRealWatchesLock );
+		auto real = mRealWatches.find( watchid );
+		if ( real == mRealWatches.end() )
+			return;
+		watch = real->second;
+	}
+	removeWatchLocked( watch );
 }
 
 void FileWatcherInotify::watch() {
@@ -294,19 +348,31 @@ void FileWatcherInotify::watch() {
 	}
 }
 
-Watcher* FileWatcherInotify::watcherContainsDirectory( std::string dir ) {
+Watcher* FileWatcherInotify::watcherContainsDirectory( std::string dir, WatchID registration ) {
 	FileSystem::dirRemoveSlashAtEnd( dir );
 	std::string watcherPath = FileSystem::pathRemoveFileName( dir );
 	FileSystem::dirAddSlashAtEnd( watcherPath );
 	Lock lock( mWatchesLock );
+	return findWatchLocked( watcherPath, registration );
+}
 
-	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-		Watcher* watcher = it->second;
-		if ( watcher->Directory == watcherPath )
-			return watcher;
+void FileWatcherInotify::renameWatchedDirectoriesLocked( const std::string& oldPath,
+														 const std::string& newPath ) {
+	for ( auto& native : mWatches ) {
+		for ( WatcherInotify* moved : native.second ) {
+			if ( -1 == String::strStartsWith( oldPath, moved->Directory ) )
+				continue;
+			unindexWatchLocked( moved );
+			if ( moved->Directory == oldPath ) {
+				moved->Directory = newPath;
+				moved->DirInfo = FileInfo( newPath );
+			} else {
+				moved->Directory = newPath + moved->Directory.substr( oldPath.size() );
+				moved->DirInfo.Filepath = moved->Directory;
+			}
+			mWatchesRef.emplace( moved->Directory, moved );
+		}
 	}
-
-	return NULL;
 }
 
 void FileWatcherInotify::run() {
@@ -333,37 +399,47 @@ void FileWatcherInotify::run() {
 	};
 
 	struct PendingMove {
-		WatcherInotify* watcher;
+		WatcherInotify* source;
+		WatcherInotify* destination;
 		std::string filename;
 	};
 	// Keep the bucket array between read batches. clear() destroys the nodes but
 	// does not normally release the buckets, avoiding a complete map allocation
-	// on every batch while retaining average constant-time cookie lookup.
-	std::unordered_map<uint32_t, PendingMove> pendingMoves;
+	// on every batch while retaining average constant-time cookie lookup. A cookie
+	// has one entry per source owner of the descriptor, usually exactly one.
+	std::unordered_multimap<uint32_t, PendingMove> pendingMoves;
 	pendingMoves.reserve( 16 );
 	std::vector<BatchEvent> events;
 	events.reserve( 64 );
 	std::unordered_map<uint32_t, MovePair> movePairs;
 	movePairs.reserve( 16 );
+	// Scratch buffers reused for every event.
+	std::vector<WatcherInotify*> owners;
+	std::vector<WatcherInotify*> destinationOwners;
+	std::vector<WatcherInotify*> partners;
+	std::vector<bool> claimed;
+	std::vector<PendingMove> moves;
 
 	char* buff = new char[BUFF_SIZE];
 	memset( buff, 0, BUFF_SIZE );
 
 	// Report a source whose destination cannot be represented as one Moved event.
 	// Directories require extra cleanup because every recursively watched child
-	// has its own native inotify watch.
+	// has its own native inotify watch. Only the watches of the source's registration
+	// are affected; other registrations sharing those directories keep them.
 	auto emitMovedOutside = [this]( WatcherInotify* watch, const std::string& oldFileName ) {
 		watch->OldFileName.clear();
 
 		std::vector<Watcher*> eraseWatches;
 		{
 			Lock lock( mWatchesLock );
-			for ( const auto& entry : mWatches ) {
-				Watcher* oldWatch = entry.second;
-				if ( oldWatch != watch &&
-					 -1 != String::strStartsWith( watch->Directory + oldFileName + "/",
-												  oldWatch->Directory ) )
-					eraseWatches.push_back( oldWatch );
+			const std::string movedPath( watch->Directory + oldFileName + "/" );
+			for ( const auto& native : mWatches ) {
+				for ( WatcherInotify* oldWatch : native.second ) {
+					if ( oldWatch != watch && oldWatch->ID == watch->ID &&
+						 -1 != String::strStartsWith( movedPath, oldWatch->Directory ) )
+						eraseWatches.push_back( oldWatch );
+				}
 			}
 		}
 
@@ -377,12 +453,23 @@ void FileWatcherInotify::run() {
 		} else {
 			for ( auto it = eraseWatches.rbegin(); it != eraseWatches.rend(); ++it ) {
 				Watcher* rmWatch = *it;
-				if ( Watcher* containingWatch = watcherContainsDirectory( rmWatch->Directory ) ) {
+				if ( Watcher* containingWatch =
+						 watcherContainsDirectory( rmWatch->Directory, watch->ID ) ) {
 					handleAction( containingWatch,
 								  FileSystem::fileNameFromPath( rmWatch->Directory ), IN_DELETE );
 				}
 			}
 		}
+	};
+
+	// Same registration pairs keep the original rule: a rename inside one directory always
+	// pairs, a move between directories of one tree needs the option. Different
+	// registrations pair only when both opted in.
+	auto canPair = []( const WatcherInotify* source, const WatcherInotify* destination ) {
+		if ( source->ID == destination->ID )
+			return source == destination || ( source->reportCrossDirectoryMoves &&
+											  destination->reportCrossDirectoryMoves );
+		return source->reportCrossDirectoryMoves && destination->reportCrossDirectoryMoves;
 	};
 
 	do {
@@ -411,67 +498,102 @@ void FileWatcherInotify::run() {
 				// Replay in kernel queue order. A source is deferred only when the
 				// complete pair will be represented by one Moved callback. Otherwise
 				// Delete is emitted at FROM and Add at TO, preserving their positions.
+				// Every event is delivered to each logical owner of its descriptor.
 				pendingMoves.clear();
 
 				for ( const auto& event : events ) {
-					WatcherInotify* curWatcher = NULL;
 					{
 						Lock lock( mWatchesLock );
-						auto watcher = mWatches.find( event.wd );
-						if ( watcher != mWatches.end() )
-							curWatcher = watcher->second;
+						ownersLocked( event.wd, owners );
 					}
 
 					if ( event.mask & IN_MOVED_FROM ) {
-						if ( !curWatcher )
-							continue;
-
-						WatcherInotify* destination = NULL;
+						destinationOwners.clear();
 						auto pair = movePairs.find( event.cookie );
 						if ( pair != movePairs.end() && pair->second.destinationWd != -1 ) {
 							Lock lock( mWatchesLock );
-							auto watcher = mWatches.find( pair->second.destinationWd );
-							if ( watcher != mWatches.end() )
-								destination = watcher->second;
+							ownersLocked( pair->second.destinationWd, destinationOwners );
 						}
 
-						// Watches of the same file watcher share the inotify fd, so any pair of
-						// watches that enabled the option can be correlated, no matter whether
-						// they belong to the same recursive tree or were added separately.
-						const bool coalesce =
-							destination && ( destination == curWatcher ||
-											 ( destination->reportCrossDirectoryMoves &&
-											   curWatcher->reportCrossDirectoryMoves ) );
-						if ( coalesce ) {
-							pendingMoves.erase( event.cookie );
-							pendingMoves.emplace( event.cookie,
-												  PendingMove{ curWatcher, event.filename } );
-						} else {
-							emitMovedOutside( curWatcher, event.filename );
+						// Each destination owner completes at most one source owner, so no
+						// listener receives two accounts of one move. Owners of the same
+						// registration are matched first.
+						partners.assign( owners.size(), NULL );
+						claimed.assign( destinationOwners.size(), false );
+						for ( int pass = 0; pass < 2; ++pass ) {
+							for ( size_t s = 0; s < owners.size(); ++s ) {
+								if ( partners[s] )
+									continue;
+								for ( size_t d = 0; d < destinationOwners.size(); ++d ) {
+									WatcherInotify* destination = destinationOwners[d];
+									if ( claimed[d] ||
+										 ( pass == 0 ) != ( destination->ID == owners[s]->ID ) ||
+										 !canPair( owners[s], destination ) )
+										continue;
+									partners[s] = destination;
+									claimed[d] = true;
+									break;
+								}
+							}
+						}
+
+						for ( size_t s = 0; s < owners.size(); ++s ) {
+							if ( owners[s]->Removed )
+								continue;
+							if ( partners[s] )
+								pendingMoves.emplace( event.cookie,
+													  PendingMove{ owners[s], partners[s],
+																   event.filename } );
+							else
+								emitMovedOutside( owners[s], event.filename );
 						}
 					} else if ( event.mask & IN_MOVED_TO ) {
-						auto pending = pendingMoves.find( event.cookie );
-						if ( pending == pendingMoves.end() ) {
-							if ( curWatcher )
-								handleAction( curWatcher, event.filename, event.mask );
-							continue;
+						moves.clear();
+						auto range = pendingMoves.equal_range( event.cookie );
+						for ( auto it = range.first; it != range.second; ++it )
+							moves.push_back( std::move( it->second ) );
+						pendingMoves.erase( range.first, range.second );
+
+						for ( WatcherInotify* owner : owners ) {
+							if ( owner->Removed )
+								continue;
+							auto move = std::find_if(
+								moves.begin(), moves.end(), [owner]( const PendingMove& pending ) {
+									return pending.destination == owner;
+								} );
+							if ( move == moves.end() || move->source->Removed ) {
+								handleAction( owner, event.filename, event.mask );
+								continue;
+							}
+
+							WatcherInotify* source = move->source;
+							std::string sourceFilename = std::move( move->filename );
+							moves.erase( move );
+
+							if ( source == owner ) {
+								owner->OldFileName = sourceFilename;
+								handleAction( owner, event.filename, event.mask );
+							} else if ( ( event.mask & IN_ISDIR ) && source->ID != owner->ID ) {
+								// The moved subtree is still watched natively, but its watches
+								// belong to the source registration and must be handed over.
+								moveDirectoryBetweenRoots( source, sourceFilename, owner,
+														   event.filename );
+							} else {
+								emitCrossDirectoryMove( source, sourceFilename, owner,
+														event.filename );
+							}
 						}
 
-						WatcherInotify* source = pending->second.watcher;
-						std::string sourceFilename = std::move( pending->second.filename );
-						pendingMoves.erase( pending );
-
-						if ( !curWatcher ) {
-							emitMovedOutside( source, sourceFilename );
-						} else if ( source == curWatcher ) {
-							curWatcher->OldFileName = sourceFilename;
-							handleAction( curWatcher, event.filename, event.mask );
-						} else {
-							emitCrossDirectoryMove( source, sourceFilename, curWatcher,
-													event.filename );
+						// Sources whose destination owner disappeared in the meantime.
+						for ( PendingMove& move : moves ) {
+							if ( !move.source->Removed )
+								emitMovedOutside( move.source, move.filename );
 						}
-					} else if ( curWatcher ) {
-						handleAction( curWatcher, event.filename, event.mask );
+					} else {
+						for ( WatcherInotify* owner : owners ) {
+							if ( !owner->Removed )
+								handleAction( owner, event.filename, event.mask );
+						}
 					}
 				}
 			}
@@ -499,15 +621,10 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 		bool found = false;
 
 		{
+			// Only this registration's coverage matters: another registration watching the
+			// directory does not deliver events to this one.
 			Lock lock( mWatchesLock );
-
-			/// First check if exists
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				if ( it->second->Directory == fpath ) {
-					found = true;
-					break;
-				}
-			}
+			found = NULL != findWatchLocked( fpath, watch->ID );
 		}
 
 		if ( !found ) {
@@ -529,6 +646,93 @@ void FileWatcherInotify::emitCrossDirectoryMove( Watcher* src, const std::string
 	dst->OldFileName = src->Directory + srcFile;
 	handleAction( dst, dstFile, IN_MOVED_TO );
 	dst->OldFileName = std::move( oldDstFilename );
+}
+
+void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
+													WatcherInotify* dst,
+													const std::string& dstFile ) {
+	if ( !dst->Listener || !mInitOK )
+		return;
+
+	std::string oldPath( src->Directory + srcFile );
+	std::string newPath( dst->Directory + dstFile );
+	FileSystem::dirAddSlashAtEnd( oldPath );
+	FileSystem::dirAddSlashAtEnd( newPath );
+
+	mIsTakingAction = true;
+	Lock initLock( mInitLock );
+	std::vector<WatcherInotify*> sourceOwned;
+	std::vector<WatcherInotify*> shared;
+	{
+		Lock lock( mWatchesLock );
+		for ( const auto& native : mWatches ) {
+			for ( WatcherInotify* watch : native.second ) {
+				if ( -1 == String::strStartsWith( oldPath, watch->Directory ) )
+					continue;
+				if ( watch->ID == src->ID )
+					sourceOwned.push_back( watch );
+				else if ( watch->ID != dst->ID )
+					shared.push_back( watch );
+			}
+		}
+
+		// The native watches followed the directory, whichever registration owns them.
+		renameWatchedDirectoriesLocked( oldPath, newPath );
+
+		if ( dst->Recursive ) {
+			// Keep the native watches so no event inside the moved tree is lost, but make
+			// them report to, and be removed with, the destination registration.
+			for ( WatcherInotify* watch : sourceOwned ) {
+				watch->ID = dst->ID;
+				watch->Listener = dst->Listener;
+				watch->Recursive = true;
+				watch->syntheticEvents = dst->syntheticEvents;
+				watch->reportCrossDirectoryMoves = dst->reportCrossDirectoryMoves;
+				watch->OldFileName.clear();
+				if ( watch->Directory == newPath )
+					watch->Parent = dst;
+			}
+		} else {
+			// A non-recursive destination must not keep watching inside the moved tree.
+			for ( WatcherInotify* watch : sourceOwned )
+				removeWatchLocked( watch );
+		}
+	}
+
+	// Install recursive coverage before notifying, like a plain Add does.
+	if ( dst->Recursive ) {
+		if ( sourceOwned.empty() ) {
+			// The source never watched inside the directory. Adding coverage joins the native
+			// watches of other registrations found there as an additional owner.
+			checkForNewWatcher( dst, newPath );
+		} else {
+			// The handed-over tree stops where other registrations own the directories.
+			std::stable_sort( shared.begin(), shared.end(),
+							  []( const WatcherInotify* left, const WatcherInotify* right ) {
+								  return left->Directory.size() < right->Directory.size();
+							  } );
+			for ( WatcherInotify* watch : shared ) {
+				WatcherInotify* parent = NULL;
+				{
+					Lock lock( mWatchesLock );
+					if ( watch->Removed || findWatchLocked( watch->Directory, dst->ID ) )
+						continue;
+					std::string parentPath( watch->Directory );
+					FileSystem::dirRemoveSlashAtEnd( parentPath );
+					parentPath = FileSystem::pathRemoveFileName( parentPath );
+					FileSystem::dirAddSlashAtEnd( parentPath );
+					parent = findWatchLocked( parentPath, dst->ID );
+				}
+				if ( parent )
+					addWatch( watch->Directory, dst->Listener, true, dst->syntheticEvents,
+							  dst->reportCrossDirectoryMoves, parent, true );
+			}
+		}
+	}
+
+	dst->Listener->handleFileAction( dst->ID, dst->Directory, dstFile, Actions::Moved,
+									 src->Directory + srcFile );
+	mIsTakingAction = false;
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
@@ -566,25 +770,17 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 											   Actions::Moved, watch->OldFileName );
 		}
 
-		if ( watch->Recursive && FileSystem::isDirectory( fpath ) && !watch->OldFileName.empty() ) {
-			/// Update the new directory path
+		if ( !watch->OldFileName.empty() && FileSystem::isDirectory( fpath ) ) {
+			/// Update the paths of the watches that moved with the directory. This is a
+			/// physical move, so it applies to every registration watching inside it.
 			std::string opath( watch->OldFileName );
-			if ( opath.empty() || opath[0] != FileSystem::getOSSlash() )
+			if ( opath[0] != FileSystem::getOSSlash() )
 				opath = watch->Directory + opath;
 			FileSystem::dirAddSlashAtEnd( opath );
 			FileSystem::dirAddSlashAtEnd( fpath );
 
 			Lock lock( mWatchesLock );
-
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				if ( it->second->Directory == opath ) {
-					it->second->Directory = fpath;
-					it->second->DirInfo = FileInfo( fpath );
-				} else if ( -1 != String::strStartsWith( opath, it->second->Directory ) ) {
-					it->second->Directory = fpath + it->second->Directory.substr( opath.size() );
-					it->second->DirInfo.Filepath = it->second->Directory;
-				}
-			}
+			renameWatchedDirectoriesLocked( opath, fpath );
 		}
 
 		watch->OldFileName = "";
@@ -602,13 +798,8 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 		/// If the file erased is a directory and recursive is enabled, removes the directory erased
 		if ( watch->Recursive ) {
 			Lock l( mWatchesLock );
-
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				if ( it->second->Directory == fpath ) {
-					removeWatchLocked( it->second->InotifyID );
-					break;
-				}
-			}
+			if ( WatcherInotify* erased = findWatchLocked( fpath, watch->ID ) )
+				removeWatchLocked( erased );
 		}
 	}
 	mIsTakingAction = false;

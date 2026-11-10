@@ -84,8 +84,28 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	std::vector<const void*> mStreamPaths;
 	std::vector<FSEvent> mEventBuffer;
 	std::vector<std::shared_ptr<WatcherFSEvents>> mWatchBuffer;
-	std::vector<bool> mPairedEvents;
 	bool mWatching;
+
+	/// Per-callback scratch storage for cross-registration move correlation. Only touched on
+	/// the serial dispatch queue; kept as members to reuse their allocations.
+	struct InodeChain {
+		size_t First;
+		size_t Last;
+	};
+	std::unordered_map<Uint64, InodeChain> mInodeChains;
+	/// Next record with the same inode, in arrival order.
+	std::vector<size_t> mInodeNext;
+	/// The registration that must skip each record, if any.
+	std::vector<const WatcherFSEvents*> mClaimedBy;
+	/// Source path of records reported to their claiming registration as a Moved event.
+	std::vector<std::string> mMovedFrom;
+
+	/// Pairs the two rename records of moves between different registrations that both enabled
+	/// Options::ReportCrossDirectoryMoves. Fills mClaimedBy and mMovedFrom.
+	void pairCrossWatchMoves( size_t eventCount );
+	bool pairCrossWatchMove( size_t first, size_t second, size_t eventCount );
+	/// @return The deepest registration reporting the path, or NULL.
+	const WatcherFSEvents* reportingWatch( const std::string& path ) const;
 
 	bool pathInWatches( const std::string& path ) override;
 };

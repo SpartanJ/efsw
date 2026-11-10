@@ -59,7 +59,10 @@ class WatcherKqueue : public Watcher {
 	void removeWatch( WatchID watchid );
 
 	bool initOK();
-	bool reportsCrossDirectoryMoves() const { return mReportCrossDirectoryMoves; }
+
+	/// Root watches only. When set, events are collected into this batch, owned by the file
+	/// watcher, which dispatches it after polling every watch. Set once at creation.
+	FileActionBatch* SharedActionBatch{ NULL };
 
 	int lastErrno();
 

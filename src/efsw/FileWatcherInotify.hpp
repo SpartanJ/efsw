@@ -17,6 +17,7 @@ class FileWatcherInotify : public FileWatcherImpl {
   public:
 	/// type for a map from WatchID to WatchStruct pointer
 	typedef std::unordered_map<WatchID, WatcherInotify*> WatchMap;
+	typedef std::unordered_map<int, std::vector<WatcherInotify*>> NativeWatchMap;
 
 	FileWatcherInotify( FileWatcher* parent );
 
@@ -44,13 +45,19 @@ class FileWatcherInotify : public FileWatcherImpl {
 	std::vector<std::string> directories() override;
 
   protected:
-	/// Map of WatchID to WatchStruct pointers
-	WatchMap mWatches;
+	/// Logical watches by native inotify descriptor. A native descriptor watches one physical
+	/// directory, and normally has one owner. It has several owners when registrations overlap
+	/// after a topology change, for example when a directory holding an explicit registration
+	/// is moved into a recursive one: inotify returns the existing descriptor for an inode that
+	/// is already watched, so both registrations must share it. Events of a descriptor are
+	/// delivered to each owner, and the descriptor is removed with its last owner.
+	NativeWatchMap mWatches;
 
-	/// User added watches
+	/// User added watches, by WatchID
 	WatchMap mRealWatches;
 
-	std::unordered_map<std::string, WatchID> mWatchesRef;
+	/// Logical watches by directory, one entry per owner
+	std::unordered_multimap<std::string, WatcherInotify*> mWatchesRef;
 
 	/// inotify file descriptor
 	int mFD;
@@ -89,11 +96,38 @@ class FileWatcherInotify : public FileWatcherImpl {
 	void emitCrossDirectoryMove( Watcher* src, const std::string& srcFile, Watcher* dst,
 								 const std::string& dstFile );
 
-	void removeWatchLocked( WatchID watchid, bool skipInotifyRemove = false );
+	/// Reports a directory moved between two registered roots as one Moved event. The source
+	/// registration's watches of the moved subtree are handed over to a recursive destination,
+	/// or removed for a non-recursive one. Other registrations inside the subtree keep their
+	/// native watches, which a recursive destination then shares.
+	void moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
+									WatcherInotify* dst, const std::string& dstFile );
+
+	/// Adds a logical watch to mWatches and mWatchesRef. mWatchesLock must be held.
+	void registerWatchLocked( WatcherInotify* watch );
+
+	/// Removes the mWatchesRef entry of a logical watch. mWatchesLock must be held.
+	void unindexWatchLocked( WatcherInotify* watch );
+
+	/// Unregisters a logical watch, and every watch of its tree when it is a recursive root.
+	/// The native descriptor is removed with its last owner. mWatchesLock must be held.
+	void removeWatchLocked( WatcherInotify* watch, bool skipInotifyRemove = false );
+
+	/// @return The watch of the registration for the directory, or NULL. mWatchesLock must be
+	/// held.
+	WatcherInotify* findWatchLocked( const std::string& directory, WatchID registration );
+
+	/// Copies the current owners of a native descriptor. mWatchesLock must be held.
+	void ownersLocked( int wd, std::vector<WatcherInotify*>& owners ) const;
+
+	/// A watched directory moved: every logical watch at or below oldPath, whatever its
+	/// registration, now lives below newPath. mWatchesLock must be held.
+	void renameWatchedDirectoriesLocked( const std::string& oldPath, const std::string& newPath );
 
 	void checkForNewWatcher( Watcher* watch, std::string fpath );
 
-	Watcher* watcherContainsDirectory( std::string dir );
+	/// @return The watch of the registration for the parent directory of dir, or NULL.
+	Watcher* watcherContainsDirectory( std::string dir, WatchID registration );
 };
 
 } // namespace efsw

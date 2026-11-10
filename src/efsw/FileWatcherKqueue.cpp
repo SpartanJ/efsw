@@ -85,6 +85,7 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 
 		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this,
 												  NULL, reportCrossDirectoryMoves );
+		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
 
 		{
 			Lock lock( mWatchesLock );
@@ -107,6 +108,7 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 			if ( EACCES != le ) {
 				WatcherGeneric* genericWatch = new WatcherGeneric(
 					++mLastWatchID, dir, watcher, this, recursive, reportCrossDirectoryMoves );
+				genericWatch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
 
 				Lock lock( mWatchesLock );
 				mWatches.insert( std::make_pair( mLastWatchID, genericWatch ) );
@@ -125,6 +127,7 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 
 		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive,
 													reportCrossDirectoryMoves );
+		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
 
 		Lock lock( mWatchesLock );
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
@@ -168,6 +171,10 @@ bool FileWatcherKqueue::isAddingWatcher() const {
 	return mAddingWatcher;
 }
 
+FileActionBatch* FileWatcherKqueue::sharedActionsFor( bool reportCrossDirectoryMoves ) {
+	return reportCrossDirectoryMoves && FileInfo::inodeSupported() ? &mSharedActions : NULL;
+}
+
 void FileWatcherKqueue::watch() {
 	if ( NULL == mThread ) {
 		mThread = new Thread( [this] { run(); } );
@@ -179,21 +186,10 @@ void FileWatcherKqueue::run() {
 	do {
 		{
 			Lock lock( mWatchesLock );
-			mSharedActions.clear();
 
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				WatcherKqueue* kqueueWatch = dynamic_cast<WatcherKqueue*>( it->second );
-				bool collect = kqueueWatch && kqueueWatch->reportsCrossDirectoryMoves() &&
-							   FileInfo::inodeSupported();
-				mSharedActionBatch = collect ? &mSharedActions : NULL;
-				WatcherGeneric* genericWatch = dynamic_cast<WatcherGeneric*>( it->second );
-				if ( genericWatch && genericWatch->ReportCrossDirectoryMoves )
-					genericWatch->SharedActionBatch = &mSharedActions;
+			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it )
 				it->second->watch();
-				if ( genericWatch )
-					genericWatch->SharedActionBatch = NULL;
-				mSharedActionBatch = NULL;
-			}
+			// Events of opted-in watches were collected during the scans above.
 			mSharedActions.dispatch( NULL );
 		}
 

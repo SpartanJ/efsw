@@ -49,6 +49,16 @@ class TestListener : public efsw::FileWatchListener {
 		return false;
 	}
 
+	/// @return The position of the first matching event, or -1 when absent.
+	int indexOf( efsw::Action action, const std::string& filename ) {
+		std::lock_guard<std::mutex> lock( mtx );
+		for ( size_t i = 0; i < events.size(); ++i ) {
+			if ( std::get<0>( events[i] ) == action && std::get<1>( events[i] ) == filename )
+				return static_cast<int>( i );
+		}
+		return -1;
+	}
+
 	size_t getEventCount() {
 		std::lock_guard<std::mutex> lock( mtx );
 		return events.size();

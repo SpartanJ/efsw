@@ -18,6 +18,9 @@ class WatcherInotify : public Watcher {
 	FileInfo DirInfo;
 	bool syntheticEvents{ false };
 	bool reportCrossDirectoryMoves{ false };
+	/// Set when the logical watch is unregistered. Its deletion is deferred until the current
+	/// event batch is processed, so pointers held by that batch stay valid but must be skipped.
+	bool Removed{ false };
 };
 
 } // namespace efsw

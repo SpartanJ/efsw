@@ -28,11 +28,18 @@ void FileActionBatch::add( WatchID watchid, const std::string& directory,
 }
 
 static bool metadataMatches( const FileInfo& source, const FileInfo& destination ) {
+	if ( source.isDirectory() != destination.isDirectory() ||
+		 source.isRegularFile() != destination.isRegularFile() ||
+		 source.OwnerId != destination.OwnerId || source.GroupId != destination.GroupId ||
+		 source.Permissions != destination.Permissions )
+		return false;
+	// A directory's size and modification time change whenever its entries change, and
+	// moving it to another parent rewrites its ".." entry on some filesystems. Directories
+	// cannot be hard-linked, so the device and inode identity alone is unambiguous.
+	if ( source.isDirectory() )
+		return true;
 	return source.ModificationTime == destination.ModificationTime &&
-		   source.Size == destination.Size && source.OwnerId == destination.OwnerId &&
-		   source.GroupId == destination.GroupId && source.Permissions == destination.Permissions &&
-		   source.isDirectory() == destination.isDirectory() &&
-		   source.isRegularFile() == destination.isRegularFile();
+		   source.Size == destination.Size;
 }
 
 static bool pathContains( const std::string& directory, const std::string& path ) {

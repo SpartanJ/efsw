@@ -114,92 +114,36 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 
 	std::vector<std::shared_ptr<WatcherFSEvents>>& watches = fileWatcher->mWatchBuffer;
 	watches.clear();
+	size_t crossMoveWatches = 0;
 	{
 		std::lock_guard<std::mutex> lock( fileWatcher->mWatchesMutex );
 		watches.reserve( fileWatcher->mWatches.size() );
-		for ( const auto& watch : fileWatcher->mWatches )
+		for ( const auto& watch : fileWatcher->mWatches ) {
 			watches.push_back( watch.second );
-	}
-
-	// The native stream contains events for all logical watches. Pair rename records
-	// with the same inode from this callback before routing them, since separate
-	// watches would each see only one half of a cross-watch move.
-	std::vector<bool>& paired = fileWatcher->mPairedEvents;
-	paired.assign( eventCount, false );
-	if ( isGranular() ) {
-		for ( size_t i = 0; i < eventCount; ++i ) {
-			const FSEvent& first = fileWatcher->mEventBuffer[i];
-			if ( paired[i] || first.inode == 0 ||
-				 !( first.Flags & efswFSEventStreamEventFlagItemRenamed ) )
-				continue;
-			for ( size_t j = i + 1; j < eventCount; ++j ) {
-				const FSEvent& second = fileWatcher->mEventBuffer[j];
-				if ( paired[j] || second.inode != first.inode || first.Path == second.Path ||
-					 !( second.Flags & efswFSEventStreamEventFlagItemRenamed ) )
-					continue;
-				// FSEvents does not label the old and new paths. After the rename, the
-				// missing path is the source and the existing path is the destination.
-				const bool firstExists = FileInfo::exists( first.Path );
-				const bool secondExists = FileInfo::exists( second.Path );
-				if ( firstExists == secondExists )
-					continue;
-				const FSEvent& source = firstExists ? second : first;
-				const FSEvent& destination = firstExists ? first : second;
-				// Only merge paths owned by different watches that both enabled the option.
-				std::shared_ptr<WatcherFSEvents> sourceWatch, destinationWatch;
-				for ( const auto& watch : watches ) {
-					if ( watch->handlesPath( source.Path ) )
-						sourceWatch = watch;
-					if ( watch->handlesPath( destination.Path ) )
-						destinationWatch = watch;
-				}
-				if ( !sourceWatch || !destinationWatch || sourceWatch == destinationWatch ||
-					 !sourceWatch->ReportCrossDirectoryMoves ||
-					 !destinationWatch->ReportCrossDirectoryMoves )
-					continue;
-				struct stat sourceRootStat;
-				if ( stat( sourceWatch->Directory.c_str(), &sourceRootStat ) != 0 )
-					continue;
-				struct stat destinationStat;
-				if ( stat( destination.Path.c_str(), &destinationStat ) != 0 )
-					continue;
-				if ( static_cast<Uint64>( destinationStat.st_ino ) != first.inode ||
-					 destinationStat.st_dev != sourceRootStat.st_dev ||
-					 !( S_ISDIR( destinationStat.st_mode ) ||
-						( S_ISREG( destinationStat.st_mode ) && destinationStat.st_nlink == 1 ) ) )
-					continue;
-				std::string dir = FileSystem::pathRemoveFileName( destination.Path );
-				FileSystem::dirAddSlashAtEnd( dir );
-				destinationWatch->Listener->handleFileAction(
-					destinationWatch->ID, FileSystem::precomposeFileName( dir ),
-					FileSystem::precomposeFileName(
-						FileSystem::fileNameFromPath( destination.Path ) ),
-					Actions::Moved,
-					FileSystem::precomposeFileName(
-						FileSystem::canonicalSourcePath( source.Path ) ) );
-				// Suppress both rename records and their duplicate Add/Delete flags so
-				// per-watch processing does not emit a second account of this move.
-				paired[i] = paired[j] = true;
-				for ( size_t k = 0; k < eventCount; ++k ) {
-					const FSEvent& duplicate = fileWatcher->mEventBuffer[k];
-					if ( duplicate.inode == first.inode &&
-						 ( duplicate.Path == source.Path || duplicate.Path == destination.Path ) &&
-						 ( duplicate.Flags & ( efswFSEventStreamEventFlagItemRenamed |
-											   efswFSEventStreamEventFlagItemCreated |
-											   efswFSEventStreamEventFlagItemRemoved ) ) )
-						paired[k] = true;
-				}
-				break;
-			}
+			if ( watch.second->ReportCrossDirectoryMoves )
+				crossMoveWatches++;
 		}
 	}
+
+	// Moves inside one registration are paired by its own processing. Only moves between
+	// two registrations that both opted in need the whole callback, so skip otherwise.
+	const bool correlate = isGranular() && crossMoveWatches >= 2;
+	if ( correlate )
+		fileWatcher->pairCrossWatchMoves( eventCount );
 
 	for ( const auto& watcher : watches ) {
 		watcher->EventBuffer.clear();
 		for ( size_t i = 0; i < eventCount; ++i ) {
-			if ( paired[i] )
-				continue;
 			FSEvent& event = fileWatcher->mEventBuffer[i];
+			if ( correlate && fileWatcher->mClaimedBy[i] == watcher.get() ) {
+				// Deliver the destination record in place, so the Moved event keeps its
+				// position among the other events of this registration.
+				if ( !fileWatcher->mMovedFrom[i].empty() ) {
+					watcher->EventBuffer.push_back( event );
+					watcher->EventBuffer.back().MovedFrom = fileWatcher->mMovedFrom[i];
+				}
+				continue;
+			}
 			bool mustRescan = event.Flags & ( kFSEventStreamEventFlagUserDropped |
 											  kFSEventStreamEventFlagKernelDropped |
 											  kFSEventStreamEventFlagMustScanSubDirs );
@@ -215,6 +159,117 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 	watches.clear();
 
 	efDEBUG( "\n" );
+}
+
+static const size_t noEvent = static_cast<size_t>( -1 );
+
+const WatcherFSEvents* FileWatcherFSEvents::reportingWatch( const std::string& path ) const {
+	const WatcherFSEvents* owner = NULL;
+	for ( const auto& watch : mWatchBuffer ) {
+		if ( watch->reportsPath( path ) &&
+			 ( NULL == owner || watch->Directory.size() > owner->Directory.size() ) )
+			owner = watch.get();
+	}
+	return owner;
+}
+
+void FileWatcherFSEvents::pairCrossWatchMoves( size_t eventCount ) {
+	mClaimedBy.assign( eventCount, NULL );
+	mMovedFrom.assign( eventCount, std::string() );
+	mInodeNext.assign( eventCount, noEvent );
+	mInodeChains.clear();
+
+	// Chain the records of each inode in arrival order, so pairing and duplicate suppression
+	// only visit records of the same file instead of the whole callback.
+	for ( size_t i = 0; i < eventCount; ++i ) {
+		const Uint64 inode = mEventBuffer[i].inode;
+		if ( inode == 0 )
+			continue;
+		auto chain = mInodeChains.find( inode );
+		if ( chain == mInodeChains.end() ) {
+			mInodeChains.emplace( inode, InodeChain{ i, i } );
+		} else {
+			mInodeNext[chain->second.Last] = i;
+			chain->second.Last = i;
+		}
+	}
+
+	for ( size_t i = 0; i < eventCount; ++i ) {
+		const FSEvent& first = mEventBuffer[i];
+		if ( mClaimedBy[i] || first.inode == 0 ||
+			 !( first.Flags & efswFSEventStreamEventFlagItemRenamed ) )
+			continue;
+		for ( size_t j = mInodeNext[i]; j != noEvent; j = mInodeNext[j] ) {
+			const FSEvent& second = mEventBuffer[j];
+			if ( mClaimedBy[j] || first.Path == second.Path ||
+				 !( second.Flags & efswFSEventStreamEventFlagItemRenamed ) )
+				continue;
+			if ( pairCrossWatchMove( i, j, eventCount ) )
+				break;
+		}
+	}
+}
+
+bool FileWatcherFSEvents::pairCrossWatchMove( size_t firstIndex, size_t secondIndex,
+											  size_t eventCount ) {
+	const FSEvent& first = mEventBuffer[firstIndex];
+	const FSEvent& second = mEventBuffer[secondIndex];
+
+	// Resolve ownership before touching the filesystem: most renames stay in one registration.
+	const WatcherFSEvents* firstWatch = reportingWatch( first.Path );
+	const WatcherFSEvents* secondWatch = reportingWatch( second.Path );
+	if ( NULL == firstWatch || NULL == secondWatch || firstWatch == secondWatch ||
+		 !firstWatch->ReportCrossDirectoryMoves || !secondWatch->ReportCrossDirectoryMoves )
+		return false;
+	// A registration reporting both paths (an outer one of nested registrations) sees the
+	// whole move itself; the inner ones then get their own half as Add/Delete.
+	for ( const auto& watch : mWatchBuffer ) {
+		if ( watch->reportsPath( first.Path ) && watch->reportsPath( second.Path ) )
+			return false;
+	}
+
+	// FSEvents does not label the old and new paths. After the rename, the missing path is
+	// the source and the existing path is the destination.
+	const bool firstExists = FileInfo::exists( first.Path );
+	if ( firstExists == FileInfo::exists( second.Path ) )
+		return false;
+	const size_t sourceIndex = firstExists ? secondIndex : firstIndex;
+	const size_t destinationIndex = firstExists ? firstIndex : secondIndex;
+	const WatcherFSEvents* sourceWatch = firstExists ? secondWatch : firstWatch;
+	const WatcherFSEvents* destinationWatch = firstExists ? firstWatch : secondWatch;
+	const std::string& sourcePath = mEventBuffer[sourceIndex].Path;
+	const std::string& destinationPath = mEventBuffer[destinationIndex].Path;
+
+	// Inodes are volume-scoped, and a hard-linked file has no single identity to follow.
+	struct stat sourceRootStat;
+	struct stat destinationStat;
+	if ( stat( sourceWatch->Directory.c_str(), &sourceRootStat ) != 0 ||
+		 stat( destinationPath.c_str(), &destinationStat ) != 0 )
+		return false;
+	if ( static_cast<Uint64>( destinationStat.st_ino ) != first.inode ||
+		 destinationStat.st_dev != sourceRootStat.st_dev ||
+		 !( S_ISDIR( destinationStat.st_mode ) ||
+			( S_ISREG( destinationStat.st_mode ) && destinationStat.st_nlink == 1 ) ) )
+		return false;
+
+	// Each registration skips its own records of this move, including the Created/Removed
+	// duplicates FSEvents emits for the same paths, so neither reports a second account of
+	// it. Other registrations covering one of the paths still see them.
+	const long moveFlags = efswFSEventStreamEventFlagItemRenamed |
+						   efswFSEventStreamEventFlagItemCreated |
+						   efswFSEventStreamEventFlagItemRemoved;
+	for ( size_t k = mInodeChains[first.inode].First; k != noEvent && k < eventCount;
+		  k = mInodeNext[k] ) {
+		const FSEvent& record = mEventBuffer[k];
+		if ( !( record.Flags & moveFlags ) )
+			continue;
+		if ( record.Path == sourcePath )
+			mClaimedBy[k] = sourceWatch;
+		else if ( record.Path == destinationPath )
+			mClaimedBy[k] = destinationWatch;
+	}
+	mMovedFrom[destinationIndex] = sourcePath;
+	return true;
 }
 
 FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :

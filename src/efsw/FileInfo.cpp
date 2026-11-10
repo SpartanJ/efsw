@@ -43,27 +43,48 @@
 namespace efsw {
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+/// Converts a UTF-8 path to a NUL-terminated UTF-16 path without a heap allocation for usual
+/// path lengths. Not copyable: the result may point into the object's own buffer.
+class WidePath {
+  public:
+	WidePath( const char* utf8, size_t length ) {
+		if ( length > INT_MAX )
+			return;
+		const int utf8Length = static_cast<int>( length );
+		const int wideLength = MultiByteToWideChar( CP_UTF8, 0, utf8, utf8Length, nullptr, 0 );
+		if ( wideLength <= 0 )
+			return;
+		wchar_t* buffer = mStack;
+		if ( static_cast<size_t>( wideLength ) + 1 > sizeof( mStack ) / sizeof( *mStack ) ) {
+			mHeap.resize( static_cast<size_t>( wideLength ) + 1 );
+			buffer = &mHeap[0];
+		}
+		if ( MultiByteToWideChar( CP_UTF8, 0, utf8, utf8Length, buffer, wideLength ) !=
+			 wideLength )
+			return;
+		buffer[wideLength] = L'\0';
+		mPath = buffer;
+	}
+
+	WidePath( const WidePath& ) = delete;
+	WidePath& operator=( const WidePath& ) = delete;
+
+	/// @return The converted path, or nullptr when the conversion failed.
+	const wchar_t* get() const { return mPath; }
+
+  private:
+	wchar_t mStack[512];
+	std::wstring mHeap;
+	const wchar_t* mPath{ nullptr };
+};
+
 static void getWindowsFileIdentity( const std::string& filePath, Uint64& device, Uint64& inode,
 									Uint64& linkCount ) {
-	wchar_t stackPath[512];
-	const int pathLength = static_cast<int>( filePath.size() );
-	const int wideLength =
-		MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, nullptr, 0 );
-	if ( wideLength <= 0 )
+	const WidePath widePath( filePath.data(), filePath.size() );
+	if ( !widePath.get() )
 		return;
 
-	std::wstring heapPath;
-	wchar_t* widePath = stackPath;
-	if ( static_cast<size_t>( wideLength ) + 1 > sizeof( stackPath ) / sizeof( *stackPath ) ) {
-		heapPath.resize( static_cast<size_t>( wideLength ) + 1 );
-		widePath = &heapPath[0];
-	}
-	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), pathLength, widePath, wideLength ) !=
-		 wideLength )
-		return;
-	widePath[wideLength] = L'\0';
-
-	HANDLE handle = CreateFileW( widePath, FILE_READ_ATTRIBUTES,
+	HANDLE handle = CreateFileW( widePath.get(), FILE_READ_ATTRIBUTES,
 								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
 								 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr );
 	if ( handle == INVALID_HANDLE_VALUE )
@@ -100,26 +121,13 @@ bool FileInfo::exists( const std::string& filePath ) {
 	struct stat st;
 	return stat( filePath.c_str(), &st ) == 0;
 #else
-	const size_t pathLength = filePath.size() - ( FileSystem::slashAtEnd( filePath ) ? 1 : 0 );
-	if ( pathLength > INT_MAX )
+	// FileInfo::exists historically checked the path without its final slash.
+	const WidePath widePath( filePath.data(),
+							 filePath.size() - ( FileSystem::slashAtEnd( filePath ) ? 1 : 0 ) );
+	if ( !widePath.get() )
 		return false;
-	const int utf8Length = static_cast<int>( pathLength );
-	const int wideLength = MultiByteToWideChar( CP_UTF8, 0, filePath.data(), utf8Length, NULL, 0 );
-	if ( wideLength <= 0 )
-		return false;
-	wchar_t stackPath[512];
-	std::wstring heapPath;
-	wchar_t* widePath = stackPath;
-	if ( static_cast<size_t>( wideLength ) + 1 > sizeof( stackPath ) / sizeof( *stackPath ) ) {
-		heapPath.resize( static_cast<size_t>( wideLength ) + 1 );
-		widePath = &heapPath[0];
-	}
-	if ( MultiByteToWideChar( CP_UTF8, 0, filePath.data(), utf8Length, widePath, wideLength ) !=
-		 wideLength )
-		return false;
-	widePath[wideLength] = L'\0';
 	struct _stat st;
-	return _wstat( widePath, &st ) == 0;
+	return _wstat( widePath.get(), &st ) == 0;
 #endif
 }
 

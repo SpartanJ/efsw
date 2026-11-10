@@ -64,6 +64,9 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
 	WatcherGeneric* pWatch = new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive,
 												 reportCrossDirectoryMoves );
+	// Watches that opted in share one batch, so a move between two of them is paired.
+	if ( reportCrossDirectoryMoves && FileInfo::inodeSupported() )
+		pWatch->SharedActionBatch = &mSharedActions;
 
 	Lock lock( mWatchesLock );
 	mWatches.push_back( pWatch );
@@ -121,16 +124,10 @@ void FileWatcherGeneric::run() {
 	do {
 		{
 			Lock lock( mWatchesLock );
-			mSharedActions.clear();
 
-			WatchList::iterator it = mWatches.begin();
-
-			for ( ; it != mWatches.end(); ++it ) {
-				if ( ( *it )->ReportCrossDirectoryMoves && FileInfo::inodeSupported() )
-					( *it )->SharedActionBatch = &mSharedActions;
-				( *it )->watch();
-				( *it )->SharedActionBatch = NULL;
-			}
+			for ( WatcherGeneric* watch : mWatches )
+				watch->watch();
+			// Events of opted-in watches were collected during the scans above.
 			mSharedActions.dispatch( NULL );
 		}
 
