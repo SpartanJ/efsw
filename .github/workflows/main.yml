@@ -31,6 +31,29 @@ jobs:
       with:
         name: efsw-agent-linux-x86_64
         path: agent/
+  Sanitizers:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+          - name: TSan
+            flags: -fsanitize=thread
+    steps:
+    - uses: actions/checkout@v6
+    - name: Allow ThreadSanitizer memory mappings
+      run: sudo sysctl vm.mmap_rnd_bits=28
+    - name: Build
+      run: |
+        g++ -std=c++17 -g -O1 ${{ matrix.flags }} -Iinclude -Isrc src/efsw/*.cpp \
+          src/efsw/platform/posix/*.cpp src/unit_tests/*.cpp -lpthread -o unit_tests
+    - name: Run unit tests (inotify)
+      run: ./unit_tests
+    - name: Run unit tests (generic)
+      run: ./unit_tests --generic
   macOS:
     name: macOS (FSEvents)
     runs-on: macos-latest
