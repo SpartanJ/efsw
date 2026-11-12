@@ -70,17 +70,22 @@ WatcherKqueue::~WatcherKqueue() {
 	// Remove the children watchers ( sub-folders watches )
 	removeAll();
 
-	for ( size_t i = 0; i < mChangeListCount; i++ ) {
-		if ( NULL != mChangeList[i].udata ) {
+	// The change list holds the directory at index 0, once addAll() opened it, and the files
+	// at 1 to mChangeListCount. Each holds a descriptor, which closing the kqueue does not
+	// close, and each file its FileInfo.
+	if ( !mChangeList.empty() ) {
+		for ( size_t i = 0; i <= mChangeListCount; i++ ) {
 			FileInfo* fi = reinterpret_cast<FileInfo*>( mChangeList[i].udata );
-
 			efSAFE_DELETE( fi );
+			close( static_cast<int>( mChangeList[i].ident ) );
+			mWatcher->removeFD();
 		}
 	}
 
-	close( mKqueue );
-
-	mWatcher->removeFD();
+	if ( -1 != mKqueue ) {
+		close( mKqueue );
+		mWatcher->removeFD();
+	}
 }
 
 void WatcherKqueue::addAll() {

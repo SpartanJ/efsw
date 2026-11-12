@@ -123,9 +123,11 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 		auto fiIt = findFile( Files, file.Filepath );
 
 		if ( fiIt != Files.end() ) {
-			// The identity is read after the directory is listed: an entry renamed in between
-			// is listed, but its identity cannot be read. It keeps the identity it had, so it is
-			// not reported as modified, and its Delete can still be paired into a move.
+			// On Windows the identity is read after the directory is listed, apart from the
+			// rest of the entry's information: an entry renamed in between is listed, but its
+			// identity cannot be read. It keeps the identity it had, so it is not reported as
+			// modified, and its Delete can still be paired into a move. On POSIX one stat()
+			// reads everything, and an entry it fails for is dropped as unsupported instead.
 			if ( 0 == file.Inode && 0 != fiIt->Inode ) {
 				file.Device = fiIt->Device;
 				file.Inode = fiIt->Inode;

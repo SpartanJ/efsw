@@ -5,6 +5,9 @@
 #include <efsw/base.hpp>
 #include <atomic>
 #include <thread>
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+#include <fcntl.h>
+#endif
 
 using namespace efsw_test;
 
@@ -540,6 +543,51 @@ UTEST( CrossWatchMoves, RemoveWatchWaitsForRunningCallback ) {
 	removeDirectory( directory );
 }
 
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+namespace {
+int openDescriptors() {
+	int count = 0;
+	for ( int fd = 0; fd < 4096; fd++ )
+		if ( fcntl( fd, F_GETFD ) != -1 )
+			count++;
+	return count;
+}
+} // namespace
+
+// Adding and removing a recursive watch over files and subdirectories, again and again,
+// leaves no descriptor open: kqueue opens one per directory and per file.
+UTEST( CrossWatchMoves, RepeatedAddRemoveKeepsDescriptors ) {
+	const std::string root = getTemporaryDirectory() + "_xw_descriptors";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	for ( int d = 0; d < 3; d++ ) {
+		const std::string sub = root + "/sub" + std::to_string( d );
+		EXPECT_TRUE( createDirectory( sub ) );
+		for ( int f = 0; f < 10; f++ )
+			EXPECT_TRUE( createFile( sub + "/f" + std::to_string( f ), "x" ) );
+	}
+	for ( int f = 0; f < 10; f++ )
+		EXPECT_TRUE( createFile( root + "/f" + std::to_string( f ), "x" ) );
+
+	TestListener listener;
+	efsw::FileWatcher watcher( useGeneric, 50 );
+	watcher.watch();
+	// The first registration may set up state that lives as long as the file watcher.
+	watcher.removeWatch( watcher.addWatch( root, &listener, true ) );
+	sleepMs( 200 );
+	const int before = openDescriptors();
+	for ( int i = 0; i < 20; i++ ) {
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
+		EXPECT_GT( id, 0 );
+		sleepMs( 20 );
+		watcher.removeWatch( id );
+	}
+	sleepMs( 300 );
+	EXPECT_EQ( before, openDescriptors() );
+	removeDirectory( root );
+}
+#endif
+
 // directories() runs while a directory holding a registration moves in and out of another
 // registration, which renames the moved registration. Meant for ThreadSanitizer.
 UTEST( CrossWatchMoves, DirectoriesDuringMovesOfRegistration ) {
@@ -852,6 +900,8 @@ struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
 	using efsw::FileWatcherKqueue::FileWatcherKqueue;
 
 	void exhaust() { mFileDescriptorCount = static_cast<long>( efsw::System::getMaxFD() ); }
+
+	long descriptors() const { return mFileDescriptorCount.load(); }
 };
 
 } // namespace
@@ -890,6 +940,33 @@ UTEST( CrossWatchMoves, KqueueConcurrentFallbackRegistrations ) {
 		first.join();
 		second.join();
 		EXPECT_EQ( 40, registered.load() );
+	}
+	removeDirectory( root );
+}
+
+// The file watcher counts the descriptors its watches hold, to fall back to the generic
+// watcher before running out: removing a watch must give all of them back.
+UTEST( CrossWatchMoves, KqueueDescriptorCountReturnsAfterRemoval ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqcount";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	for ( int f = 0; f < 5; f++ ) {
+		EXPECT_TRUE( createFile( root + "/f" + std::to_string( f ), "x" ) );
+		EXPECT_TRUE( createFile( root + "/sub/f" + std::to_string( f ), "x" ) );
+	}
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 20 );
+		const long before = kqueue.descriptors();
+		for ( int i = 0; i < 10; i++ ) {
+			const efsw::WatchID id = kqueue.addWatch( root, &listener, true, {} );
+			EXPECT_GT( id, 0 );
+			EXPECT_GT( kqueue.descriptors(), before );
+			kqueue.removeWatch( id );
+			EXPECT_EQ( before, kqueue.descriptors() );
+		}
 	}
 	removeDirectory( root );
 }
