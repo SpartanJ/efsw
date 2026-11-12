@@ -72,6 +72,7 @@ class WatcherWin32 : public Watcher {
 		lParam( 0 ),
 		NotifyFilter( 0 ),
 		StopNow( false ),
+		IoPending( false ),
 		Extended( false ),
 		ReportCrossDirectoryMoves( false ),
 		Watch( NULL ),
@@ -86,6 +87,8 @@ class WatcherWin32 : public Watcher {
 	LPARAM lParam;
 	DWORD NotifyFilter;
 	bool StopNow;
+	// Includes completed operations whose IOCP packet has not been dequeued yet.
+	bool IoPending;
 	bool Extended;
 	bool ReportCrossDirectoryMoves;
 	FileWatcherImpl* Watch;

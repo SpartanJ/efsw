@@ -238,7 +238,8 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 			std::string dir = pWatch->DirName;
 			FileSystem::dirRemoveSlashAtEnd( dir );
 			pWatch->Listener->handleMissedFileActions( pWatch->ID, dir );
-			RefreshWatch( tWatch );
+			if ( !pWatch->StopNow )
+				RefreshWatch( tWatch );
 		}
 		return;
 	}
@@ -289,6 +290,7 @@ RefreshResult RefreshWatch( WatcherStructWin32* pWatch ) {
 		std::string error = std::to_string( GetLastError() );
 		Errors::Log::createLastError( Errors::WatcherFailed, error );
 	}
+	pWatch->Watch->IoPending = bRet;
 
 	return ret;
 }

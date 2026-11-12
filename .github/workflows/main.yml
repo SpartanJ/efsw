@@ -22,6 +22,15 @@ jobs:
     - name: Run unit tests
       run: |
         ./bin/efsw-unit_tests-release
+    - name: Package efsw-agent
+      run: |
+        mkdir -p agent
+        cp bin/efsw-agent agent/efsw-agent-linux-x86_64
+        ./bin/efsw-agent --version > agent/efsw-agent-linux-x86_64.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: efsw-agent-linux-x86_64
+        path: agent/
   macOS:
     name: macOS (FSEvents)
     runs-on: macos-latest
@@ -37,6 +46,15 @@ jobs:
     - name: Run unit tests
       run: |
         ./bin/efsw-unit_tests-release
+    - name: Package efsw-agent
+      run: |
+        mkdir -p agent
+        cp bin/efsw-agent agent/efsw-agent-macos-arm64
+        ./bin/efsw-agent --version > agent/efsw-agent-macos-arm64.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: efsw-agent-macos-arm64
+        path: agent/
   kqueue:
     name: macOS (kqueue)
     runs-on: macos-latest
@@ -90,6 +108,16 @@ jobs:
       shell: cmd
       run: |
         .\bin\efsw-unit_tests-release.exe
+    - name: Package efsw-agent
+      shell: cmd
+      run: |
+        mkdir agent
+        copy bin\efsw-agent.exe agent\efsw-agent-windows-x86_64.exe
+        .\bin\efsw-agent.exe --version > agent\efsw-agent-windows-x86_64.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: efsw-agent-windows-x86_64
+        path: agent/
   FreeBSD:
     name: FreeBSD (kqueue)
     runs-on: ubuntu-latest

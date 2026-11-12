@@ -24,7 +24,7 @@
 namespace efsw {
 
 FileWatcherInotify::FileWatcherInotify( FileWatcher* parent ) :
-	FileWatcherImpl( parent ), mFD( -1 ), mThread( NULL ), mIsTakingAction( false ) {
+	FileWatcherImpl( parent ), mFD( -1 ), mThread( NULL ) {
 	mFD = inotify_init();
 
 	if ( mFD < 0 ) {
@@ -36,15 +36,7 @@ FileWatcherInotify::FileWatcherInotify( FileWatcher* parent ) :
 
 FileWatcherInotify::~FileWatcherInotify() {
 	mInitOK = false;
-	// There is deadlock when release FileWatcherInotify instance since its handAction
-	// function is still running and hangs in requiring lock without init lock captured.
-	while ( mIsTakingAction ) {
-		// It'd use condition-wait instead of sleep. Actually efsw has no such
-		// implementation so we just skip and sleep while for that to avoid deadlock.
-		usleep( 1000 );
-	};
-	Lock initLock( mInitLock );
-
+	// Do not hold mInitLock while joining: an in-flight action may still need it.
 	efSAFE_DELETE( mThread );
 
 	Lock l( mWatchesLock );
@@ -664,7 +656,6 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 	FileSystem::dirAddSlashAtEnd( oldPath );
 	FileSystem::dirAddSlashAtEnd( newPath );
 
-	mIsTakingAction = true;
 	Lock initLock( mInitLock );
 	std::vector<WatcherInotify*> sourceOwned;
 	std::vector<WatcherInotify*> shared;
@@ -737,7 +728,6 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 
 	dst->Listener->handleFileAction( dst->ID, dst->Directory, dstFile, Actions::Moved,
 									 src->Directory + srcFile );
-	mIsTakingAction = false;
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
@@ -745,7 +735,6 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	if ( !watch || !watch->Listener || !mInitOK ) {
 		return;
 	}
-	mIsTakingAction = true;
 	Lock initLock( mInitLock );
 
 	std::string fpath( watch->Directory + filename );
@@ -807,7 +796,6 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 				removeWatchLocked( erased );
 		}
 	}
-	mIsTakingAction = false;
 }
 
 std::vector<std::string> FileWatcherInotify::directories() {
