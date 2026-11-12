@@ -85,6 +85,8 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	typedef std::list<CrossWatchEvent> CrossWatchEvents;
 	/// Held Add/Remove halves in arrival order. Arrival order is also expiry order.
 	CrossWatchEvents mCrossWatchEvents;
+	/// Reused copy of mWatches, flushed when the completion wait times out.
+	std::vector<WatcherStructWin32*> mFlushedWatches;
 	/// Indexes into mCrossWatchEvents, by file identity and by watch-relative name.
 	std::unordered_multimap<LONGLONG, CrossWatchEvents::iterator> mCrossWatchById;
 	std::unordered_multimap<std::string, CrossWatchEvents::iterator> mCrossWatchByName;

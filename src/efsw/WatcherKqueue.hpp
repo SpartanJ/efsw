@@ -30,9 +30,11 @@ class WatcherKqueue : public Watcher {
 
 	virtual ~WatcherKqueue();
 
-	void addFile( const std::string& name, bool emitEvents = true );
+	/// @return True when the file is tracked, false when it could not be opened.
+	bool addFile( const std::string& name, bool emitEvents = true );
 
-	void removeFile( const std::string& name, bool emitEvents = true );
+	/// @return True when the file was tracked.
+	bool removeFile( const std::string& name, bool emitEvents = true );
 
 	// called when the directory is actually changed
 	// means a file has been added or removed

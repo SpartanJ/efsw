@@ -43,10 +43,6 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
 	}
 
-	// The polling thread changes the directory trees of the watches while it scans them:
-	// looking them up, and creating a watch, which looks them up too, needs the lock.
-	Lock lock( mWatchesLock );
-
 	if ( pathInWatches( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
@@ -64,19 +60,32 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		}
 	}
 
-	mLastWatchID++;
+	WatchID id;
+	{
+		Lock lock( mWatchesLock );
+		id = ++mLastWatchID;
+	}
 
+	// Built without the lock, which would pause the polling of every other watch while the
+	// directory tree is read; its lookups of the other watches take the lock themselves. It
+	// is registered once complete, so the polling thread never sees it half built.
 	bool reportCrossDirectoryMoves =
 		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
-	WatcherGeneric* pWatch = new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive,
-												 reportCrossDirectoryMoves );
+	WatcherGeneric* pWatch =
+		new WatcherGeneric( id, dir, watcher, this, recursive, reportCrossDirectoryMoves );
 	// Watches that opted in share one batch, so a move between two of them is paired.
 	if ( reportCrossDirectoryMoves && FileInfo::inodeSupported() )
 		pWatch->SharedActionBatch = &mSharedActions;
 
+	Lock lock( mWatchesLock );
+	// Another thread may have registered the directory meanwhile.
+	if ( pathInWatches( dir ) ) {
+		delete pWatch;
+		return Errors::Log::createLastError( Errors::FileRepeated, dir );
+	}
 	mWatches.push_back( pWatch );
 
-	return pWatch->ID;
+	return id;
 }
 
 void FileWatcherGeneric::removeWatch( const std::string& directory ) {
@@ -162,6 +171,8 @@ std::vector<std::string> FileWatcherGeneric::directories() {
 }
 
 bool FileWatcherGeneric::pathInWatches( const std::string& path ) {
+	// The polling thread changes the directory trees of the watches while it scans them.
+	Lock lock( mWatchesLock );
 	WatchList::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); ++it ) {

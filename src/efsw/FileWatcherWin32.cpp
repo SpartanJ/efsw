@@ -214,7 +214,10 @@ void FileWatcherWin32::run() {
 				}
 			} else if ( !res && GetLastError() == WAIT_TIMEOUT ) {
 				Lock lock( mWatchesLock );
-				for ( auto watch : mWatches )
+				// A listener called while flushing may remove watches: iterate a copy. A removed
+				// watch stays allocated, retired, until its I/O completes.
+				mFlushedWatches.assign( mWatches.begin(), mWatches.end() );
+				for ( auto watch : mFlushedWatches )
 					FlushPendingMoves( watch->Watch );
 				flushCrossWatchEvents();
 			}
@@ -318,6 +321,9 @@ void FileWatcherWin32::holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD ac
 				} else {
 					std::string folder = FileSystem::pathRemoveFileName( destinationPath );
 					FileSystem::dirAddSlashAtEnd( folder );
+					// Flushing the older halves may have run a listener that removed it.
+					if ( destination->StopNow )
+						return;
 					destination->Listener->handleFileAction(
 						destination->ID, folder, FileSystem::fileNameFromPath( destinationPath ),
 						Actions::Moved, FileSystem::canonicalSourcePath( sourcePath ) );
@@ -388,6 +394,11 @@ void FileWatcherWin32::discardCrossWatchEvents( WatcherWin32* watch ) {
 
 void FileWatcherWin32::handleAction( Watcher* watch, const std::string& filename,
 									 unsigned long action, const std::string& oldFilename ) {
+	// A listener removed the watch, possibly its own, from an earlier callback: the stopped watch
+	// stays allocated until its I/O completes, but must not report anything more.
+	if ( static_cast<WatcherWin32*>( watch )->StopNow )
+		return;
+
 	Action fwAction;
 
 	switch ( action ) {

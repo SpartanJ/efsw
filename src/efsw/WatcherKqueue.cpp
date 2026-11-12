@@ -57,7 +57,7 @@ WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 	if ( -1 == mKqueue ) {
 		efDEBUG(
 			"kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n",
-			Directory.c_str(), mWatcher->mFileDescriptorCount );
+			Directory.c_str(), mWatcher->mFileDescriptorCount.load() );
 
 		mInitOK = false;
 		mErrno = errno;
@@ -153,25 +153,27 @@ void WatcherKqueue::removeAll() {
 	}
 }
 
-void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
+bool WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	efDEBUG( "addFile(): Added: %s\n", name.c_str() );
 
 	// Open the file to get the file descriptor
 	int fd = open( name.c_str(), O_EVTONLY );
 
 	if ( fd == -1 ) {
+		const int error = errno;
 		efDEBUG( "addFile(): Could open file descriptor for %s. File descriptor count: %ld\n",
-				 name.c_str(), mWatcher->mFileDescriptorCount );
+				 name.c_str(), mWatcher->mFileDescriptorCount.load() );
 
 		Errors::Log::createLastError( Errors::FileNotReadable, name );
 
-		if ( EACCES != errno ) {
+		// A file removed or renamed since the directory was listed is not a watcher failure.
+		if ( EACCES != error && ENOENT != error ) {
 			mInitOK = false;
 		}
 
-		mErrno = errno;
+		mErrno = error;
 
-		return;
+		return false;
 	}
 
 	mWatcher->addFD();
@@ -205,9 +207,10 @@ void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	if ( emitEvents ) {
 		handleAction( name, Actions::Add, "", *entry );
 	}
+	return true;
 }
 
-void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
+bool WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
 
 	// bsearch
@@ -226,7 +229,7 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	if ( !ke ) {
 		Errors::Log::createLastError( Errors::FileNotFound, name );
 		efDEBUG( "File not removed\n" );
-		return;
+		return false;
 	}
 
 	efDEBUG( "File removed\n" );
@@ -252,6 +255,7 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	memcpy( ke, &mChangeList[mChangeListCount], sizeof( KEvent ) );
 	memset( &mChangeList[mChangeListCount], 0, sizeof( KEvent ) );
 	--mChangeListCount;
+	return true;
 }
 
 void WatcherKqueue::rescan() {
@@ -272,8 +276,12 @@ void WatcherKqueue::rescan() {
 		MovedList::iterator mit;
 
 		/// Files
+		// A file listed by the scan but gone before it could be opened, or never opened, is
+		// not tracked: it is still reported from the snapshot, so that every reported file
+		// gets its Delete.
 		DiffIterator( FilesCreated ) {
-			addFile( ( *it ).Filepath );
+			if ( !addFile( ( *it ).Filepath ) )
+				handleAction( ( *it ).Filepath, Actions::Add, "", *it );
 		}
 
 		DiffIterator( FilesModified ) {
@@ -281,7 +289,8 @@ void WatcherKqueue::rescan() {
 		}
 
 		DiffIterator( FilesDeleted ) {
-			removeFile( ( *it ).Filepath );
+			if ( !removeFile( ( *it ).Filepath ) )
+				handleAction( ( *it ).Filepath, Actions::Delete, "", *it );
 		}
 
 		DiffMovedIterator( FilesMoved ) {
@@ -293,6 +302,12 @@ void WatcherKqueue::rescan() {
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
+			// A non-recursive watch reports the directory as one of its entries, but does not
+			// watch inside it, as addAll() does.
+			if ( !Recursive ) {
+				handleFolderAction( ( *it ).Filepath, Actions::Add, "", *it );
+				continue;
+			}
 			// Reported once its watch exists, so that an entry created inside it by a listener
 			// reacting to the event is not missed, but before the directories found inside it.
 			WatchID id = addWatch( ( *it ).Filepath, Listener, Recursive, this );
@@ -565,8 +580,6 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 
 WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
 								 bool recursive, WatcherKqueue* parent ) {
-	static bool s_ug = false;
-
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -627,11 +640,8 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 			}
 		}
 	} else {
-		if ( !s_ug ) {
-			efDEBUG( "Started using WatcherGeneric, reached file descriptors limit: %ld.\n",
-					 mWatcher->mFileDescriptorCount );
-			s_ug = true;
-		}
+		efDEBUG( "Using a generic watcher, file descriptor limit reached: %ld\n",
+				 mWatcher->mFileDescriptorCount.load() );
 
 		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
 													recursive, mReportCrossDirectoryMoves );

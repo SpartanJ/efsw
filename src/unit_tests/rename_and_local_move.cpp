@@ -109,3 +109,50 @@ UTEST( NestedFolderRename, RenameFolderWithChildren ) {
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
 }
+
+// A listener moves a renamed file to another watch from inside the Moved callback, before
+// the watcher has had a chance to look at the new name: the source must still report the
+// Delete. kqueue opens the new name only after the callback, and lost the Delete when it
+// could not.
+UTEST( LocalVsCrossMove, MovedAwayDuringTheMovedCallback ) {
+	std::string watchedDir1 = getTemporaryDirectory() + "_away1";
+	std::string watchedDir2 = getTemporaryDirectory() + "_away2";
+	removeDirectory( watchedDir1 );
+	removeDirectory( watchedDir2 );
+	EXPECT_TRUE( createDirectory( watchedDir1 ) );
+	EXPECT_TRUE( createDirectory( watchedDir2 ) );
+	EXPECT_TRUE( createFile( watchedDir1 + "/file.txt", "content" ) );
+
+	struct MovingListener : TestListener {
+		std::string From;
+		std::string To;
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			TestListener::handleFileAction( id, dir, file, action, old );
+			if ( action == efsw::Actions::Moved && file == "renamed.txt" && !From.empty() ) {
+				renameFile( From, To );
+				From.clear();
+			}
+		}
+	} listener;
+	listener.From = watchedDir1 + "/renamed.txt";
+	listener.To = watchedDir2 + "/away.txt";
+
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	efsw::WatchID watchId1 = fileWatcher.addWatch( watchedDir1, &listener, true );
+	efsw::WatchID watchId2 = fileWatcher.addWatch( watchedDir2, &listener, true );
+	EXPECT_TRUE( watchId1 > 0 );
+	EXPECT_TRUE( watchId2 > 0 );
+	fileWatcher.watch();
+	sleepMs( 300 );
+
+	EXPECT_TRUE( renameFile( watchedDir1 + "/file.txt", watchedDir1 + "/renamed.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "renamed.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "renamed.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "away.txt" ) );
+
+	fileWatcher.removeWatch( watchId1 );
+	fileWatcher.removeWatch( watchId2 );
+	removeDirectory( watchedDir1 );
+	removeDirectory( watchedDir2 );
+}

@@ -132,6 +132,9 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 		fileWatcher->pairCrossWatchMoves( eventCount );
 
 	for ( const auto& watcher : watches ) {
+		// A listener may have removed this watch from an earlier callback of this batch.
+		if ( watcher->Removed )
+			continue;
 		watcher->EventBuffer.clear();
 		for ( size_t i = 0; i < eventCount; ++i ) {
 			FSEvent& event = fileWatcher->mEventBuffer[i];
@@ -166,7 +169,7 @@ static const size_t noEvent = static_cast<size_t>( -1 );
 const WatcherFSEvents* FileWatcherFSEvents::reportingWatch( const std::string& path ) const {
 	const WatcherFSEvents* owner = NULL;
 	for ( const auto& watch : mWatchBuffer ) {
-		if ( watch->reportsPath( path ) &&
+		if ( !watch->Removed && watch->reportsPath( path ) &&
 			 ( NULL == owner || watch->Directory.size() > owner->Directory.size() ) )
 			owner = watch.get();
 	}
@@ -293,6 +296,9 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 		std::lock_guard<std::mutex> lock( mWatchesMutex );
 		stream = stopStream();
 	}
+	// Even without a stream left to stop, a callback may still be running: a listener that
+	// removed the last watch stopped the stream from inside it.
+	waitForCallbacks();
 	releaseStreamAfterCallbacks( stream );
 
 	{
@@ -372,6 +378,14 @@ FSEventStreamRef FileWatcherFSEvents::stopStream() {
 		FSEventStreamInvalidate( stream );
 	}
 	return stream;
+}
+
+void FileWatcherFSEvents::waitForCallbacks() {
+	// A callback that removes a watch cannot wait for itself: the watch's Removed flag stops
+	// the rest of its deliveries.
+	if ( NULL != mDispatchQueue && dispatch_get_specific( &DispatchQueueIdentity ) != this )
+		dispatch_sync( mDispatchQueue, ^{
+					   } );
 }
 
 void FileWatcherFSEvents::releaseStreamAfterCallbacks( FSEventStreamRef stream ) {
@@ -468,13 +482,7 @@ void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
 		for ( WatchMap::iterator iter = mWatches.begin(); iter != mWatches.end(); ++iter ) {
 			if ( dir == iter->second->Directory ) {
 				removedWatch = iter->second;
-				mWatches.erase( iter );
-				if ( mWatching ) {
-					if ( mWatches.empty() )
-						replacedStream = stopStream();
-					else
-						rebuildStream( replacedStream );
-				}
+				replacedStream = eraseWatchLocked( iter );
 				break;
 			}
 		}
@@ -482,6 +490,7 @@ void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
 
 	if ( removedWatch ) {
 		efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+		waitForCallbacks();
 		releaseStreamAfterCallbacks( replacedStream );
 	}
 }
@@ -496,17 +505,25 @@ void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
 			return;
 
 		removedWatch = iter->second;
-		mWatches.erase( iter );
-		if ( mWatching ) {
-			if ( mWatches.empty() )
-				replacedStream = stopStream();
-			else
-				rebuildStream( replacedStream );
-		}
+		replacedStream = eraseWatchLocked( iter );
 	}
 
 	efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+	waitForCallbacks();
 	releaseStreamAfterCallbacks( replacedStream );
+}
+
+FSEventStreamRef FileWatcherFSEvents::eraseWatchLocked( WatchMap::iterator iter ) {
+	iter->second->Removed = true;
+	mWatches.erase( iter );
+	FSEventStreamRef replacedStream = NULL;
+	if ( mWatching ) {
+		if ( mWatches.empty() )
+			replacedStream = stopStream();
+		else
+			rebuildStream( replacedStream );
+	}
+	return replacedStream;
 }
 
 void FileWatcherFSEvents::watch() {

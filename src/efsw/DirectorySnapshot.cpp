@@ -118,11 +118,19 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 		return Diff;
 	}
 
-	for ( const auto& file : files ) {
+	for ( auto& file : files ) {
 		/// File existed before?
 		auto fiIt = findFile( Files, file.Filepath );
 
 		if ( fiIt != Files.end() ) {
+			// The identity is read after the directory is listed: an entry renamed in between
+			// is listed, but its identity cannot be read. It keeps the identity it had, so it is
+			// not reported as modified, and its Delete can still be paired into a move.
+			if ( 0 == file.Inode && 0 != fiIt->Inode ) {
+				file.Device = fiIt->Device;
+				file.Inode = fiIt->Inode;
+			}
+
 			/// File changed?
 			if ( *fiIt != file ) {
 				/// handle modified event

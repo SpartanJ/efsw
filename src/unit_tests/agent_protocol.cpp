@@ -100,3 +100,33 @@ UTEST( AgentProtocol, MoveFromAnotherWatchKeepsAbsoluteOldPath ) {
 	// A watched directory whose name extends the other one's is not inside it.
 	EXPECT_TRUE( EventPath::fromRoot( "/w/dir/", "", "/w/dir2/a.txt" ) == "/w/dir2/a.txt" );
 }
+
+UTEST( AgentProtocol, EventBatchRoundTripAndMalformed ) {
+	std::vector<WatchEventRecord> records( 2 );
+	records[0].action = ActionAdd;
+	records[0].path = "a.txt";
+	records[1].action = ActionMoved;
+	records[1].path = "b.txt";
+	records[1].oldPath = "/other/watch/b.txt";
+	Writer w;
+	EventBatch::write( w, 3, records, 0, records.size() );
+	const std::vector<uint8_t> frame = w.frame( MessageEventBatch );
+	std::vector<uint8_t> payload( frame.begin() + HeaderSize, frame.end() );
+
+	Reader complete( payload );
+	uint32_t watchId = 0;
+	std::vector<WatchEventRecord> parsed;
+	ASSERT_TRUE( EventBatch::read( complete, watchId, parsed ) );
+	EXPECT_EQ( 3u, watchId );
+	ASSERT_EQ( 2u, parsed.size() );
+	EXPECT_TRUE( parsed[1].oldPath == "/other/watch/b.txt" );
+
+	// A truncated payload, or one with trailing bytes, is malformed.
+	std::vector<uint8_t> truncated( payload.begin(), payload.end() - 3 );
+	Reader shorter( truncated );
+	EXPECT_FALSE( EventBatch::read( shorter, watchId, parsed ) );
+	std::vector<uint8_t> longer( payload );
+	longer.push_back( 0 );
+	Reader trailing( longer );
+	EXPECT_FALSE( EventBatch::read( trailing, watchId, parsed ) );
+}

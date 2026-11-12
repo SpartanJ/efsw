@@ -1,6 +1,7 @@
 #ifndef EFSW_FILEWATCHEROSX_HPP
 #define EFSW_FILEWATCHEROSX_HPP
 
+#include <atomic>
 #include <efsw/FileWatcherImpl.hpp>
 #include <efsw/RetiringWatches.hpp>
 
@@ -57,7 +58,8 @@ class FileWatcherKqueue : public FileWatcherImpl {
 
 	std::vector<WatchID> mRemoveList;
 
-	long mFileDescriptorCount;
+	/// Changed by addWatch(), from any thread, and by the polling thread's rescans.
+	std::atomic<long> mFileDescriptorCount;
 
 	unsigned int mPollingFreq{ 500 };
 	/// Events of every watch that enabled Options::ReportCrossDirectoryMoves, collected during

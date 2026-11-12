@@ -311,6 +311,11 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 	if ( !skip ) {
 		handleAction( newdir, Actions::Add, "", fi );
 
+		// A non-recursive watch reports the directory as one of its entries, but does not
+		// watch inside it.
+		if ( !Recursive )
+			return NULL;
+
 		/// Creates the new directory watcher of the subfolder and check for new files
 		dw = new DirWatcherGeneric( this, Watch, dir, Recursive );
 

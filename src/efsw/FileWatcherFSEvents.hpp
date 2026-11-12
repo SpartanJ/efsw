@@ -66,6 +66,16 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	/// Stops and invalidates the active stream. mWatchesMutex must be held by the caller.
 	FSEventStreamRef stopStream();
 
+	/// Waits until a callback running on the dispatch queue returns, unless called from one.
+	/// A removal waits whatever happened to the stream, even if replacing it failed: a running
+	/// callback may still be delivering to the removed watch, whose listener the caller may
+	/// destroy next.
+	void waitForCallbacks();
+
+	/// Marks a watch removed and erases it, then replaces or stops the stream.
+	/// mWatchesMutex must be held. @return The replaced stream, to release after callbacks.
+	FSEventStreamRef eraseWatchLocked( WatchMap::iterator iter );
+
 	/// Releases an invalidated stream after callbacks already submitted to the dispatch queue.
 	void releaseStreamAfterCallbacks( FSEventStreamRef stream );
 

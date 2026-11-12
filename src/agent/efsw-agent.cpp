@@ -422,9 +422,7 @@ class Agent {
 				for ( size_t start = 0; start < list.size(); start += 4096 ) {
 					size_t end = start + 4096 < list.size() ? start + 4096 : list.size();
 					Writer w;
-					w.u32( it->first ).u32( static_cast<uint32_t>( end - start ) );
-					for ( size_t i = start; i < end; ++i )
-						w.u8( list[i].action ).str( list[i].path ).str( list[i].oldPath );
+					EventBatch::write( w, it->first, list, start, end );
 					if ( !writeOutput( w.frame( MessageEventBatch ) ) )
 						std::exit( 3 );
 				}

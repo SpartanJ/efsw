@@ -60,6 +60,9 @@ void WatchCallbackOld( WatcherWin32* pWatch ) {
 	PFILE_NOTIFY_INFORMATION pNotify;
 	size_t offset = 0;
 	do {
+		// A listener removed this watch: the rest of the buffer is not reported.
+		if ( pWatch->StopNow )
+			break;
 		bool skip = false;
 
 		pNotify = (PFILE_NOTIFY_INFORMATION)&pWatch->Buffer[offset];
@@ -124,6 +127,9 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 
 	FileWatcherWin32* fileWatcher = static_cast<FileWatcherWin32*>( pWatch->Watch );
 	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
+		// A listener removed this watch: the rest of the buffer is not reported.
+		if ( pWatch->StopNow )
+			break;
 		ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
 
 		// Removed and added records may arrive from different watch handles in either order.

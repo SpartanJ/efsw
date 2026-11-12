@@ -7,6 +7,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <atomic>
 #include <efsw/FileInfo.hpp>
 #include <efsw/WatcherGeneric.hpp>
 #include <unordered_set>
@@ -74,6 +75,11 @@ class WatcherFSEvents : public Watcher {
 	Uint64 ModifiedFlags{ efswFSEventsModified };
 	bool SanitizeEvents{ false };
 	bool ReportCrossDirectoryMoves{ false };
+	/// Set when the watch is removed. A callback running on the dispatch queue keeps its
+	/// snapshot of the watches, which may still hold this one when its own listener removed it:
+	/// nothing more is sent to the listener. A removal from another thread waits for the
+	/// running callback instead (see FileWatcherFSEvents::releaseStreamAfterCallbacks).
+	std::atomic<bool> Removed{ false };
 	std::vector<FSEvent> EventBuffer;
 	CFStringRef DirectoryRef{ NULL };
 

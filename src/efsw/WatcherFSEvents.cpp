@@ -46,12 +46,16 @@ bool WatcherFSEvents::reportsPath( const std::string& path ) const {
 void WatcherFSEvents::sendFileAction( WatchID watchid, const std::string& dir,
 									  const std::string& filename, Action action,
 									  const std::string& oldFilename ) {
+	if ( Removed )
+		return;
 	Listener->handleFileAction( watchid, FileSystem::precomposeFileName( dir ),
 								FileSystem::precomposeFileName( filename ), action,
 								FileSystem::precomposeFileName( oldFilename ) );
 }
 
 void WatcherFSEvents::sendMissedFileActions( WatchID watchid, const std::string& dir ) {
+	if ( Removed )
+		return;
 	Listener->handleMissedFileActions( watchid, FileSystem::precomposeFileName( dir ) );
 }
 

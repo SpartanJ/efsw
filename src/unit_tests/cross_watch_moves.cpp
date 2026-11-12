@@ -137,6 +137,33 @@ UTEST( CrossWatchMoves, AgentKeepsAbsoluteSourceOfMoveFromAnotherWatch ) {
 	EXPECT_TRUE( efsw::agent::EventPath::isAbsolute( sent ) );
 	EXPECT_TRUE( sent == oldPath );
 	EXPECT_TRUE( oldFilename == canonicalSource );
+
+	// The record goes over the wire in an EVENT_BATCH frame, as the agent sends it, and a
+	// client parses it back with the absolute old_path.
+	std::vector<efsw::agent::WatchEventRecord> records( 1 );
+	records[0].action = efsw::agent::ActionMoved;
+	records[0].path = efsw::agent::EventPath::fromRoot( root, "", root + "agent.txt" );
+	records[0].oldPath = sent;
+	efsw::agent::Writer writer;
+	efsw::agent::EventBatch::write( writer, 7, records, 0, records.size() );
+	std::vector<uint8_t> frame = writer.frame( efsw::agent::MessageEventBatch );
+
+	efsw::agent::FrameParser parser;
+	parser.feed( &frame[0], frame.size() );
+	efsw::agent::Frame received;
+	std::string error;
+	ASSERT_EQ( 1, parser.next( received, error ) );
+	EXPECT_EQ( efsw::agent::MessageEventBatch, received.type );
+	efsw::agent::Reader reader( received.payload );
+	uint32_t watchId = 0;
+	std::vector<efsw::agent::WatchEventRecord> parsed;
+	ASSERT_TRUE( efsw::agent::EventBatch::read( reader, watchId, parsed ) );
+	EXPECT_EQ( 7u, watchId );
+	ASSERT_EQ( 1u, parsed.size() );
+	EXPECT_EQ( efsw::agent::ActionMoved, parsed[0].action );
+	EXPECT_TRUE( parsed[0].path == "agent.txt" );
+	EXPECT_TRUE( efsw::agent::EventPath::isAbsolute( parsed[0].oldPath ) );
+	EXPECT_TRUE( parsed[0].oldPath == oldPath );
 }
 
 // The handed-over subtree belongs to the destination registration: removing the destination
@@ -360,6 +387,157 @@ UTEST( CrossWatchMoves, SelfRemovalDuringDiscoveryStopsTheTree ) {
 	}
 	removeDirectory( root );
 	removeDirectory( outside );
+}
+
+namespace {
+
+/// Removes a registration when it receives its first event, then counts every callback it
+/// gets afterwards: a listener may be destroyed as soon as its removal returns.
+struct RemovalListener : efsw::FileWatchListener {
+	efsw::FileWatcher* Watcher{ NULL };
+	std::atomic<efsw::WatchID> RemoveOnFirstEvent{ 0 };
+	std::atomic<bool> Removed{ false };
+	std::atomic<int> Events{ 0 };
+	std::atomic<int> EventsAfterRemoval{ 0 };
+
+	void handleFileAction( efsw::WatchID, const std::string&, const std::string&, efsw::Action,
+						   const std::string& ) override {
+		Events++;
+		if ( Removed )
+			EventsAfterRemoval++;
+		efsw::WatchID id = RemoveOnFirstEvent.exchange( 0 );
+		if ( id > 0 ) {
+			Watcher->removeWatch( id );
+			Removed = true;
+		}
+	}
+};
+
+/// Plain events counter that knows when its registration was removed by someone else.
+struct CountingListener : efsw::FileWatchListener {
+	std::atomic<bool>* Removed{ NULL };
+	std::atomic<int> EventsAfterRemoval{ 0 };
+
+	void handleFileAction( efsw::WatchID, const std::string&, const std::string&, efsw::Action,
+						   const std::string& ) override {
+		if ( *Removed )
+			EventsAfterRemoval++;
+	}
+};
+
+void burst( const std::string& directory, const std::string& prefix ) {
+	for ( int i = 0; i < 20; i++ ) {
+		const std::string file = directory + "/" + prefix + std::to_string( i ) + ".txt";
+		createFile( file, "x" );
+		writeFile( file, "more" );
+	}
+}
+
+} // namespace
+
+// A listener removes its own registration on the first of many pending events: on every
+// backend, with and without cross-directory moves (which make Windows hold Add events and
+// flush them before later events), nothing more is delivered to it.
+UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
+	for ( int option = 0; option < 2; option++ ) {
+		const std::string root =
+			getTemporaryDirectory() + "_xw_pending" + std::to_string( option );
+		removeDirectory( root );
+		EXPECT_TRUE( createDirectory( root ) );
+		RemovalListener listener;
+		{
+			efsw::FileWatcher watcher( useGeneric, 100 );
+			listener.Watcher = &watcher;
+			std::vector<efsw::WatcherOption> options;
+			if ( option )
+				options = crossMoveOptions;
+			const efsw::WatchID id = watcher.addWatch( root, &listener, true, options );
+			ASSERT_GT( id, 0 );
+			watcher.watch();
+			sleepMs( 300 );
+			listener.RemoveOnFirstEvent = id;
+
+			burst( root, "pending" );
+			for ( int i = 0; i < 200 && !listener.Removed; i++ )
+				sleepMs( 10 );
+			EXPECT_TRUE( listener.Removed.load() );
+			burst( root, "later" );
+			sleepMs( 500 );
+		}
+		EXPECT_EQ( 0, listener.EventsAfterRemoval.load() );
+		removeDirectory( root );
+	}
+}
+
+// A listener removes another registration whose events are already part of the batch being
+// delivered: nothing more is delivered to the removed registration.
+UTEST( CrossWatchMoves, RemovingAnotherRegistrationWithPendingEvents ) {
+	TwoWatches watches;
+	// Not recursive, so that every backend accepts the registrations below the roots.
+	ASSERT_TRUE( watches.start( false, false ) );
+	RemovalListener remover;
+	CountingListener removed;
+	removed.Removed = &remover.Removed;
+	remover.Watcher = &watches.Watcher;
+	const std::string first = watches.Source + "/first";
+	const std::string second = watches.Destination + "/second";
+	EXPECT_TRUE( createDirectory( first ) );
+	EXPECT_TRUE( createDirectory( second ) );
+	sleepMs( 300 );
+	const efsw::WatchID firstId =
+		watches.Watcher.addWatch( first, &remover, true, crossMoveOptions );
+	const efsw::WatchID secondId =
+		watches.Watcher.addWatch( second, &removed, true, crossMoveOptions );
+	ASSERT_GT( firstId, 0 );
+	ASSERT_GT( secondId, 0 );
+	sleepMs( 300 );
+	remover.RemoveOnFirstEvent = secondId;
+
+	for ( int i = 0; i < 20; i++ ) {
+		createFile( first + "/a" + std::to_string( i ) + ".txt", "x" );
+		createFile( second + "/b" + std::to_string( i ) + ".txt", "x" );
+	}
+	for ( int i = 0; i < 200 && !remover.Removed; i++ )
+		sleepMs( 10 );
+	EXPECT_TRUE( remover.Removed.load() );
+	burst( second, "later" );
+	sleepMs( 500 );
+	watches.Watcher.removeWatch( firstId );
+	EXPECT_EQ( 0, removed.EventsAfterRemoval.load() );
+}
+
+// Another thread removes a registration while its listener is inside a callback: removal
+// returns only once the callback returned, since the caller may destroy the listener next.
+// Another registration stays, so FSEvents replaces its stream instead of stopping it.
+UTEST( CrossWatchMoves, RemoveWatchWaitsForRunningCallback ) {
+	TwoWatches watches;
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	struct SlowListener : efsw::FileWatchListener {
+		std::atomic<bool> Entered{ false };
+		std::atomic<bool> Returned{ false };
+		void handleFileAction( efsw::WatchID, const std::string&, const std::string&,
+							   efsw::Action, const std::string& ) override {
+			if ( Entered.exchange( true ) )
+				return;
+			sleepMs( 300 );
+			Returned = true;
+		}
+	} slow;
+	const std::string directory = getTemporaryDirectory() + "_xw_slow";
+	removeDirectory( directory );
+	EXPECT_TRUE( createDirectory( directory ) );
+	const efsw::WatchID id = watches.Watcher.addWatch( directory, &slow, true );
+	ASSERT_GT( id, 0 );
+	sleepMs( 300 );
+
+	EXPECT_TRUE( createFile( directory + "/slow.txt", "x" ) );
+	for ( int i = 0; i < 300 && !slow.Entered; i++ )
+		sleepMs( 10 );
+	ASSERT_TRUE( slow.Entered.load() );
+	watches.Watcher.removeWatch( id );
+	EXPECT_TRUE( slow.Returned.load() );
+	removeDirectory( directory );
 }
 
 // directories() runs while a directory holding a registration moves in and out of another
@@ -677,6 +855,44 @@ struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
 };
 
 } // namespace
+
+// Registrations added and removed from two threads at once, with the file descriptors used up
+// so that every watch falls back to the generic watcher. Meant for ThreadSanitizer.
+UTEST( CrossWatchMoves, KqueueConcurrentFallbackRegistrations ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqconcurrent";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	for ( int i = 0; i < 2; i++ ) {
+		EXPECT_TRUE( createDirectory( root + "/t" + std::to_string( i ) ) );
+		EXPECT_TRUE( createDirectory( root + "/t" + std::to_string( i ) + "/sub" ) );
+	}
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 20 );
+		kqueue.exhaust();
+		kqueue.watch();
+		std::atomic<int> registered{ 0 };
+		auto churn = [&]( int tree ) {
+			const std::string directory = root + "/t" + std::to_string( tree );
+			for ( int i = 0; i < 20; i++ ) {
+				efsw::WatchID id = kqueue.addWatch( directory, &listener, true, {} );
+				if ( id > 0 ) {
+					registered++;
+					createFile( directory + "/sub/f" + std::to_string( i ), "x" );
+					sleepMs( 5 );
+					kqueue.removeWatch( id );
+				}
+			}
+		};
+		std::thread first( churn, 0 );
+		std::thread second( churn, 1 );
+		first.join();
+		second.join();
+		EXPECT_EQ( 40, registered.load() );
+	}
+	removeDirectory( root );
+}
 
 // Retiring a kqueue watch must retire its generic fallback descendants, which report on their
 // own: after retirement, nothing is reported from them.

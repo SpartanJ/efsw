@@ -48,6 +48,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace efsw { namespace agent {
@@ -296,6 +297,32 @@ struct EventPath {
 		while ( !path.empty() && path[path.size() - 1] == '/' )
 			path.erase( path.size() - 1 );
 		return path;
+	}
+};
+
+/** EVENT_BATCH payloads: the agent writes them, clients read them. */
+struct EventBatch {
+	/** Writes the records [begin, end) of one watch. */
+	static void write( Writer& w, uint32_t watchId, const std::vector<WatchEventRecord>& records,
+					   size_t begin, size_t end ) {
+		w.u32( watchId ).u32( static_cast<uint32_t>( end - begin ) );
+		for ( size_t i = begin; i < end; ++i )
+			w.u8( records[i].action ).str( records[i].path ).str( records[i].oldPath );
+	}
+
+	/** @return False when the payload is malformed. */
+	static bool read( Reader& r, uint32_t& watchId, std::vector<WatchEventRecord>& records ) {
+		watchId = r.u32();
+		uint32_t count = r.u32();
+		records.clear();
+		for ( uint32_t i = 0; i < count && r.ok(); ++i ) {
+			WatchEventRecord record;
+			record.action = r.u8();
+			record.path = r.str();
+			record.oldPath = r.str();
+			records.push_back( std::move( record ) );
+		}
+		return r.ok() && r.atEnd();
 	}
 };
 
