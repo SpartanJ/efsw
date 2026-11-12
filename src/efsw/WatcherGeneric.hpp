@@ -21,6 +21,8 @@ class WatcherGeneric : public Watcher {
 
 	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
 
+	void retire() override;
+
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
 					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );
 

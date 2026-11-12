@@ -58,7 +58,13 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( pathInWatches( dir ) ) {
+	}
+
+	// Held until the watch is complete: the polling thread must not poll it while addAll()
+	// builds it, and the registered watches are looked up while it is built.
+	Lock lock( mWatchesLock );
+
+	if ( pathInWatches( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
 
@@ -84,10 +90,8 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 												  NULL, reportCrossDirectoryMoves );
 		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
 
-		{
-			Lock lock( mWatchesLock );
-			mWatches.insert( std::make_pair( mLastWatchID, watch ) );
-		}
+		// Registered before addAll(), which looks up the registered watches.
+		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 
 		watch->addAll();
 
@@ -106,8 +110,6 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 				WatcherGeneric* genericWatch = new WatcherGeneric(
 					++mLastWatchID, dir, watcher, this, recursive, reportCrossDirectoryMoves );
 				genericWatch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
-
-				Lock lock( mWatchesLock );
 				mWatches.insert( std::make_pair( mLastWatchID, genericWatch ) );
 			} else {
 				return Errors::Log::createLastError( Errors::Unspecified, link );
@@ -123,8 +125,6 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive,
 													reportCrossDirectoryMoves );
 		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
-
-		Lock lock( mWatchesLock );
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 	}
 
@@ -159,8 +159,7 @@ void FileWatcherKqueue::removeWatch( WatchID watchid ) {
 
 	mWatches.erase( iter );
 	mSharedActions.forget( watch );
-
-	efSAFE_DELETE( watch );
+	mRetiring.release( watch );
 }
 
 FileActionBatch* FileWatcherKqueue::sharedActionsFor( bool reportCrossDirectoryMoves ) {
@@ -180,12 +179,18 @@ void FileWatcherKqueue::run() {
 			Lock lock( mWatchesLock );
 
 			// Events of opted-in watches are collected during the scans, and dispatched after.
+			std::vector<Watcher*>& scanned = mRetiring.beginPass();
+			for ( const auto& entry : mWatches )
+				scanned.push_back( entry.second );
 			mSharedActions.beginPass();
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				it->second->watch();
-				mSharedActions.scanned( it->second );
+			for ( Watcher* watch : scanned ) {
+				if ( watch->Retired )
+					continue;
+				watch->watch();
+				mSharedActions.scanned( watch );
 			}
 			mSharedActions.finishPass();
+			mRetiring.endPass();
 		}
 
 		System::sleep( mPollingFreq );

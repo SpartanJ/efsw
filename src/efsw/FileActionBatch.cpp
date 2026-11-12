@@ -75,6 +75,11 @@ void FileActionBatch::scanned( Watcher* watcher ) {
 	addSegment( watcher, mSegments.empty() ? mReleased : mSegments.back().End );
 }
 
+void FileActionBatch::cancel() {
+	for ( Event& event : mEvents )
+		event.Canceled = true;
+}
+
 void FileActionBatch::forget( Watcher* watcher ) {
 	mHeld.erase( std::remove_if( mHeld.begin(), mHeld.end(),
 								 [watcher]( const Event& event ) { return event.Owner == watcher; } ),

@@ -334,9 +334,20 @@ WatchID WatcherKqueue::watchingDirectory( std::string dir ) {
 	return Errors::FileNotFound;
 }
 
+void WatcherKqueue::retire() {
+	Watcher::retire();
+	mActionBatch.cancel();
+	// Native descendants check the root, but generic ones, created when file descriptors run
+	// out, report on their own: the whole tree is retired.
+	for ( const auto& child : mWatches )
+		child.second->retire();
+}
+
 void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action,
 								  const std::string& oldFilename, const FileInfo& fileInfo ) {
 	WatcherKqueue* rootWatch = root();
+	if ( rootWatch->Retired )
+		return;
 	if ( rootWatch->mCollectActions ) {
 		FileActionBatch* shared = rootWatch->SharedActionBatch;
 		FileActionBatch* batch = shared ? shared : &rootWatch->mActionBatch;
@@ -357,7 +368,7 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 }
 
 void WatcherKqueue::sendDirChanged() {
-	if ( NULL != mParent ) {
+	if ( NULL != mParent && !root()->Retired ) {
 		Listener->handleFileAction( mParent->ID, mParent->Directory,
 									FileSystem::fileNameFromPath( Directory ), Actions::Modified );
 	}
@@ -492,7 +503,9 @@ void WatcherKqueue::rescanTree() {
 	}
 }
 
-Watcher* WatcherKqueue::findWatcher( const std::string path ) {
+Watcher* WatcherKqueue::findWatcher( std::string path ) {
+	// Watch directories end with a slash; snapshot entries, like deleted directories, do not.
+	FileSystem::dirAddSlashAtEnd( path );
 	WatchMap::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); it++ ) {

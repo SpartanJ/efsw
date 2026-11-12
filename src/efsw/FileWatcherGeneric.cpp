@@ -41,7 +41,13 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( pathInWatches( dir ) ) {
+	}
+
+	// The polling thread changes the directory trees of the watches while it scans them:
+	// looking them up, and creating a watch, which looks them up too, needs the lock.
+	Lock lock( mWatchesLock );
+
+	if ( pathInWatches( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
 
@@ -68,7 +74,6 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 	if ( reportCrossDirectoryMoves && FileInfo::inodeSupported() )
 		pWatch->SharedActionBatch = &mSharedActions;
 
-	Lock lock( mWatchesLock );
 	mWatches.push_back( pWatch );
 
 	return pWatch->ID;
@@ -78,41 +83,30 @@ void FileWatcherGeneric::removeWatch( const std::string& directory ) {
 	std::string dir( directory );
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	WatchList::iterator it = mWatches.begin();
-
-	for ( ; it != mWatches.end(); ++it ) {
+	Lock lock( mWatchesLock );
+	for ( WatchList::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		if ( ( *it )->Directory == dir ) {
-			WatcherGeneric* watch = ( *it );
-
-			Lock lock( mWatchesLock );
-
-			mWatches.erase( it );
-			mSharedActions.forget( watch );
-
-			efSAFE_DELETE( watch );
-
+			eraseWatchLocked( it );
 			return;
 		}
 	}
 }
 
 void FileWatcherGeneric::removeWatch( WatchID watchid ) {
-	WatchList::iterator it = mWatches.begin();
-
-	for ( ; it != mWatches.end(); ++it ) {
+	Lock lock( mWatchesLock );
+	for ( WatchList::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		if ( ( *it )->ID == watchid ) {
-			WatcherGeneric* watch = ( *it );
-
-			Lock lock( mWatchesLock );
-
-			mWatches.erase( it );
-			mSharedActions.forget( watch );
-
-			efSAFE_DELETE( watch );
-
+			eraseWatchLocked( it );
 			return;
 		}
 	}
+}
+
+void FileWatcherGeneric::eraseWatchLocked( WatchList::iterator it ) {
+	WatcherGeneric* watch = *it;
+	mWatches.erase( it );
+	mSharedActions.forget( watch );
+	mRetiring.release( watch );
 }
 
 void FileWatcherGeneric::watch() {
@@ -128,12 +122,17 @@ void FileWatcherGeneric::run() {
 			Lock lock( mWatchesLock );
 
 			// Events of opted-in watches are collected during the scans, and dispatched after.
+			std::vector<Watcher*>& scanned = mRetiring.beginPass();
+			scanned.assign( mWatches.begin(), mWatches.end() );
 			mSharedActions.beginPass();
-			for ( WatcherGeneric* watch : mWatches ) {
+			for ( Watcher* watch : scanned ) {
+				if ( watch->Retired )
+					continue;
 				watch->watch();
 				mSharedActions.scanned( watch );
 			}
 			mSharedActions.finishPass();
+			mRetiring.endPass();
 		}
 
 		if ( mInitOK )

@@ -42,6 +42,10 @@ class FileActionBatch {
 	/// Completes the moves split between scans of this pass, then dispatches.
 	void finishPass();
 
+	/// Cancels every collected event, including those not yet delivered by a dispatch in
+	/// progress.
+	void cancel();
+
 	/// Drops the events of a watch that is being removed, including those not yet delivered
 	/// by a dispatch in progress: a listener may remove another watch, or its own.
 	void forget( Watcher* watcher );

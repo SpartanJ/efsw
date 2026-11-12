@@ -2,6 +2,7 @@
 #define EFSW_FILEWATCHEROSX_HPP
 
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/RetiringWatches.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
@@ -62,6 +63,7 @@ class FileWatcherKqueue : public FileWatcherImpl {
 	/// Events of every watch that enabled Options::ReportCrossDirectoryMoves, collected during
 	/// one polling pass so moves between those watches can be paired.
 	FileActionBatch mSharedActions;
+	RetiringWatches mRetiring;
 
 	/// @return The batch a new watch must collect into, or NULL.
 	FileActionBatch* sharedActionsFor( bool reportCrossDirectoryMoves );

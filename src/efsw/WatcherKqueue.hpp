@@ -72,6 +72,8 @@ class WatcherKqueue : public Watcher {
 
 	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
 
+	void retire() override;
+
 	int lastErrno();
 
   protected:
@@ -101,7 +103,7 @@ class WatcherKqueue : public Watcher {
 
 	bool pathInParent( const std::string& path );
 
-	Watcher* findWatcher( const std::string path );
+	Watcher* findWatcher( std::string path );
 
 	void moveDirectory( std::string oldPath, std::string newPath, const FileInfo& fileInfo,
 						bool emitEvents = true );
