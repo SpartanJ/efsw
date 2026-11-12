@@ -105,6 +105,9 @@ class FileWatcherInotify : public FileWatcherImpl {
 	/// Adds a logical watch to mWatches and mWatchesRef. mWatchesLock must be held.
 	void registerWatchLocked( WatcherInotify* watch );
 
+	/// Moves a logical watch under another parent watch, or none. mWatchesLock must be held.
+	void setParentLocked( WatcherInotify* watch, WatcherInotify* parent );
+
 	/// Removes the mWatchesRef entry of a logical watch. mWatchesLock must be held.
 	void unindexWatchLocked( WatcherInotify* watch );
 
@@ -129,6 +132,13 @@ class FileWatcherInotify : public FileWatcherImpl {
 	void renameWatchedDirectoriesLocked( const std::string& oldPath, const std::string& newPath );
 
 	void checkForNewWatcher( Watcher* watch, std::string fpath );
+
+	/// Calls the listener of a watch, unless the watch was removed. mInitLock must be held:
+	/// removeWatch() takes it, so a registration cannot be removed, and its listener destroyed,
+	/// between the check and the call. Checked before each call, since a listener may remove
+	/// its own registration between two events of one action.
+	void notify( Watcher* watch, const std::string& filename, Action action,
+				 const std::string& oldFilename = "" );
 
 	/// @return The watch of the registration for the parent directory of dir, or NULL.
 	Watcher* watcherContainsDirectory( std::string dir, WatchID registration );

@@ -75,3 +75,28 @@ UTEST( AgentProtocol, MalformedInput ) {
 	EXPECT_EQ( 0u, r.u32() );
 	EXPECT_FALSE( r.ok() );
 }
+
+UTEST( AgentProtocol, EventPathsAreRelativeToTheWatchedDirectory ) {
+	EXPECT_TRUE( EventPath::fromRoot( "/w/root/", "", "/w/root/a/b.txt" ) == "a/b.txt" );
+	EXPECT_TRUE( EventPath::fromRoot( "/w/root/", "", "/w/root/dir/" ) == "dir" );
+	// Paths reported with the root's symlinks resolved.
+	EXPECT_TRUE( EventPath::fromRoot( "/var/root/", "/private/var/root/",
+									  "/private/var/root/a.txt" ) == "a.txt" );
+	EXPECT_TRUE( EventPath::fromRoot( "/var/root/", "/private/var/root/", "/var/root/a.txt" ) ==
+				 "a.txt" );
+	EXPECT_FALSE( EventPath::isAbsolute( "a/b.txt" ) );
+	EXPECT_FALSE( EventPath::isAbsolute( "" ) );
+}
+
+// The source of a move from another watch is outside the watched directory: its old_path stays
+// absolute, which clients tell apart from relative paths with isAbsolute().
+UTEST( AgentProtocol, MoveFromAnotherWatchKeepsAbsoluteOldPath ) {
+	EXPECT_TRUE( EventPath::fromRoot( "/w/destination/", "", "/w/source/a.txt" ) ==
+				 "/w/source/a.txt" );
+	EXPECT_TRUE( EventPath::isAbsolute( "/w/source/a.txt" ) );
+	EXPECT_TRUE( EventPath::fromRoot( "C:/w/destination/", "", "C:/w/source/a.txt" ) ==
+				 "C:/w/source/a.txt" );
+	EXPECT_TRUE( EventPath::isAbsolute( "C:/w/source/a.txt" ) );
+	// A watched directory whose name extends the other one's is not inside it.
+	EXPECT_TRUE( EventPath::fromRoot( "/w/dir/", "", "/w/dir2/a.txt" ) == "/w/dir2/a.txt" );
+}

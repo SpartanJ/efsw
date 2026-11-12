@@ -1,7 +1,10 @@
 #include "test_util.hpp"
 #include "utest.h"
 #include <efsw/FileSystem.hpp>
+#include <efsw/agent_protocol.hpp>
 #include <efsw/base.hpp>
+#include <atomic>
+#include <thread>
 
 using namespace efsw_test;
 
@@ -106,6 +109,287 @@ UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/after_remove.txt", "x" ) );
 	EXPECT_TRUE(
 		watches.DestinationListener.waitForActions( efsw::Actions::Add, "after_remove.txt" ) );
+}
+
+// efsw-agent forwards a cross-watch Moved with an absolute old_path: the real event, converted
+// as the agent does, is absolute and names the source.
+UTEST( CrossWatchMoves, AgentKeepsAbsoluteSourceOfMoveFromAnotherWatch ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createFile( watches.Source + "/agent.txt", "content" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+	const std::string canonicalSource = efsw::FileSystem::getRealPath( watches.Source + "/agent.txt" );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/agent.txt", watches.Destination + "/agent.txt" ) );
+	ASSERT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "agent.txt" ) );
+	std::string oldFilename;
+	for ( const auto& event : watches.DestinationListener.getEvents() )
+		if ( std::get<0>( event ) == efsw::Actions::Moved && std::get<1>( event ) == "agent.txt" )
+			oldFilename = std::get<2>( event );
+
+	std::string root( watches.Destination );
+	std::string oldPath( oldFilename );
+	for ( std::string* path : { &root, &oldPath } )
+		for ( char& c : *path )
+			if ( c == '\\' )
+				c = '/';
+	root += '/';
+	const std::string sent = efsw::agent::EventPath::fromRoot( root, "", oldPath );
+	EXPECT_TRUE( efsw::agent::EventPath::isAbsolute( sent ) );
+	EXPECT_TRUE( sent == oldPath );
+	EXPECT_TRUE( oldFilename == canonicalSource );
+}
+
+// The handed-over subtree belongs to the destination registration: removing the destination
+// must also stop the events inside the moved directory, at every depth.
+UTEST( CrossWatchMoves, RemovingDestinationRemovesMovedSubtree ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub/deep" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/before.txt", "x" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.waitForActions( efsw::Actions::Add, "before.txt" ) );
+
+	watches.Watcher.removeWatch( watches.DestinationId );
+	watches.DestinationId = 0;
+	sleepMs( 300 );
+	watches.SourceListener.clearEvents();
+	watches.DestinationListener.clearEvents();
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/after.txt", "x" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/after.txt", "x" ) );
+	sleepMs( 500 );
+	EXPECT_EQ( 0u, watches.DestinationListener.getEventCount() );
+	EXPECT_EQ( 0u, watches.SourceListener.getEventCount() );
+}
+
+// Registrations are added and removed while directory trees move between them. Run under
+// ThreadSanitizer and AddressSanitizer, this checks the watch bookkeeping of the event thread
+// against the registration calls. The roots are not recursive, so the churned registrations
+// below them are accepted by every backend, including inotify, which rejects registrations
+// inside a recursive one.
+UTEST( CrossWatchMoves, RegistrationChurnDuringMoves ) {
+	TwoWatches watches;
+	for ( int i = 0; i < 4; i++ ) {
+		const std::string tree = watches.Source + "/tree" + std::to_string( i );
+		EXPECT_TRUE( createDirectory( tree ) );
+		EXPECT_TRUE( createDirectory( tree + "/a" ) );
+		EXPECT_TRUE( createDirectory( tree + "/a/b" ) );
+		EXPECT_TRUE( createDirectory( watches.Destination + "/dst" + std::to_string( i ) ) );
+	}
+	ASSERT_TRUE( watches.start( false, false ) );
+
+	// Moves the subtree "a" between Source/treeN and Destination/dstN, which are the
+	// registered directories.
+	std::atomic<bool> stop{ false };
+	std::thread mover( [&] {
+		bool inSource = true;
+		while ( !stop ) {
+			for ( int i = 0; i < 4; i++ ) {
+				const std::string source = watches.Source + "/tree" + std::to_string( i ) + "/a";
+				const std::string destination =
+					watches.Destination + "/dst" + std::to_string( i ) + "/a";
+				const std::string& from = inSource ? source : destination;
+				const std::string& to = inSource ? destination : source;
+				renameFile( from, to );
+				createFile( to + "/b/file.txt", "x" );
+			}
+			inSource = !inSource;
+		}
+	} );
+
+	TestListener churnListener;
+	int registered = 0;
+	for ( int i = 0; i < 40; i++ ) {
+		const std::string directory =
+			i % 2 ? watches.Source + "/tree" + std::to_string( i % 4 )
+				  : watches.Destination + "/dst" + std::to_string( i % 4 );
+		const efsw::WatchID id =
+			watches.Watcher.addWatch( directory, &churnListener, true, crossMoveOptions );
+		sleepMs( 5 );
+		if ( id > 0 ) {
+			registered++;
+			watches.Watcher.removeWatch( id );
+		}
+	}
+	stop = true;
+	mover.join();
+	sleepMs( 300 );
+	EXPECT_EQ( 40, registered );
+
+	// The original registrations still work.
+	EXPECT_TRUE( createFile( watches.Destination + "/final.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "final.txt" ) );
+}
+
+// A directory moved to another parent within one registration must be watched as part of its
+// new parent: deleting the former parent must not stop its events, and deleting the new
+// parent must remove it.
+UTEST( CrossWatchMoves, MoveWithinRegistrationFollowsNewParent ) {
+	const std::string root = getTemporaryDirectory() + "_xw_reparent";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/a" ) );
+	EXPECT_TRUE( createDirectory( root + "/a/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/b" ) );
+	TestListener listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true, crossMoveOptions );
+		ASSERT_GT( id, 0 );
+		watcher.watch();
+		sleepMs( 300 );
+
+		EXPECT_TRUE( renameFile( root + "/a/sub", root + "/b/sub" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "sub" ) ||
+					 listener.waitForActions( efsw::Actions::Add, "sub" ) );
+		sleepMs( 300 );
+		EXPECT_TRUE( createFile( root + "/b/sub/before.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "before.txt" ) );
+
+		// The former parent goes away.
+		EXPECT_TRUE( removeDirectory( root + "/a" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "a" ) );
+		sleepMs( 300 );
+		EXPECT_TRUE( createFile( root + "/b/sub/after.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+
+		// The new parent goes away, then comes back: it is watched again.
+		EXPECT_TRUE( removeDirectory( root + "/b" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "b" ) );
+		sleepMs( 300 );
+		EXPECT_TRUE( createDirectory( root + "/b" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "b" ) );
+		sleepMs( 300 );
+		EXPECT_TRUE( createFile( root + "/b/again.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "again.txt" ) );
+		watcher.removeWatch( id );
+	}
+	removeDirectory( root );
+}
+
+// A listener removes its own registration on the first event of an action that reports
+// several: inotify reports a file moved in from outside as Add then Modified. Nothing may be
+// delivered after the removal.
+UTEST( CrossWatchMoves, SelfRemovalStopsLaterCallbacksOfAnAction ) {
+	const std::string root = getTemporaryDirectory() + "_xw_selfremove";
+	const std::string outside = root + "_outside";
+	removeDirectory( root );
+	removeDirectory( outside );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( outside ) );
+	EXPECT_TRUE( createFile( outside + "/moved.txt", "x" ) );
+
+	struct RemovingListener : TestListener {
+		efsw::FileWatcher* Watcher{ NULL };
+		std::atomic<efsw::WatchID> Id{ 0 };
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			TestListener::handleFileAction( id, dir, file, action, old );
+			efsw::WatchID registered = Id.exchange( 0 );
+			if ( registered > 0 )
+				Watcher->removeWatch( registered );
+		}
+	} listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		listener.Watcher = &watcher;
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
+		ASSERT_GT( id, 0 );
+		watcher.watch();
+		sleepMs( 300 );
+		listener.Id = id;
+
+		EXPECT_TRUE( renameFile( outside + "/moved.txt", root + "/moved.txt" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "moved.txt" ) );
+		sleepMs( 500 );
+		EXPECT_EQ( 1u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+	removeDirectory( outside );
+}
+
+// A listener removes its registration from the first callback while a directory moved in is
+// being discovered; on inotify, with synthetic events, that is the Add of a file inside it,
+// before the watches of its subdirectories are installed. Nothing may be reported afterwards,
+// from any directory of the moved tree.
+UTEST( CrossWatchMoves, SelfRemovalDuringDiscoveryStopsTheTree ) {
+	const std::string root = getTemporaryDirectory() + "_xw_discovery";
+	const std::string outside = root + "_outside";
+	removeDirectory( root );
+	removeDirectory( outside );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( outside ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved" ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved/nested" ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved/nested/deeper" ) );
+	EXPECT_TRUE( createFile( outside + "/moved/seed.txt", "x" ) );
+
+	struct RemovingListener : TestListener {
+		efsw::FileWatcher* Watcher{ NULL };
+		std::atomic<efsw::WatchID> Id{ 0 };
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			TestListener::handleFileAction( id, dir, file, action, old );
+			efsw::WatchID registered = Id.exchange( 0 );
+			if ( registered > 0 )
+				Watcher->removeWatch( registered );
+		}
+	} listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		listener.Watcher = &watcher;
+		const efsw::WatchID id = watcher.addWatch(
+			root, &listener, true, { { efsw::Options::LinuxProduceSyntheticEvents, 1 } } );
+		ASSERT_GT( id, 0 );
+		watcher.watch();
+		sleepMs( 300 );
+		listener.Id = id;
+
+		EXPECT_TRUE( renameFile( outside + "/moved", root + "/moved" ) );
+		for ( int i = 0; i < 200 && listener.getEventCount() == 0; i++ )
+			sleepMs( 10 );
+		EXPECT_EQ( 1u, listener.getEventCount() );
+		sleepMs( 300 );
+		EXPECT_TRUE( createFile( root + "/moved/nested/after.txt", "x" ) );
+		EXPECT_TRUE( createFile( root + "/moved/nested/deeper/after.txt", "x" ) );
+		sleepMs( 500 );
+		EXPECT_EQ( 1u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+	removeDirectory( outside );
+}
+
+// directories() runs while a directory holding a registration moves in and out of another
+// registration, which renames the moved registration. Meant for ThreadSanitizer.
+UTEST( CrossWatchMoves, DirectoriesDuringMovesOfRegistration ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/holder" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/holder/inner" ) );
+	ASSERT_TRUE( watches.start( false, true ) );
+	TestListener innerListener;
+	const efsw::WatchID innerId = watches.Watcher.addWatch(
+		watches.Source + "/holder/inner", &innerListener, true, crossMoveOptions );
+	ASSERT_GT( innerId, 0 );
+
+	std::atomic<bool> stop{ false };
+	std::atomic<size_t> listed{ 0 };
+	std::thread reader( [&] {
+		while ( !stop )
+			listed += watches.Watcher.directories().size();
+	} );
+	for ( int i = 0; i < 20; i++ ) {
+		const bool out = i % 2 == 0;
+		renameFile( ( out ? watches.Source : watches.Destination ) + "/holder",
+					( out ? watches.Destination : watches.Source ) + "/holder" );
+		sleepMs( 20 );
+	}
+	stop = true;
+	reader.join();
+	EXPECT_GT( listed.load(), 0u );
+	watches.Watcher.removeWatch( innerId );
 }
 
 // A recursive destination must start covering a directory that arrives from a non-recursive
@@ -376,3 +660,50 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 	watcher.removeWatch( outerId );
 	removeDirectory( outer );
 }
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#include <efsw/FileWatcherKqueue.hpp>
+#include <efsw/System.hpp>
+#include <efsw/WatcherKqueue.hpp>
+
+namespace {
+
+/// A kqueue file watcher that can pretend its file descriptors ran out, so that new
+/// subdirectory watches fall back to the generic watcher.
+struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
+	using efsw::FileWatcherKqueue::FileWatcherKqueue;
+
+	void exhaust() { mFileDescriptorCount = static_cast<long>( efsw::System::getMaxFD() ); }
+};
+
+} // namespace
+
+// Retiring a kqueue watch must retire its generic fallback descendants, which report on their
+// own: after retirement, nothing is reported from them.
+UTEST( CrossWatchMoves, KqueueRetireReachesGenericFallbackWatches ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqretire";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue );
+		kqueue.exhaust();
+		watch.addAll();
+
+		// The fallback watch reports on its own while the root is active.
+		EXPECT_TRUE( createFile( root + "/sub/before.txt", "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "before.txt" ) );
+
+		watch.retire();
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/sub/after.txt", "x" ) );
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+}
+#endif

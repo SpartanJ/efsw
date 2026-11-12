@@ -172,10 +172,11 @@ class Agent {
 		record.action = static_cast<uint8_t>( action );
 		record.path = relative( watch, dir + filename );
 		if ( action == efsw::Actions::Moved ) {
-			bool absolute = !oldFilename.empty() &&
-							( oldFilename[0] == '/' ||
-							  ( oldFilename.size() > 1 && oldFilename[1] == ':' ) );
-			record.oldPath = relative( watch, absolute ? oldFilename : dir + oldFilename );
+			// A move from another watch has an absolute source path outside this watch, sent
+			// absolute, as the protocol documents.
+			std::string oldPath = normalizeSlashes( oldFilename );
+			record.oldPath =
+				relative( watch, EventPath::isAbsolute( oldPath ) ? oldPath : dir + oldFilename );
 		}
 		{
 			std::lock_guard<std::mutex> lock( mOutMutex );
@@ -230,17 +231,7 @@ class Agent {
 	}
 
 	static std::string relative( const Watch& watch, const std::string& path ) {
-		std::string normalized = normalizeSlashes( path );
-		const std::string& root =
-			!watch.realRoot.empty() &&
-					normalized.compare( 0, watch.realRoot.size(), watch.realRoot ) == 0
-				? watch.realRoot
-				: watch.root;
-		if ( normalized.compare( 0, root.size(), root ) == 0 )
-			normalized.erase( 0, root.size() );
-		while ( !normalized.empty() && normalized[normalized.size() - 1] == '/' )
-			normalized.erase( normalized.size() - 1 );
-		return normalized;
+		return EventPath::fromRoot( watch.root, watch.realRoot, normalizeSlashes( path ) );
 	}
 
 	/** Events of an efsw watch that is not registered yet are dropped: they happened before

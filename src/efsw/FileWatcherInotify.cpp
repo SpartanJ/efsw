@@ -77,6 +77,11 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 									  bool recursive, bool syntheticEvents,
 									  bool reportCrossDirectoryMoves, WatcherInotify* parent,
 									  bool fromInternalEvent ) {
+	// A listener removed the registration from a synthetic callback while its tree was being
+	// discovered: nothing more is installed below it, or it would never be removed.
+	if ( NULL != parent && parent->Removed )
+		return Errors::WatcherFailed;
+
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -187,16 +192,17 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 
 		if ( fromInternalEvent && parent != NULL && syntheticEvents ) {
 			for ( const auto& file : files ) {
+				if ( pWatch->Removed )
+					break;
 				if ( file.isRegularFile() || file.isDirectory() || file.isLink() ) {
-					pWatch->Listener->handleFileAction(
-						pWatch->ID, pWatch->Directory,
-						FileSystem::fileNameFromPath( file.Filepath ), Actions::Add );
+					notify( pWatch, FileSystem::fileNameFromPath( file.Filepath ), Actions::Add );
 				}
 			}
 		}
 
 		for ( const auto& cfi : files ) {
-			if ( !mInitOK )
+			// The registration may be removed by a synthetic callback of this discovery.
+			if ( !mInitOK || pWatch->Removed )
 				break;
 
 			if ( cfi.isDirectory() && cfi.isReadable() ) {
@@ -212,6 +218,23 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 void FileWatcherInotify::registerWatchLocked( WatcherInotify* watch ) {
 	mWatches[watch->InotifyID].push_back( watch );
 	mWatchesRef.emplace( watch->Directory, watch );
+	WatcherInotify* parent = watch->Parent;
+	watch->Parent = NULL;
+	setParentLocked( watch, parent );
+}
+
+void FileWatcherInotify::setParentLocked( WatcherInotify* watch, WatcherInotify* parent ) {
+	if ( WatcherInotify* old = watch->Parent ) {
+		std::vector<WatcherInotify*>& siblings = old->Children;
+		siblings[watch->IndexInParent] = siblings.back();
+		siblings[watch->IndexInParent]->IndexInParent = watch->IndexInParent;
+		siblings.pop_back();
+	}
+	watch->Parent = parent;
+	if ( parent ) {
+		watch->IndexInParent = parent->Children.size();
+		parent->Children.push_back( watch );
+	}
 }
 
 void FileWatcherInotify::unindexWatchLocked( WatcherInotify* watch ) {
@@ -246,24 +269,21 @@ void FileWatcherInotify::removeWatchLocked( WatcherInotify* watch, bool skipInot
 		return;
 
 	// Every watch below this one belongs to the same registration and must go with it;
-	// otherwise their Parent chain would point to a deleted watch. They are all found in one
-	// pass: searching again for the descendants of each removed watch would be quadratic.
-	std::vector<WatcherInotify*> children;
-	for ( const auto& native : mWatches ) {
-		for ( WatcherInotify* child : native.second ) {
-			if ( child != watch && !child->Removed && child->inParentTree( watch ) )
-				children.push_back( child );
-		}
-	}
+	// otherwise their Parent chain would point to a deleted watch. The subtree is walked
+	// through the child links, so the cost does not depend on the other watched directories.
+	std::vector<WatcherInotify*> subtree( 1, watch );
+	for ( size_t i = 0; i < subtree.size(); i++ )
+		subtree.insert( subtree.end(), subtree[i]->Children.begin(), subtree[i]->Children.end() );
 
 	unregisterWatchLocked( watch, skipInotifyRemove );
-	for ( WatcherInotify* child : children )
-		unregisterWatchLocked( child, false );
+	for ( size_t i = 1; i < subtree.size(); i++ )
+		unregisterWatchLocked( subtree[i], false );
 }
 
 void FileWatcherInotify::unregisterWatchLocked( WatcherInotify* watch, bool skipInotifyRemove ) {
 	watch->Removed = true;
 	unindexWatchLocked( watch );
+	setParentLocked( watch, NULL );
 
 	auto native = mWatches.find( watch->InotifyID );
 	if ( native != mWatches.end() ) {
@@ -355,6 +375,7 @@ Watcher* FileWatcherInotify::watcherContainsDirectory( std::string dir, WatchID 
 
 void FileWatcherInotify::renameWatchedDirectoriesLocked( const std::string& oldPath,
 														 const std::string& newPath ) {
+	std::vector<WatcherInotify*> tops;
 	for ( auto& native : mWatches ) {
 		for ( WatcherInotify* moved : native.second ) {
 			if ( -1 == String::strStartsWith( oldPath, moved->Directory ) )
@@ -363,12 +384,28 @@ void FileWatcherInotify::renameWatchedDirectoriesLocked( const std::string& oldP
 			if ( moved->Directory == oldPath ) {
 				moved->Directory = newPath;
 				moved->DirInfo = FileInfo( newPath );
+				tops.push_back( moved );
 			} else {
 				moved->Directory = newPath + moved->Directory.substr( oldPath.size() );
 				moved->DirInfo.Filepath = moved->Directory;
 			}
 			mWatchesRef.emplace( moved->Directory, moved );
 		}
+	}
+
+	// The moved directory has a new parent: its watches move under the parent's watch of the
+	// same registration, so they are removed with that parent instead of the former one.
+	// Registration roots stay roots.
+	std::string parentPath( newPath );
+	FileSystem::dirRemoveSlashAtEnd( parentPath );
+	parentPath = FileSystem::pathRemoveFileName( parentPath );
+	FileSystem::dirAddSlashAtEnd( parentPath );
+	for ( WatcherInotify* moved : tops ) {
+		if ( NULL == moved->Parent )
+			continue;
+		WatcherInotify* parent = findWatchLocked( parentPath, moved->ID );
+		if ( parent && parent != moved->Parent )
+			setParentLocked( moved, parent );
 	}
 }
 
@@ -686,7 +723,7 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 				watch->reportCrossDirectoryMoves = dst->reportCrossDirectoryMoves;
 				watch->OldFileName.clear();
 				if ( watch->Directory == newPath )
-					watch->Parent = dst;
+					setParentLocked( watch, dst );
 			}
 		} else {
 			// A non-recursive destination must not keep watching inside the moved tree.
@@ -726,8 +763,7 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 		}
 	}
 
-	dst->Listener->handleFileAction( dst->ID, dst->Directory, dstFile, Actions::Moved,
-									 src->Directory + srcFile );
+	notify( dst, dstFile, Actions::Moved, src->Directory + srcFile );
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
@@ -740,10 +776,10 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	std::string fpath( watch->Directory + filename );
 
 	if ( IN_Q_OVERFLOW & action ) {
-		watch->Listener->handleMissedFileActions( watch->ID, watch->Directory );
+		if ( !static_cast<WatcherInotify*>( watch )->Removed )
+			watch->Listener->handleMissedFileActions( watch->ID, watch->Directory );
 	} else if ( ( IN_CLOSE_WRITE & action ) || ( IN_MODIFY & action ) ) {
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
-										   Actions::Modified );
+		notify( watch, filename, Actions::Modified );
 	} else if ( IN_MOVED_TO & action ) {
 		/// If OldFileName doesn't exist means that the file has been moved from other folder, so we
 		/// just send the Add event
@@ -754,14 +790,10 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			// files are missed by inotify.
 			checkForNewWatcher( watch, fpath );
 
-			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
-											   Actions::Add );
-
-			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
-											   Actions::Modified );
+			notify( watch, filename, Actions::Add );
+			notify( watch, filename, Actions::Modified );
 		} else {
-			watch->Listener->handleFileAction( watch->ID, watch->Directory, filename,
-											   Actions::Moved, watch->OldFileName );
+			notify( watch, filename, Actions::Moved, watch->OldFileName );
 		}
 
 		if ( !watch->OldFileName.empty() && FileSystem::isDirectory( fpath ) ) {
@@ -781,11 +813,11 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	} else if ( IN_CREATE & action ) {
 		checkForNewWatcher( watch, fpath );
 
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Add );
+		notify( watch, filename, Actions::Add );
 	} else if ( IN_MOVED_FROM & action ) {
 		watch->OldFileName = filename;
 	} else if ( IN_DELETE & action ) {
-		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, Actions::Delete );
+		notify( watch, filename, Actions::Delete );
 
 		FileSystem::dirAddSlashAtEnd( fpath );
 
@@ -798,9 +830,18 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 	}
 }
 
+void FileWatcherInotify::notify( Watcher* watch, const std::string& filename, Action action,
+								 const std::string& oldFilename ) {
+	if ( !static_cast<WatcherInotify*>( watch )->Removed )
+		watch->Listener->handleFileAction( watch->ID, watch->Directory, filename, action,
+										   oldFilename );
+}
+
 std::vector<std::string> FileWatcherInotify::directories() {
 	std::vector<std::string> dirs;
 
+	// Directory is written under mWatchesLock when a watched directory moves.
+	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 
 	dirs.reserve( mRealWatches.size() );
@@ -847,6 +888,7 @@ std::string FileWatcherInotify::directoryComparisonPath( const std::string& dire
 }
 
 Errors::Error FileWatcherInotify::getWatchConflict( const std::string& directory, bool recursive ) {
+	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 	const std::string comparisonDirectory( directoryComparisonPath( directory ) );
 
@@ -872,6 +914,7 @@ Errors::Error FileWatcherInotify::getWatchConflict( const std::string& directory
 }
 
 bool FileWatcherInotify::pathInWatches( const std::string& path ) {
+	Lock lock( mWatchesLock );
 	Lock l( mRealWatchesLock );
 
 	/// pathInWatches() checks exact explicit user watches only.

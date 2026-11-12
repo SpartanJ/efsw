@@ -13,7 +13,10 @@
 		byte[payload_size]
 
 	Strings are encoded as uint32 byte_length followed by that many UTF-8 bytes (no terminator).
-	Paths always use '/' as separator; event paths are relative to the watched directory.
+	Paths always use '/' as separator; event paths are relative to the watched directory. The one
+	exception is the old_path of a move into the watched directory from another watch of the agent
+	that also has WatchReportCrossDirectoryMoves: it is the absolute source path, since it is not
+	inside the watched directory. EventPath::isAbsolute() tells both forms apart.
 
 	Messages (client -> agent: C, agent -> client: A):
 
@@ -267,7 +270,33 @@ class FrameParser {
 struct WatchEventRecord {
 	uint8_t action;
 	std::string path;
+	/** Relative like path, or absolute for a move from another watch (see the header). */
 	std::string oldPath;
+};
+
+/** The path forms of EVENT_BATCH records. */
+struct EventPath {
+	/** @return True for an absolute path: rooted at '/', or starting with a drive ("C:/"). */
+	static bool isAbsolute( const std::string& path ) {
+		return !path.empty() && ( path[0] == '/' || ( path.size() > 1 && path[1] == ':' ) );
+	}
+
+	/**
+		@return The path of an event: relative to the watched directory when inside it, else
+		unchanged. root, and realRoot when not empty, are the watched directory, ending with '/';
+		realRoot is root with its symlinks resolved, as some backends report it. path uses '/'.
+	*/
+	static std::string fromRoot( const std::string& root, const std::string& realRoot,
+								 std::string path ) {
+		const std::string& prefix =
+			!realRoot.empty() && path.compare( 0, realRoot.size(), realRoot ) == 0 ? realRoot
+																				  : root;
+		if ( path.compare( 0, prefix.size(), prefix ) == 0 )
+			path.erase( 0, prefix.size() );
+		while ( !path.empty() && path[path.size() - 1] == '/' )
+			path.erase( path.size() - 1 );
+		return path;
+	}
 };
 
 }} // namespace efsw::agent
