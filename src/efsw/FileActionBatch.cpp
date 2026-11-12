@@ -1,6 +1,7 @@
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileSystem.hpp>
 #include <algorithm>
+#include <deque>
 #include <iterator>
 #include <set>
 
@@ -12,14 +13,15 @@ constexpr size_t FileActionBatch::Moves::None;
 FileActionBatch::Event::Event( WatchID watchid, const std::string& directory,
 							   const std::string& filename, Action action,
 							   const std::string& oldFilename, const FileInfo& fileInfo,
-							   FileWatchListener* listener ) :
+							   FileWatchListener* listener, Watcher* owner ) :
 	Watch( watchid ),
 	Directory( directory ),
 	Filename( filename ),
 	ActionType( action ),
 	OldFilename( oldFilename ),
 	Info( fileInfo ),
-	Listener( listener ) {}
+	Listener( listener ),
+	Owner( owner ) {}
 
 void FileActionBatch::clear() {
 	mEvents.clear();
@@ -28,8 +30,9 @@ void FileActionBatch::clear() {
 void FileActionBatch::add( WatchID watchid, const std::string& directory,
 						   const std::string& filename, Action action,
 						   const std::string& oldFilename, const FileInfo& fileInfo,
-						   FileWatchListener* listener ) {
-	mEvents.emplace_back( watchid, directory, filename, action, oldFilename, fileInfo, listener );
+						   FileWatchListener* listener, Watcher* owner ) {
+	mEvents.emplace_back( watchid, directory, filename, action, oldFilename, fileInfo, listener,
+						  owner );
 }
 
 static bool metadataMatches( const FileInfo& source, const FileInfo& destination ) {
@@ -65,7 +68,8 @@ void FileActionBatch::beginPass() {
 
 void FileActionBatch::addSegment( Watcher* owner, size_t begin ) {
 	for ( size_t i = begin; i < mEvents.size(); i++ )
-		mEvents[i].Owner = owner;
+		if ( NULL == mEvents[i].Owner )
+			mEvents[i].Owner = owner;
 	mSegments.push_back( { owner, begin, mEvents.size() } );
 }
 
@@ -275,29 +279,126 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 	return !moves.SourceOf.empty();
 }
 
-void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves ) {
-	// Indexed, and the flags read at each step: a listener may cancel events of a removed watch.
-	for ( size_t i = 0; i < mEvents.size(); i++ ) {
-		const Event& event = mEvents[i];
-		if ( event.Canceled )
-			continue;
-		FileWatchListener* target = event.Listener ? event.Listener : listener;
-		if ( !target )
-			continue;
-		if ( moves ) {
-			auto move = moves->SourceOf.find( i );
-			if ( move != moves->SourceOf.end() ) {
-				const Event& source = mEvents[move->second];
-				target->handleFileAction( event.Watch, event.Directory, event.Filename,
-										  Actions::Moved,
-										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
-				continue;
-			}
-			if ( moves->MoveOf[i] != Moves::None )
-				continue;
-		}
+void FileActionBatch::deliverEvent( FileWatchListener* listener, size_t index ) {
+	const Event& event = mEvents[index];
+	if ( event.Canceled )
+		return;
+	FileWatchListener* target = event.Listener ? event.Listener : listener;
+	if ( target )
 		target->handleFileAction( event.Watch, event.Directory, event.Filename, event.ActionType,
 								  event.OldFilename );
+}
+
+void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves ) {
+	// Indexed, and the flags read at each step: a listener may cancel events of a removed watch.
+	if ( !moves ) {
+		for ( size_t i = 0; i < mEvents.size(); i++ )
+			deliverEvent( listener, i );
+		clear();
+		return;
+	}
+
+	// A move is delivered as a Moved event at its destination's position. Its source events,
+	// the Delete and those inside a moved directory, are reported by it, unless a listener
+	// removes the destination's registration before then: the move falls apart, and the source
+	// events are delivered on their own. Until the move is resolved, the later events of the
+	// source's registration wait behind them, so that every registration keeps its order: a
+	// Delete must not follow the Add of a new file at the same path. A move whose source is
+	// removed is still delivered: it happened while both were registered.
+	enum class MoveState : unsigned char { Delivered, Broken };
+	std::map<size_t, MoveState> resolved;
+	std::map<Watcher*, std::deque<size_t>> waiting;
+
+	// Whether a source event of a move waits for its destination. Not when both belong to one
+	// registration, which is removed with both, or when the move is resolved.
+	auto waitsForMove = [&]( size_t i ) {
+		const size_t move = moves->MoveOf[i];
+		return Moves::None != move && move != i && mEvents[move].Owner != mEvents[i].Owner &&
+			   resolved.find( move ) == resolved.end();
+	};
+
+	auto process = [&]( size_t i ) {
+		const size_t move = moves->MoveOf[i];
+		if ( Moves::None == move ) {
+			deliverEvent( listener, i );
+		} else if ( move != i ) {
+			auto state = resolved.find( move );
+			if ( state != resolved.end() && MoveState::Broken == state->second )
+				deliverEvent( listener, i );
+		} else if ( mEvents[i].Canceled ) {
+			resolved[i] = MoveState::Broken;
+		} else {
+			resolved[i] = MoveState::Delivered;
+			const Event& destination = mEvents[i];
+			FileWatchListener* target = destination.Listener ? destination.Listener : listener;
+			if ( target ) {
+				const Event& source = mEvents[moves->SourceOf.at( i )];
+				target->handleFileAction( destination.Watch, destination.Directory,
+										  destination.Filename, Actions::Moved,
+										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
+			}
+		}
+	};
+
+	// Delivers the waiting events that no longer wait, until none does.
+	auto release = [&]() {
+		for ( bool progress = true; progress; ) {
+			progress = false;
+			for ( auto it = waiting.begin(); it != waiting.end(); ) {
+				std::deque<size_t>& queue = it->second;
+				while ( !queue.empty() && !waitsForMove( queue.front() ) ) {
+					const size_t i = queue.front();
+					queue.pop_front();
+					process( i );
+					progress = true;
+				}
+				it = queue.empty() ? waiting.erase( it ) : std::next( it );
+			}
+		}
+	};
+
+	for ( size_t i = 0; i < mEvents.size(); i++ ) {
+		auto queue = waiting.find( mEvents[i].Owner );
+		if ( queue != waiting.end() || waitsForMove( i ) ) {
+			waiting[mEvents[i].Owner].push_back( i );
+			continue;
+		}
+		process( i );
+		if ( moves->MoveOf[i] == i && !waiting.empty() )
+			release();
+	}
+
+	// Moves whose registrations wait on each other, as crossed moves between two registrations
+	// do, are never resolved: they are delivered as ordinary events, in collection order, so
+	// that no source event is skipped for a destination that a later callback may still remove.
+	// The events of such a destination's registration inside a moved directory, which the loop
+	// above skipped, follow the directory's Add, which they come after.
+	if ( !waiting.empty() ) {
+		std::vector<size_t> rest;
+		for ( const auto& queue : waiting )
+			rest.insert( rest.end(), queue.second.begin(), queue.second.end() );
+		std::sort( rest.begin(), rest.end() );
+		std::set<size_t> unresolved;
+		for ( size_t i : rest ) {
+			const size_t move = moves->MoveOf[i];
+			if ( Moves::None != move && move != i && resolved.find( move ) == resolved.end() )
+				unresolved.insert( move );
+		}
+		for ( size_t i : rest ) {
+			const size_t move = moves->MoveOf[i];
+			if ( Moves::None == move || unresolved.find( move ) == unresolved.end() ) {
+				process( i );
+				continue;
+			}
+			deliverEvent( listener, i );
+			if ( move != i )
+				continue;
+			for ( size_t j = 0; j < i; j++ ) {
+				if ( moves->MoveOf[j] == i && mEvents[j].Owner == mEvents[i].Owner &&
+					 !std::binary_search( rest.begin(), rest.end(), j ) )
+					deliverEvent( listener, j );
+			}
+		}
 	}
 	clear();
 }

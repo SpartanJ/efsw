@@ -16,12 +16,18 @@ class WatcherGeneric : public Watcher {
 	/// When set, scans collect events into this batch, owned by the file watcher, which
 	/// dispatches it after scanning every watch. Set once when the watch is created.
 	FileActionBatch* SharedActionBatch{ NULL };
+	/// The registration that owns the events collected into SharedActionBatch: this watch,
+	/// or the kqueue watch it is a fallback descendant of. Set once when the watch is created.
+	Watcher* SharedActionOwner{ NULL };
 
 	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
 
 	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
 
 	void retire() override;
+
+	/// The watched directory was moved: every directory of the tree is now below directory.
+	void moveDirectory( const std::string& directory );
 
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
 					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );

@@ -14,9 +14,12 @@ class FileActionBatch {
   public:
 	void clear();
 
+	/// @param owner The registration that collects the event into a shared batch, the watch
+	/// its file watcher scans and removes: forget() cancels its events from then on, even
+	/// before its scan ends.
 	void add( WatchID watchid, const std::string& directory, const std::string& filename,
 			  Action action, const std::string& oldFilename, const FileInfo& fileInfo,
-			  FileWatchListener* listener = NULL );
+			  FileWatchListener* listener = NULL, Watcher* owner = NULL );
 
 	void dispatch( FileWatchListener* listener, bool detectMoves = true );
 
@@ -62,13 +65,13 @@ class FileActionBatch {
 		std::string OldFilename;
 		FileInfo Info;
 		FileWatchListener* Listener;
-		/// The scanned watch that collected the event, set by passes of a shared batch.
-		/// Identifies the watch even when IDs collide, as kqueue sub-watch IDs do.
-		Watcher* Owner{ NULL };
+		/// The registration that collected the event into a shared batch. Identifies it even
+		/// when IDs collide, as kqueue sub-watch IDs do.
+		Watcher* Owner;
 
 		Event( WatchID watchid, const std::string& directory, const std::string& filename,
 			   Action action, const std::string& oldFilename, const FileInfo& fileInfo,
-			   FileWatchListener* listener );
+			   FileWatchListener* listener, Watcher* owner );
 	};
 
 	/// The events one watch collected during a pass, as positions in mEvents. Owner is NULL
@@ -112,7 +115,11 @@ class FileActionBatch {
 	/// Delivers the events, as Moved events for moves when given. Clears the batch.
 	void deliver( FileWatchListener* listener, const Moves* moves );
 
-	/// Sets the owner of the events collected since begin, and records them as a segment.
+	/// Delivers one event as collected, unless it was canceled.
+	void deliverEvent( FileWatchListener* listener, size_t index );
+
+	/// Sets the owner of the events collected since begin that have none, and records them
+	/// as a segment.
 	void addSegment( Watcher* owner, size_t begin );
 
 	/// Scans again the earlier watches whose snapshot still lists the source of a later Add.

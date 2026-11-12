@@ -447,6 +447,10 @@ UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
 			getTemporaryDirectory() + "_xw_pending" + std::to_string( option );
 		removeDirectory( root );
 		EXPECT_TRUE( createDirectory( root ) );
+		// Changes inside subdirectories make kqueue report the subdirectories as modified,
+		// while it scans the rest of the tree.
+		EXPECT_TRUE( createDirectory( root + "/sub0" ) );
+		EXPECT_TRUE( createDirectory( root + "/sub1" ) );
 		RemovalListener listener;
 		{
 			efsw::FileWatcher watcher( useGeneric, 100 );
@@ -460,10 +464,13 @@ UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
 			sleepMs( 300 );
 			listener.RemoveOnFirstEvent = id;
 
+			burst( root + "/sub0", "pending" );
 			burst( root, "pending" );
+			burst( root + "/sub1", "pending" );
 			for ( int i = 0; i < 200 && !listener.Removed; i++ )
 				sleepMs( 10 );
 			EXPECT_TRUE( listener.Removed.load() );
+			burst( root + "/sub0", "later" );
 			burst( root, "later" );
 			sleepMs( 500 );
 		}
@@ -891,6 +898,8 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 #include <efsw/FileWatcherKqueue.hpp>
 #include <efsw/System.hpp>
 #include <efsw/WatcherKqueue.hpp>
+#include <efsw/FileActionBatch.hpp>
+#include <mutex>
 
 namespace {
 
@@ -967,6 +976,92 @@ UTEST( CrossWatchMoves, KqueueDescriptorCountReturnsAfterRemoval ) {
 			kqueue.removeWatch( id );
 			EXPECT_EQ( before, kqueue.descriptors() );
 		}
+	}
+	removeDirectory( root );
+}
+
+// A generic watch that replaces a kqueue subdirectory watch, when file descriptors ran out,
+// reports into the root's shared batch as part of the root's registration: its events wait for
+// the end of the pass, where moves to and from other registrations are paired, and removing the
+// root cancels them.
+UTEST( CrossWatchMoves, KqueueGenericFallbackReportsIntoTheSharedBatch ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqshared";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue, NULL, true );
+		watch.SharedActionBatch = &batch;
+		kqueue.exhaust();
+		watch.addAll();
+
+		EXPECT_TRUE( createFile( root + "/sub/shared.txt", "x" ) );
+		batch.beginPass();
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		batch.scanned( &watch );
+		batch.finishPass();
+		// Some file systems also report the subdirectory as modified.
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "shared.txt" ) );
+
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/sub/canceled.txt", "x" ) );
+		batch.beginPass();
+		watch.watch();
+		batch.forget( &watch );
+		batch.scanned( &watch );
+		batch.finishPass();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+}
+
+// A directory watched by generic watches, because file descriptors ran out, is renamed inside
+// a kqueue watch: the generic watches follow it, and report from its new path.
+UTEST( CrossWatchMoves, KqueueMoveDirectoryWithGenericFallbackWatches ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqmove";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/sub/inner" ) );
+	struct DirectoryListener : TestListener {
+		std::mutex Mutex;
+		std::vector<std::string> Directories;
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			{
+				std::lock_guard<std::mutex> lock( Mutex );
+				Directories.push_back( dir + file );
+			}
+			TestListener::handleFileAction( id, dir, file, action, old );
+		}
+	} listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue );
+		kqueue.exhaust();
+		watch.addAll();
+
+		EXPECT_TRUE( renameFile( root + "/sub", root + "/moved" ) );
+		watch.watch();
+		watch.watch();
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/moved/inner/after.txt", "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after.txt" ) );
+		bool reportedFromNewPath = false;
+		{
+			std::lock_guard<std::mutex> lock( listener.Mutex );
+			for ( const std::string& path : listener.Directories )
+				if ( path.find( "/moved/inner/after.txt" ) != std::string::npos )
+					reportedFromNewPath = true;
+		}
+		EXPECT_TRUE( reportedFromNewPath );
 	}
 	removeDirectory( root );
 }

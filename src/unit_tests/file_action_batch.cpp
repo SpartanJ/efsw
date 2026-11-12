@@ -40,7 +40,8 @@ class FakeWatch : public efsw::Watcher {
 	void watch() override {
 		Scans++;
 		for ( const Pending& event : Next )
-			Batch.add( ID, event.Directory, event.Filename, event.Action, "", event.Info, Listener );
+			Batch.add( ID, event.Directory, event.Filename, event.Action, "", event.Info, Listener,
+					   this );
 		Next.clear();
 	}
 
@@ -202,8 +203,9 @@ UTEST( FileActionBatch, SplitDeleteWaitsForTheNextPass ) {
 	EXPECT_EQ( 2, second.Scans );
 	EXPECT_EQ( 2, third.Scans );
 	EXPECT_EQ( 3u, listener.getEventCount() );
-	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Modified, "later.txt" ) );
-	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "file.txt" ) );
+	// The later events of the source watch wait until its move is resolved.
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "file.txt" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Modified, "later.txt" ) );
 	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Delete, "file.txt" ) );
 }
 
@@ -379,4 +381,250 @@ UTEST( FileActionBatch, RemovingOwnWatchCancelsLaterEvents ) {
 	runPass( batch, watches );
 	EXPECT_EQ( 1u, secondListener.getEventCount() );
 	EXPECT_EQ( 1u, listener.getEventCount() );
+}
+
+// A watch removed while its own scan is still collecting: the events it already collected are
+// canceled, though its scan has not ended yet.
+UTEST( FileActionBatch, ForgetCancelsEventsOfAScanInProgress ) {
+	START_BATCH_TEST();
+	first.report( "/a/", "a.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	second.report( "/b/", "b.txt", efsw::Actions::Modified, efsw::FileInfo() );
+
+	batch.beginPass();
+	first.watch();
+	batch.forget( &first );
+	batch.scanned( &first );
+	second.watch();
+	batch.scanned( &second );
+	third.watch();
+	batch.scanned( &third );
+	batch.finishPass();
+
+	EXPECT_EQ( 1u, listener.getEventCount() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Modified, "b.txt" ) );
+}
+
+namespace {
+
+/// Runs a pass where a listener removes the destination of a complete move during delivery.
+/// @param removerFirst Whether the remover's event comes before the move's Delete.
+void runCanceledDestination( bool removerFirst, MovedFile& file, int* utest_result ) {
+	efsw::FileActionBatch batch;
+	TestListener sourceListener;
+	TestListener destinationListener;
+	RemovingListener removerListener;
+	FakeWatch source( 1, batch, &sourceListener );
+	FakeWatch remover( 2, batch, &removerListener );
+	FakeWatch destination( 3, batch, &destinationListener );
+	removerListener.Batch = &batch;
+	removerListener.Removed = &destination;
+
+	efsw::FileInfo directory = file.make( "dir", true );
+	efsw::FileInfo child = file.make( "dir/child.txt" );
+	source.report( "/src/", "file.txt", efsw::Actions::Delete, file.Info );
+	source.report( "/src/", "dir", efsw::Actions::Delete, directory );
+	source.report( "/src/dir/", "child.txt", efsw::Actions::Delete, child );
+	remover.report( "/other/", "other.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	destination.report( "/dst/", "file.txt", efsw::Actions::Add, file.Info );
+	destination.report( "/dst/", "dir", efsw::Actions::Add, directory );
+
+	if ( removerFirst )
+		runPass( batch, { &remover, &source, &destination } );
+	else
+		runPass( batch, { &source, &remover, &destination } );
+
+	// The source still gets its Deletes, including the one inside the moved directory; the
+	// removed destination gets nothing.
+	EXPECT_EQ( 3u, sourceListener.getEventCount() );
+	EXPECT_NE( -1, sourceListener.indexOf( efsw::Actions::Delete, "file.txt" ) );
+	EXPECT_NE( -1, sourceListener.indexOf( efsw::Actions::Delete, "dir" ) );
+	EXPECT_NE( -1, sourceListener.indexOf( efsw::Actions::Delete, "child.txt" ) );
+	EXPECT_EQ( 0u, destinationListener.getEventCount() );
+}
+
+} // namespace
+
+// A listener removes the destination of a move that the batch already matched: the move
+// falls apart, and the source, still registered, gets its Deletes. Both orders of the remover
+// and the source in the batch.
+UTEST( FileActionBatch, CanceledDestinationReleasesTheSourceDeletes ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runCanceledDestination( true, file, utest_result );
+	runCanceledDestination( false, file, utest_result );
+}
+
+// A listener removes the source of a matched move: the move happened while both were
+// registered, so the destination still gets its Moved, and the source nothing more.
+UTEST( FileActionBatch, CanceledSourceStillDeliversTheMove ) {
+	START_BATCH_TEST();
+	TestListener sourceListener;
+	TestListener destinationListener;
+	RemovingListener removerListener;
+	first.Listener = &removerListener;
+	second.Listener = &sourceListener;
+	third.Listener = &destinationListener;
+	removerListener.Batch = &batch;
+	removerListener.Removed = &second;
+	first.report( "/other/", "other.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	second.report( "/src/", "file.txt", efsw::Actions::Delete, file.Info );
+	third.report( "/dst/", "file.txt", efsw::Actions::Add, file.Info );
+
+	runPass( batch, watches );
+
+	EXPECT_EQ( 0u, sourceListener.getEventCount() );
+	EXPECT_EQ( 1u, destinationListener.getEventCount() );
+	EXPECT_EQ( 0, destinationListener.indexOf( efsw::Actions::Moved, "file.txt" ) );
+}
+
+namespace {
+
+/// A source watch deletes file.txt, moved to the destination watch, then gets a new file at
+/// the same path, with another identity. A listener removes the destination during delivery.
+void runSourcePathReuse( bool heldDelete, MovedFile& file, int* utest_result ) {
+	efsw::FileActionBatch batch;
+	TestListener sourceListener;
+	TestListener destinationListener;
+	RemovingListener removerListener;
+	FakeWatch remover( 1, batch, &removerListener );
+	FakeWatch source( 2, batch, &sourceListener );
+	FakeWatch destination( 3, batch, &destinationListener );
+	removerListener.Batch = &batch;
+	removerListener.Removed = &destination;
+	efsw::FileInfo replacement = file.make( heldDelete ? "replacement1.txt" : "replacement2.txt" );
+
+	source.report( "/src/", "file.txt", efsw::Actions::Delete, file.Info );
+	if ( heldDelete ) {
+		// The Delete waits for the next pass, where everything else happens.
+		runPass( batch, { &remover, &source, &destination } );
+		EXPECT_EQ( 0u, sourceListener.getEventCount() );
+	}
+	remover.report( "/other/", "other.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	source.report( "/src/", "file.txt", efsw::Actions::Add, replacement );
+	destination.report( "/dst/", "file.txt", efsw::Actions::Add, file.Info );
+	if ( heldDelete )
+		runPass( batch, { &remover, &source, &destination } );
+	else
+		runPass( batch, { &source, &remover, &destination } );
+
+	// The source sees the original file go, then the new one come.
+	auto events = sourceListener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[0] ) );
+	EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[1] ) );
+	EXPECT_EQ( 0u, destinationListener.getEventCount() );
+}
+
+} // namespace
+
+// The move falls apart after its source Delete was skipped: the Delete is delivered before the
+// later events of its watch, so a new file at the same path is not reported as deleted. With
+// the Delete held from the previous pass, and within one pass.
+UTEST( FileActionBatch, BrokenMoveKeepsTheSourceOrder ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runSourcePathReuse( true, file, utest_result );
+	runSourcePathReuse( false, file, utest_result );
+}
+
+// The same with the move intact: the destination gets the Moved, and the source the new file,
+// once the move is resolved.
+UTEST( FileActionBatch, IntactMoveReleasesTheLaterSourceEvents ) {
+	START_BATCH_TEST();
+	TestListener sourceListener;
+	TestListener destinationListener;
+	first.Listener = &sourceListener;
+	third.Listener = &destinationListener;
+	efsw::FileInfo replacement = file.make( "replacement.txt" );
+	first.report( "/src/", "file.txt", efsw::Actions::Delete, file.Info );
+	first.report( "/src/", "file.txt", efsw::Actions::Add, replacement );
+	second.report( "/other/", "other.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	third.report( "/dst/", "file.txt", efsw::Actions::Add, file.Info );
+
+	runPass( batch, watches );
+
+	auto events = sourceListener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[0] ) );
+	EXPECT_EQ( 1u, destinationListener.getEventCount() );
+	EXPECT_EQ( 0, destinationListener.indexOf( efsw::Actions::Moved, "file.txt" ) );
+	EXPECT_EQ( 1u, listener.getEventCount() );
+}
+
+namespace {
+
+/// Crossed moves between two watches in one pass: one file from A to B, another from B to A.
+/// Each watch's events wait for the other's move, so the moves are delivered as ordinary
+/// events. @param cancel Whether A's listener removes B on its first event.
+/// @param reuse Whether A gets a new file at the path the first file left.
+/// @param directory Whether the first moved entry is a directory with a file inside.
+void runCrossedMoves( bool cancel, bool reuse, bool directory, MovedFile& file,
+					  int* utest_result ) {
+	efsw::FileActionBatch batch;
+	RemovingListener aListener;
+	TestListener bListener;
+	FakeWatch a( 1, batch, &aListener );
+	FakeWatch b( 2, batch, &bListener );
+	if ( cancel ) {
+		aListener.Batch = &batch;
+		aListener.Removed = &b;
+	}
+	const std::string tag =
+		std::to_string( cancel ) + std::to_string( reuse ) + std::to_string( directory );
+	efsw::FileInfo first = directory ? file.make( "dir" + tag, true ) : file.Info;
+	efsw::FileInfo child = file.make( directory ? "dir" + tag + "/child.txt" : "child" + tag );
+	efsw::FileInfo second = file.make( "second" + tag + ".txt" );
+	efsw::FileInfo replacement = file.make( "replacement" + tag + ".txt" );
+
+	a.report( "/A/", "a", efsw::Actions::Delete, first );
+	if ( directory )
+		a.report( "/A/a/", "child.txt", efsw::Actions::Delete, child );
+	if ( reuse )
+		a.report( "/A/", "a", efsw::Actions::Add, replacement );
+	a.report( "/A/", "b", efsw::Actions::Add, second );
+	b.report( "/B/", "b", efsw::Actions::Delete, second );
+	b.report( "/B/", "a", efsw::Actions::Add, first );
+	runPass( batch, { &a, &b } );
+
+	// A gets every event of its own, in order: nothing is lost to the removal of B.
+	std::vector<std::pair<efsw::Action, std::string>> expected;
+	expected.push_back( { efsw::Actions::Delete, "a" } );
+	if ( directory )
+		expected.push_back( { efsw::Actions::Delete, "child.txt" } );
+	if ( reuse )
+		expected.push_back( { efsw::Actions::Add, "a" } );
+	expected.push_back( { efsw::Actions::Add, "b" } );
+	auto events = aListener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].first, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].second == std::get<1>( events[i] ) );
+	}
+
+	if ( cancel ) {
+		EXPECT_EQ( 0u, bListener.getEventCount() );
+	} else {
+		auto bEvents = bListener.getEvents();
+		ASSERT_EQ( 2u, bEvents.size() );
+		EXPECT_EQ( efsw::Actions::Delete, std::get<0>( bEvents[0] ) );
+		EXPECT_EQ( efsw::Actions::Add, std::get<0>( bEvents[1] ) );
+	}
+}
+
+} // namespace
+
+UTEST( FileActionBatch, CrossedMovesAreDeliveredAsOrdinaryEvents ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runCrossedMoves( false, false, false, file, utest_result );
+	runCrossedMoves( false, true, false, file, utest_result );
+	runCrossedMoves( false, false, true, file, utest_result );
+}
+
+UTEST( FileActionBatch, CrossedMovesKeepSourceEventsWhenTheOtherWatchIsRemoved ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runCrossedMoves( true, false, false, file, utest_result );
+	runCrossedMoves( true, true, false, file, utest_result );
+	runCrossedMoves( true, false, true, file, utest_result );
 }

@@ -373,7 +373,7 @@ void WatcherKqueue::handleAction( const std::string& filename, efsw::Action acti
 		FileActionBatch* batch = shared ? shared : &rootWatch->mActionBatch;
 		batch->add( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
 					FileSystem::fileNameFromPath( oldFilename ), fileInfo,
-					shared ? Listener : NULL );
+					shared ? Listener : NULL, shared ? rootWatch : NULL );
 	} else {
 		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
 									FileSystem::fileNameFromPath( oldFilename ) );
@@ -388,10 +388,10 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 }
 
 void WatcherKqueue::sendDirChanged() {
-	if ( NULL != mParent && !root()->Retired ) {
-		Listener->handleFileAction( mParent->ID, mParent->Directory,
-									FileSystem::fileNameFromPath( Directory ), Actions::Modified );
-	}
+	// Reported by the parent like its other entries: collected while the root collects, so
+	// that no listener runs in the middle of the root's scan.
+	if ( NULL != mParent )
+		mParent->handleFolderAction( Directory, Actions::Modified, "", mDirSnap.DirectoryInfo );
 }
 
 void WatcherKqueue::watch() {
@@ -549,8 +549,16 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 		std::string npath( newPath );
 		FileSystem::dirAddSlashAtEnd( npath );
 
+		// Subdirectories are watched by kqueue watches, or by generic watches when file
+		// descriptors ran out, which update their own tree.
 		std::vector<std::pair<WatcherKqueue*, std::string>> stack;
-		stack.push_back( std::make_pair( static_cast<WatcherKqueue*>( watch ), npath ) );
+		auto moveWatch = [&stack]( Watcher* moved, const std::string& path ) {
+			if ( WatcherKqueue* kqueueWatch = dynamic_cast<WatcherKqueue*>( moved ) )
+				stack.push_back( std::make_pair( kqueueWatch, path ) );
+			else if ( WatcherGeneric* genericWatch = dynamic_cast<WatcherGeneric*>( moved ) )
+				genericWatch->moveDirectory( path );
+		};
+		moveWatch( watch, npath );
 
 		while ( !stack.empty() ) {
 			WatcherKqueue* wkq = stack.back().first;
@@ -569,11 +577,11 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 			qsort( &wkq->mChangeList[1], wkq->mChangeListCount, sizeof( KEvent ), comparator );
 
 			for ( auto& childPair : wkq->mWatches ) {
-				WatcherKqueue* childWkq = static_cast<WatcherKqueue*>( childPair.second );
-				std::string childFolderName = FileSystem::fileNameFromPath( childWkq->Directory );
+				std::string childFolderName =
+					FileSystem::fileNameFromPath( childPair.second->Directory );
 				std::string childNewPath = curNPath + childFolderName;
 				FileSystem::dirAddSlashAtEnd( childNewPath );
-				stack.push_back( std::make_pair( childWkq, childNewPath ) );
+				moveWatch( childPair.second, childNewPath );
 			}
 		}
 	}
@@ -636,10 +644,7 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
-				WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
-															recursive, mReportCrossDirectoryMoves );
-
-				mWatches.insert( std::make_pair( mLastWatchID, watch ) );
+				addGenericWatch( dir, watcher, recursive );
 			} else {
 				return Errors::Log::createLastError( Errors::Unspecified, link );
 			}
@@ -648,13 +653,22 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 		efDEBUG( "Using a generic watcher, file descriptor limit reached: %ld\n",
 				 mWatcher->mFileDescriptorCount.load() );
 
-		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
-													recursive, mReportCrossDirectoryMoves );
-
-		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
+		addGenericWatch( dir, watcher, recursive );
 	}
 
 	return mLastWatchID;
+}
+
+void WatcherKqueue::addGenericWatch( const std::string& dir, FileWatchListener* watcher,
+									 bool recursive ) {
+	WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive,
+												mReportCrossDirectoryMoves );
+	// It reports like the rest of its tree: into the root's shared batch, as part of the root's
+	// registration, so that its moves to and from other registrations are paired.
+	WatcherKqueue* rootWatch = root();
+	watch->SharedActionBatch = rootWatch->SharedActionBatch;
+	watch->SharedActionOwner = rootWatch;
+	mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 }
 
 bool WatcherKqueue::initOK() {

@@ -53,6 +53,9 @@ class WatcherKqueue : public Watcher {
 	/// inside it. addAll() adds their watches without reporting them.
 	void reportDirectories();
 
+	/// Adds a generic watch for a subdirectory, when file descriptors ran out.
+	void addGenericWatch( const std::string& dir, FileWatchListener* watcher, bool recursive );
+
 	void removeAll();
 
 	WatchID watchingDirectory( std::string dir );

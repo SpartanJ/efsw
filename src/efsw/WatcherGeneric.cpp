@@ -58,6 +58,12 @@ bool WatcherGeneric::pathInWatches( std::string path ) {
 	return DirWatch->pathInWatches( path );
 }
 
+void WatcherGeneric::moveDirectory( const std::string& directory ) {
+	Directory = directory;
+	FileSystem::dirAddSlashAtEnd( Directory );
+	DirWatch->resetDirectory( Directory );
+}
+
 void WatcherGeneric::retire() {
 	Watcher::retire();
 	mActionBatch.cancel();
@@ -71,7 +77,8 @@ void WatcherGeneric::handleAction( const std::string& directory, const std::stri
 	if ( mCollectActions ) {
 		FileActionBatch* batch = SharedActionBatch ? SharedActionBatch : &mActionBatch;
 		batch->add( ID, directory, filename, action, oldFilename, fileInfo,
-					SharedActionBatch ? Listener : NULL );
+					SharedActionBatch ? Listener : NULL,
+					SharedActionBatch ? ( SharedActionOwner ? SharedActionOwner : this ) : NULL );
 	} else {
 		Listener->handleFileAction( ID, directory, filename, action, oldFilename );
 	}
