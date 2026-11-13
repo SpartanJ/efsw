@@ -419,6 +419,11 @@ void FileWatcherInotify::run() {
 	// coalesce pairs fully contained in this batch. Retaining a source across
 	// reads would require retaining every newer event too; otherwise a delayed
 	// Delete or Moved could be delivered after an event that invalidated it.
+	//
+	// The kernel queues the two events of a rename one after the other, so a read
+	// may take IN_MOVED_FROM before IN_MOVED_TO is queued. When a batch ends with
+	// a source whose destination is not in it, nothing newer was read yet: the
+	// next read is appended to the batch, waiting for it a little.
 	struct BatchEvent {
 		int wd;
 		uint32_t mask;
@@ -516,17 +521,36 @@ void FileWatcherInotify::run() {
 			if ( len != -1 ) {
 				events.clear();
 				movePairs.clear();
-				ssize_t i = 0;
 
-				while ( i < len ) {
-					struct inotify_event* pevent = (struct inotify_event*)&buff[i];
-					events.push_back( BatchEvent{ pevent->wd, pevent->mask, pevent->cookie,
-												  std::string( (char*)pevent->name ) } );
+				auto parse = [&]( ssize_t length ) {
+					ssize_t i = 0;
+					while ( i < length ) {
+						struct inotify_event* pevent = (struct inotify_event*)&buff[i];
+						events.push_back( BatchEvent{ pevent->wd, pevent->mask, pevent->cookie,
+													  std::string( (char*)pevent->name ) } );
 
-					if ( pevent->mask & IN_MOVED_TO )
-						movePairs[pevent->cookie].destinationWd = pevent->wd;
+						if ( pevent->mask & IN_MOVED_TO )
+							movePairs[pevent->cookie].destinationWd = pevent->wd;
 
-					i += sizeof( struct inotify_event ) + pevent->len;
+						i += sizeof( struct inotify_event ) + pevent->len;
+					}
+				};
+				parse( len );
+
+				// A source moved out of the watched directories has no destination: its
+				// Delete waits for this long when it ends a batch. The destination of a
+				// rename is normally queued within microseconds.
+				const int moveDestinationWaitMs = 20;
+				while ( !events.empty() && ( events.back().mask & IN_MOVED_FROM ) &&
+						!movePairs.count( events.back().cookie ) ) {
+					pollfd more = { mFD, POLLIN, 0 };
+					if ( poll( &more, 1, moveDestinationWaitMs ) <= 0 ||
+						 !( more.revents & POLLIN ) )
+						break;
+					const ssize_t extra = read( mFD, buff, BUFF_SIZE );
+					if ( extra <= 0 )
+						break;
+					parse( extra );
 				}
 
 				// Replay in kernel queue order. A source is deferred only when the
