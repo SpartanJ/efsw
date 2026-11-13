@@ -4,6 +4,7 @@
 #include <deque>
 #include <iterator>
 #include <set>
+#include <unordered_map>
 
 namespace efsw {
 
@@ -48,14 +49,6 @@ static bool metadataMatches( const FileInfo& source, const FileInfo& destination
 		return true;
 	return source.ModificationTime == destination.ModificationTime &&
 		   source.Size == destination.Size;
-}
-
-static bool pathContains( const std::string& directory, const std::string& path ) {
-	if ( directory.empty() || path.size() <= directory.size() ||
-		 path.compare( 0, directory.size(), directory ) != 0 )
-		return false;
-	return directory[directory.size() - 1] == FileSystem::getOSSlash() ||
-		   path[directory.size()] == FileSystem::getOSSlash();
 }
 
 void FileActionBatch::beginPass() {
@@ -146,7 +139,7 @@ std::vector<bool> FileActionBatch::rescanMoveSources( HalvesMap& halves ) {
 bool FileActionBatch::holdMoveSources( const HalvesMap& halves,
 									   const std::vector<bool>& rescanned, const Moves& moves ) {
 	// For each watch, the position of its first held event.
-	std::map<Watcher*, size_t> holdFrom;
+	std::unordered_map<Watcher*, size_t> holdFrom;
 	// Whether a watch scanned before the segment was not scanned again since. When the
 	// segment has a Delete, that watch may only see the destination on its next scan.
 	bool canWait = false;
@@ -213,7 +206,7 @@ void FileActionBatch::finishPass() {
 
 bool FileActionBatch::matchMoves( Moves& moves ) const {
 	moves.MoveOf.assign( mEvents.size(), Moves::None );
-	moves.SourceOf.clear();
+	moves.SourceOf.assign( mEvents.size(), Moves::None );
 	bool hasAdd = false;
 	bool hasDelete = false;
 	for ( const Event& event : mEvents ) {
@@ -232,7 +225,7 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 		std::vector<size_t> Deleted;
 	};
 
-	std::map<FileIdentity, Candidates> candidates;
+	std::unordered_map<FileIdentity, Candidates, FileIdentityHash> candidates;
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		const Event& event = mEvents[i];
 		if ( event.Info.Inode == 0 ||
@@ -246,13 +239,49 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			identity.Deleted.push_back( i );
 	}
 
+	// The Add and Delete positions of each identity with one of each, by Add position: in
+	// collection order, which decides the moved directory a nested move's events belong to.
+	std::vector<std::pair<size_t, size_t>> pairs;
 	for ( const auto& identity : candidates ) {
 		const Candidates& entries = identity.second;
-		if ( entries.Created.size() != 1 || entries.Deleted.size() != 1 )
-			continue;
+		if ( entries.Created.size() == 1 && entries.Deleted.size() == 1 )
+			pairs.emplace_back( entries.Created[0], entries.Deleted[0] );
+	}
+	std::sort( pairs.begin(), pairs.end() );
 
-		const Event& source = mEvents[entries.Deleted[0]];
-		const Event& destination = mEvents[entries.Created[0]];
+	// The Deletes and Adds by path, built for the first directory move: the events inside a
+	// directory are a range of each.
+	std::vector<size_t> deletesByPath;
+	std::vector<size_t> addsByPath;
+	auto byPath = [&]( size_t a, size_t b ) {
+		return mEvents[a].Info.Filepath < mEvents[b].Info.Filepath;
+	};
+	// The events inside a moved directory, not part of another move, belong to its move.
+	auto claimContents = [&]( const std::vector<size_t>& byPathIndex, const std::string& directory,
+							  size_t move ) {
+		if ( directory.empty() )
+			return;
+		std::string prefix( directory );
+		if ( prefix[prefix.size() - 1] != FileSystem::getOSSlash() )
+			prefix += FileSystem::getOSSlash();
+		auto it = std::lower_bound(
+			byPathIndex.begin(), byPathIndex.end(), prefix,
+			[&]( size_t i, const std::string& path ) { return mEvents[i].Info.Filepath < path; } );
+		for ( ; it != byPathIndex.end(); ++it ) {
+			const std::string& path = mEvents[*it].Info.Filepath;
+			if ( path.compare( 0, prefix.size(), prefix ) != 0 )
+				break;
+			if ( path.size() > prefix.size() && moves.MoveOf[*it] == Moves::None )
+				moves.MoveOf[*it] = move;
+		}
+	};
+
+	bool hasMove = false;
+	for ( const auto& pair : pairs ) {
+		const size_t created = pair.first;
+		const size_t deleted = pair.second;
+		const Event& source = mEvents[deleted];
+		const Event& destination = mEvents[created];
 		if ( source.Directory == destination.Directory ||
 			 !source.Info.sameInode( destination.Info ) ||
 			 ( source.Info.isRegularFile() &&
@@ -260,23 +289,27 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			 !metadataMatches( source.Info, destination.Info ) )
 			continue;
 
-		moves.MoveOf[entries.Deleted[0]] = entries.Created[0];
-		moves.MoveOf[entries.Created[0]] = entries.Created[0];
-		moves.SourceOf[entries.Created[0]] = entries.Deleted[0];
+		moves.MoveOf[deleted] = created;
+		moves.MoveOf[created] = created;
+		moves.SourceOf[created] = deleted;
+		hasMove = true;
 
 		if ( source.Info.isDirectory() ) {
-			for ( size_t i = 0; i < mEvents.size(); i++ ) {
-				if ( moves.MoveOf[i] != Moves::None )
-					continue;
-				if ( ( mEvents[i].ActionType == Actions::Delete &&
-					   pathContains( source.Info.Filepath, mEvents[i].Info.Filepath ) ) ||
-					 ( mEvents[i].ActionType == Actions::Add &&
-					   pathContains( destination.Info.Filepath, mEvents[i].Info.Filepath ) ) )
-					moves.MoveOf[i] = entries.Created[0];
+			if ( deletesByPath.empty() && addsByPath.empty() ) {
+				for ( size_t i = 0; i < mEvents.size(); i++ ) {
+					if ( mEvents[i].ActionType == Actions::Delete )
+						deletesByPath.push_back( i );
+					else if ( mEvents[i].ActionType == Actions::Add )
+						addsByPath.push_back( i );
+				}
+				std::sort( deletesByPath.begin(), deletesByPath.end(), byPath );
+				std::sort( addsByPath.begin(), addsByPath.end(), byPath );
 			}
+			claimContents( deletesByPath, source.Info.Filepath, created );
+			claimContents( addsByPath, destination.Info.Filepath, created );
 		}
 	}
-	return !moves.SourceOf.empty();
+	return hasMove;
 }
 
 void FileActionBatch::deliverEvent( FileWatchListener* listener, size_t index ) {
@@ -305,16 +338,17 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	// source's registration wait behind them, so that every registration keeps its order: a
 	// Delete must not follow the Add of a new file at the same path. A move whose source is
 	// removed is still delivered: it happened while both were registered.
-	enum class MoveState : unsigned char { Delivered, Broken };
-	std::map<size_t, MoveState> resolved;
-	std::map<Watcher*, std::deque<size_t>> waiting;
+	enum class MoveState : unsigned char { Unresolved, Delivered, Broken };
+	// By the Add position of each move.
+	std::vector<MoveState> state( mEvents.size(), MoveState::Unresolved );
+	std::unordered_map<Watcher*, std::deque<size_t>> waiting;
 
 	// Whether a source event of a move waits for its destination. Not when both belong to one
 	// registration, which is removed with both, or when the move is resolved.
 	auto waitsForMove = [&]( size_t i ) {
 		const size_t move = moves->MoveOf[i];
 		return Moves::None != move && move != i && mEvents[move].Owner != mEvents[i].Owner &&
-			   resolved.find( move ) == resolved.end();
+			   MoveState::Unresolved == state[move];
 	};
 
 	auto process = [&]( size_t i ) {
@@ -322,17 +356,16 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		if ( Moves::None == move ) {
 			deliverEvent( listener, i );
 		} else if ( move != i ) {
-			auto state = resolved.find( move );
-			if ( state != resolved.end() && MoveState::Broken == state->second )
+			if ( MoveState::Broken == state[move] )
 				deliverEvent( listener, i );
 		} else if ( mEvents[i].Canceled ) {
-			resolved[i] = MoveState::Broken;
+			state[i] = MoveState::Broken;
 		} else {
-			resolved[i] = MoveState::Delivered;
+			state[i] = MoveState::Delivered;
 			const Event& destination = mEvents[i];
 			FileWatchListener* target = destination.Listener ? destination.Listener : listener;
 			if ( target ) {
-				const Event& source = mEvents[moves->SourceOf.at( i )];
+				const Event& source = mEvents[moves->SourceOf[i]];
 				target->handleFileAction( destination.Watch, destination.Directory,
 										  destination.Filename, Actions::Moved,
 										  FileSystem::canonicalSourcePath( source.Info.Filepath ) );
@@ -378,26 +411,35 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		for ( const auto& queue : waiting )
 			rest.insert( rest.end(), queue.second.begin(), queue.second.end() );
 		std::sort( rest.begin(), rest.end() );
-		std::set<size_t> unresolved;
+		std::vector<bool> inRest( mEvents.size(), false );
+		std::vector<bool> unresolved( mEvents.size(), false );
 		for ( size_t i : rest ) {
+			inRest[i] = true;
 			const size_t move = moves->MoveOf[i];
-			if ( Moves::None != move && move != i && resolved.find( move ) == resolved.end() )
-				unresolved.insert( move );
+			if ( Moves::None != move && move != i && MoveState::Unresolved == state[move] )
+				unresolved[move] = true;
+		}
+		// The skipped events of each unresolved destination's registration, in order.
+		std::unordered_map<size_t, std::vector<size_t>> skipped;
+		for ( size_t j = 0; j < mEvents.size(); j++ ) {
+			const size_t move = moves->MoveOf[j];
+			if ( Moves::None != move && move != j && unresolved[move] && !inRest[j] &&
+				 mEvents[j].Owner == mEvents[move].Owner )
+				skipped[move].push_back( j );
 		}
 		for ( size_t i : rest ) {
 			const size_t move = moves->MoveOf[i];
-			if ( Moves::None == move || unresolved.find( move ) == unresolved.end() ) {
+			if ( Moves::None == move || !unresolved[move] ) {
 				process( i );
 				continue;
 			}
 			deliverEvent( listener, i );
 			if ( move != i )
 				continue;
-			for ( size_t j = 0; j < i; j++ ) {
-				if ( moves->MoveOf[j] == i && mEvents[j].Owner == mEvents[i].Owner &&
-					 !std::binary_search( rest.begin(), rest.end(), j ) )
+			auto members = skipped.find( i );
+			if ( members != skipped.end() )
+				for ( size_t j : members->second )
 					deliverEvent( listener, j );
-			}
 		}
 	}
 	clear();

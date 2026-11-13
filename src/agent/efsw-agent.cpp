@@ -17,11 +17,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if defined( _WIN32 )
@@ -123,9 +123,8 @@ class Agent {
 		// Watchers must stop (joining their threads) before listeners and state go away.
 		{
 			std::lock_guard<std::mutex> lock( mWatchersMutex );
-			for ( std::map<int, Slot>::iterator it = mWatchers.begin(); it != mWatchers.end();
-				  ++it )
-				it->second.watcher.reset();
+			for ( auto& slot : mWatchers )
+				slot.second.watcher.reset();
 		}
 		{
 			std::lock_guard<std::mutex> lock( mOutMutex );
@@ -214,6 +213,21 @@ class Agent {
 		std::string realRoot;
 	};
 
+	/** Hashes an efsw watch: the key of its file watcher, and its ID there. */
+	struct EfswWatchHash {
+		size_t operator()( const std::pair<int, efsw::WatchID>& watch ) const {
+			return std::hash<efsw::WatchID>()( watch.second ) ^
+				   ( std::hash<int>()( watch.first ) * 0x9E3779B97F4A7C15ull );
+		}
+	};
+
+	/** Agent watch IDs, by efsw watch. */
+	typedef std::unordered_map<std::pair<int, efsw::WatchID>, uint32_t, EfswWatchHash>
+		EfswWatches;
+	/** Events not written yet, by agent watch ID. Batches of different watches are written in
+	 * no particular order: each batch keeps its watch's order, the only one clients rely on. */
+	typedef std::unordered_map<uint32_t, std::vector<WatchEventRecord> > PendingEvents;
+
 	static std::string resolvedRoot( const std::string& path, const std::string& root ) {
 #if defined( __APPLE__ )
 		char resolved[PATH_MAX];
@@ -238,8 +252,7 @@ class Agent {
 	 * WATCH_OK was sent, and clients list the directory only after WATCH_OK. */
 	bool lookup( int key, efsw::WatchID efswId, uint32_t& watchId, Watch& watch ) {
 		std::lock_guard<std::mutex> lock( mWatchesMutex );
-		std::map<std::pair<int, efsw::WatchID>, uint32_t>::iterator it =
-			mByEfsw.find( std::make_pair( key, efswId ) );
+		EfswWatches::iterator it = mByEfsw.find( std::make_pair( key, efswId ) );
 		if ( it == mByEfsw.end() )
 			return false;
 		watchId = it->second;
@@ -350,7 +363,7 @@ class Agent {
 				bool found = false;
 				{
 					std::lock_guard<std::mutex> lock( mWatchesMutex );
-					std::map<uint32_t, Watch>::iterator it = mWatches.find( id );
+					auto it = mWatches.find( id );
 					if ( it != mWatches.end() ) {
 						watch = it->second;
 						mByEfsw.erase( std::make_pair( watch.key, watch.efswId ) );
@@ -360,7 +373,7 @@ class Agent {
 				}
 				if ( found ) {
 					std::lock_guard<std::mutex> lock( mWatchersMutex );
-					std::map<int, Slot>::iterator slot = mWatchers.find( watch.key );
+					auto slot = mWatchers.find( watch.key );
 					if ( slot != mWatchers.end() && slot->second.watcher )
 						slot->second.watcher->removeWatch( watch.efswId );
 				}
@@ -392,7 +405,7 @@ class Agent {
 	void writerLoop() {
 		while ( true ) {
 			std::deque<std::vector<uint8_t> > outgoing;
-			std::map<uint32_t, std::vector<WatchEventRecord> > events;
+			PendingEvents events;
 			std::vector<uint32_t> missed;
 			{
 				std::unique_lock<std::mutex> lock( mOutMutex );
@@ -415,8 +428,7 @@ class Agent {
 				if ( !writeOutput( w.frame( MessageMissedEvents ) ) )
 					std::exit( 3 );
 			}
-			for ( std::map<uint32_t, std::vector<WatchEventRecord> >::iterator it = events.begin();
-				  it != events.end(); ++it ) {
+			for ( PendingEvents::iterator it = events.begin(); it != events.end(); ++it ) {
 				// Split very large bursts to stay far below the frame limit.
 				const std::vector<WatchEventRecord>& list = it->second;
 				for ( size_t start = 0; start < list.size(); start += 4096 ) {
@@ -432,14 +444,14 @@ class Agent {
 
 	unsigned mPollingMs;
 	std::mutex mWatchersMutex;
-	std::map<int, Slot> mWatchers;
+	std::unordered_map<int, Slot> mWatchers;
 	std::mutex mWatchesMutex;
-	std::map<uint32_t, Watch> mWatches;
-	std::map<std::pair<int, efsw::WatchID>, uint32_t> mByEfsw;
+	std::unordered_map<uint32_t, Watch> mWatches;
+	EfswWatches mByEfsw;
 	std::mutex mOutMutex;
 	std::condition_variable mOutReady;
 	std::deque<std::vector<uint8_t> > mOutgoing;
-	std::map<uint32_t, std::vector<WatchEventRecord> > mPendingEvents;
+	PendingEvents mPendingEvents;
 	std::vector<uint32_t> mPendingMissed;
 	bool mStop;
 	std::thread mWriter;

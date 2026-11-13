@@ -4,8 +4,8 @@
 #include <efsw/FileInfo.hpp>
 #include <efsw/Watcher.hpp>
 #include <efsw/efsw.hpp>
-#include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace efsw {
@@ -89,7 +89,7 @@ class FileActionBatch {
 		bool paired() const { return Added && Deleted; }
 	};
 
-	typedef std::map<FileIdentity, Halves> HalvesMap;
+	typedef std::unordered_map<FileIdentity, Halves, FileIdentityHash> HalvesMap;
 
 	/// The moves found in the batch, by position.
 	struct Moves {
@@ -97,8 +97,8 @@ class FileActionBatch {
 		/// For the halves of a move, and the events inside a moved directory, which the Moved
 		/// event reports: the Add position of that move. None for other events.
 		std::vector<size_t> MoveOf;
-		/// The Delete position of each move, by its Add position.
-		std::map<size_t, size_t> SourceOf;
+		/// For the Add of a move: the position of its Delete. None for other events.
+		std::vector<size_t> SourceOf;
 	};
 
 	std::vector<Event> mEvents;

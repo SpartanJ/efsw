@@ -899,7 +899,9 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 #include <efsw/System.hpp>
 #include <efsw/WatcherKqueue.hpp>
 #include <efsw/FileActionBatch.hpp>
+#include <efsw/FileInfo.hpp>
 #include <mutex>
+#include <sys/time.h>
 
 namespace {
 
@@ -1018,6 +1020,114 @@ UTEST( CrossWatchMoves, KqueueGenericFallbackReportsIntoTheSharedBatch ) {
 		EXPECT_EQ( 0u, listener.getEventCount() );
 	}
 	removeDirectory( root );
+}
+
+// A subdirectory watch reports its own directory's change to its parent, during the root's scan
+// and after other events of the tree were collected: the report joins the shared batch, in
+// order, instead of running a listener in the middle of the scan, and removing the root cancels
+// it with the rest.
+UTEST( CrossWatchMoves, KqueueDirectoryChangeWaitsForTheRootsPass ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqdirchanged";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/sub/inner" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue, NULL, true );
+		watch.SharedActionBatch = &batch;
+		watch.addAll();
+
+		for ( int cancel = 0; cancel < 2; cancel++ ) {
+			listener.clearEvents();
+			const std::string tag = std::to_string( cancel );
+			EXPECT_TRUE( createFile( root + "/sub/inner/a" + tag + ".txt", "x" ) );
+			EXPECT_TRUE( createFile( root + "/sub/b" + tag + ".txt", "x" ) );
+			// Times unlike the snapshots', whatever the file system's resolution, so that both
+			// directories report a change. The deeper one is scanned first.
+			struct timeval times[2] = { { 1000000000 + cancel, 0 }, { 1000000000 + cancel, 0 } };
+			EXPECT_EQ( 0, utimes( ( root + "/sub/inner" ).c_str(), times ) );
+			EXPECT_EQ( 0, utimes( ( root + "/sub" ).c_str(), times ) );
+
+			batch.beginPass();
+			watch.watch();
+			EXPECT_EQ( 0u, listener.getEventCount() );
+			if ( cancel )
+				batch.forget( &watch );
+			batch.scanned( &watch );
+			batch.finishPass();
+			if ( cancel ) {
+				EXPECT_EQ( 0u, listener.getEventCount() );
+			} else {
+				const int added = listener.indexOf( efsw::Actions::Add, "a0.txt" );
+				EXPECT_NE( -1, added );
+				EXPECT_GT( listener.indexOf( efsw::Actions::Modified, "sub" ), added );
+			}
+		}
+	}
+	removeDirectory( root );
+}
+
+// A file moves between a generic watch, which replaced a kqueue subdirectory watch when file
+// descriptors ran out, and another registration, both ways: each move is paired in the shared
+// batch and reported as a Moved event to its destination only.
+UTEST( CrossWatchMoves, KqueueGenericFallbackMovesToAnotherRegistration ) {
+	if ( !efsw::FileInfo::inodeSupported() ) {
+		UTEST_SKIP( "File identity is not supported." );
+	}
+	const std::string base = getTemporaryDirectory() + "_xw_kqfallbackmove";
+	const std::string first = base + "/first";
+	const std::string second = base + "/second";
+	removeDirectory( base );
+	EXPECT_TRUE( createDirectory( base ) );
+	EXPECT_TRUE( createDirectory( first ) );
+	EXPECT_TRUE( createDirectory( first + "/sub" ) );
+	EXPECT_TRUE( createDirectory( second ) );
+	EXPECT_TRUE( createFile( first + "/sub/out.txt", "x" ) );
+	EXPECT_TRUE( createFile( second + "/in.txt", "x" ) );
+	TestListener firstListener;
+	TestListener secondListener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
+		efsw::WatcherKqueue secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
+		firstWatch.SharedActionBatch = &batch;
+		secondWatch.SharedActionBatch = &batch;
+		secondWatch.addAll();
+		kqueue.exhaust();
+		firstWatch.addAll();
+
+		auto pass = [&]() {
+			batch.beginPass();
+			firstWatch.watch();
+			batch.scanned( &firstWatch );
+			secondWatch.watch();
+			batch.scanned( &secondWatch );
+			batch.finishPass();
+		};
+
+		EXPECT_TRUE( renameFile( first + "/sub/out.txt", second + "/out.txt" ) );
+		pass();
+		EXPECT_NE( -1, secondListener.indexOf( efsw::Actions::Moved, "out.txt" ) );
+		EXPECT_EQ( -1, firstListener.indexOf( efsw::Actions::Delete, "out.txt" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Add, "out.txt" ) );
+
+		firstListener.clearEvents();
+		secondListener.clearEvents();
+		EXPECT_TRUE( renameFile( second + "/in.txt", first + "/sub/in.txt" ) );
+		pass();
+		// A Delete collected after the destination's scan may be held to the next pass.
+		pass();
+		EXPECT_NE( -1, firstListener.indexOf( efsw::Actions::Moved, "in.txt" ) );
+		EXPECT_EQ( -1, firstListener.indexOf( efsw::Actions::Add, "in.txt" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Delete, "in.txt" ) );
+	}
+	removeDirectory( base );
 }
 
 // A directory watched by generic watches, because file descriptors ran out, is renamed inside

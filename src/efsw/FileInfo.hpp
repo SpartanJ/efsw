@@ -2,6 +2,7 @@
 #define EFSW_FILEINFO_HPP
 
 #include <efsw/base.hpp>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,6 +11,13 @@ namespace efsw {
 
 /// Device and inode of a file.
 typedef std::pair<Uint64, Uint64> FileIdentity;
+
+struct FileIdentityHash {
+	size_t operator()( const FileIdentity& identity ) const {
+		// Inodes differ far more than devices: mix the device into the inode's hash.
+		return std::hash<Uint64>()( identity.second ^ ( identity.first * 0x9E3779B97F4A7C15ull ) );
+	}
+};
 
 class FileInfo {
   public:
