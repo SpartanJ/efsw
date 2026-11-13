@@ -1879,3 +1879,32 @@ UTEST( FileActionBatch, RemovalWithHeldMovesOfATree ) {
 	runRemovalWithHeldMoves( 1, utest_result );
 	runRemovalWithHeldMoves( 2, utest_result );
 }
+
+// Directories may be reported with a final separator, as the generic backend reports them: a
+// moved directory does not enclose itself, and a change in its new tree, collected before it,
+// follows it.
+UTEST( FileActionBatch, DirectoryPathsWithAFinalSeparator ) {
+	const std::string slash = ReplayTree::slash();
+	efsw::FileActionBatch batch;
+	TestListener listener;
+	FakeWatch source( 1, batch, &listener );
+	FakeWatch destination( 2, batch, &listener );
+	const efsw::FileIdentity directory = id( 10 ), file = id( 11 );
+	auto withSeparator = [&]( FakeWatch& watch, const std::string& parent, const std::string& name,
+							  efsw::Action action ) {
+		watch.report( parent, name, action, synthetic( "", directory, true ) );
+		watch.Next.back().Info.Filepath = parent + name + slash;
+	};
+	reportAt( destination, slash + "dst" + slash + "d" + slash + "changed", efsw::Actions::Modified,
+			  { file, false } );
+	withSeparator( source, slash + "src" + slash, "d", efsw::Actions::Delete );
+	withSeparator( destination, slash + "dst" + slash, "d", efsw::Actions::Add );
+	runPass( batch, { &source, &destination } );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "d" );
+	EXPECT_EQ( efsw::Actions::Modified, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "changed" );
+}

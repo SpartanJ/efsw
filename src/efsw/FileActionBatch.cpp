@@ -62,6 +62,54 @@ static Value enclosingRoot( const std::unordered_map<std::string, Value>& roots,
 	return none;
 }
 
+/// The value of the deepest directory of a map that contains a path, by paths without a final
+/// separator. Each directory is looked up once: the paths below it share its lookup.
+template <typename Value> class NearestDirectory {
+  public:
+	NearestDirectory( const std::unordered_map<std::string, Value>& directories, Value none ) :
+		mDirectories( directories ), mNone( none ) {}
+
+	/// @return The value of the deepest directory of the map that contains the path, not the
+	/// path itself, or none.
+	Value of( const std::string& path ) {
+		const size_t length = directoryLength( path );
+		if ( 0 == length )
+			return mNone;
+		const size_t slash = path.rfind( FileSystem::getOSSlash(), length - 1 );
+		if ( std::string::npos == slash || 0 == slash )
+			return mNone;
+		// The directories from the path's own up to the first one known.
+		std::vector<std::string> unknown;
+		Value found = mNone;
+		for ( std::string directory = path.substr( 0, slash ); !directory.empty(); ) {
+			auto known = mKnown.find( directory );
+			if ( known != mKnown.end() ) {
+				found = known->second;
+				break;
+			}
+			auto listed = mDirectories.find( directory );
+			if ( listed != mDirectories.end() ) {
+				found = listed->second;
+				mKnown[directory] = found;
+				break;
+			}
+			unknown.push_back( directory );
+			const size_t parent = directory.rfind( FileSystem::getOSSlash() );
+			if ( std::string::npos == parent || 0 == parent )
+				break;
+			directory.resize( parent );
+		}
+		for ( const std::string& directory : unknown )
+			mKnown[directory] = found;
+		return found;
+	}
+
+  private:
+	const std::unordered_map<std::string, Value>& mDirectories;
+	Value mNone;
+	std::unordered_map<std::string, Value> mKnown;
+};
+
 static bool metadataMatches( const FileInfo& source, const FileInfo& destination ) {
 	if ( source.isDirectory() != destination.isDirectory() ||
 		 source.isRegularFile() != destination.isRegularFile() ||
@@ -333,35 +381,14 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 				   return a.first < b.first;
 			   } );
 
-	// The Deletes and Adds by path, built for the first directory move: the events inside a
-	// directory are a range of each.
-	std::vector<size_t> deletesByPath;
-	std::vector<size_t> addsByPath;
-	auto byPath = [&]( size_t a, size_t b ) {
-		return mEvents[a].Info.Filepath < mEvents[b].Info.Filepath;
-	};
-	// The events inside a moved directory belong to its move, unless part of another move.
-	// @param enclosing The move that claimed the directory's own event, if any: a directory
-	// renamed or relocated inside a tree moved as a whole takes its contents back from it.
-	auto claimContents = [&]( const std::vector<size_t>& byPathIndex, const std::string& directory,
-							  size_t move, size_t enclosing ) {
-		if ( directory.empty() )
-			return;
-		std::string prefix( directory );
-		if ( prefix[prefix.size() - 1] != FileSystem::getOSSlash() )
-			prefix += FileSystem::getOSSlash();
-		auto it = std::lower_bound(
-			byPathIndex.begin(), byPathIndex.end(), prefix,
-			[&]( size_t i, const std::string& path ) { return mEvents[i].Info.Filepath < path; } );
-		for ( ; it != byPathIndex.end(); ++it ) {
-			const std::string& path = mEvents[*it].Info.Filepath;
-			if ( path.compare( 0, prefix.size(), prefix ) != 0 )
-				break;
-			if ( path.size() > prefix.size() &&
-				 ( moves.MoveOf[*it] == Moves::None ||
-				   ( Moves::None != enclosing && moves.MoveOf[*it] == enclosing ) ) )
-				moves.MoveOf[*it] = move;
-		}
+	// The moved directories, by their paths without a final separator, at the source and at the
+	// destination. The events inside a moved directory belong to the deepest one, unless part of
+	// another move: a directory renamed or relocated inside a tree moved as a whole takes its
+	// contents back from it.
+	std::unordered_map<std::string, size_t> movedSources, movedDestinations;
+	auto enclosingMove = []( const std::unordered_map<std::string, size_t>& moved,
+							 const std::string& path ) {
+		return enclosingRoot( moved, path, Moves::None );
 	};
 
 	// Whether an entry keeps its path relative to the directory move that encloses both of its
@@ -400,8 +427,10 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 	for ( const auto& pair : pairs ) {
 		const size_t created = pair.first;
 		const size_t deleted = pair.second;
-		const size_t enclosingSource = moves.MoveOf[deleted];
-		const size_t enclosingDestination = moves.MoveOf[created];
+		const size_t enclosingSource =
+			enclosingMove( movedSources, mEvents[deleted].Info.Filepath );
+		const size_t enclosingDestination =
+			enclosingMove( movedDestinations, mEvents[created].Info.Filepath );
 		if ( Moves::None != enclosingSource && enclosingSource == enclosingDestination &&
 			 ( ( !comparedTrees.empty() && comparedTrees[enclosingSource] ) ||
 			   keepsRelativePath( enclosingSource, deleted, created ) ) )
@@ -423,18 +452,10 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			moves.Within[created] = enclosingSource;
 
 		if ( source.Info.isDirectory() ) {
-			if ( deletesByPath.empty() && addsByPath.empty() ) {
-				for ( size_t i = 0; i < mEvents.size(); i++ ) {
-					if ( mEvents[i].ActionType == Actions::Delete )
-						deletesByPath.push_back( i );
-					else if ( mEvents[i].ActionType == Actions::Add )
-						addsByPath.push_back( i );
-				}
-				std::sort( deletesByPath.begin(), deletesByPath.end(), byPath );
-				std::sort( addsByPath.begin(), addsByPath.end(), byPath );
-			}
-			claimContents( deletesByPath, source.Info.Filepath, created, enclosingSource );
-			claimContents( addsByPath, destination.Info.Filepath, created, enclosingDestination );
+			movedSources[source.Info.Filepath.substr(
+				0, directoryLength( source.Info.Filepath ) )] = created;
+			movedDestinations[destination.Info.Filepath.substr(
+				0, directoryLength( destination.Info.Filepath ) )] = created;
 			if ( !mSourceTrees.empty() && comparesTrees( deleted, created ) ) {
 				if ( comparedTrees.empty() )
 					comparedTrees.assign( mEvents.size(), false );
@@ -443,47 +464,53 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			}
 		}
 	}
+
+	// The Deletes and Adds inside the moved directories, by the deepest one, each directory
+	// looked up once.
+	if ( !movedSources.empty() ) {
+		NearestDirectory<size_t> sourceOwners( movedSources, Moves::None );
+		NearestDirectory<size_t> destinationOwners( movedDestinations, Moves::None );
+		for ( size_t i = 0; i < mEvents.size(); i++ ) {
+			if ( Moves::None != moves.MoveOf[i] )
+				continue;
+			if ( Actions::Delete == mEvents[i].ActionType )
+				moves.MoveOf[i] = sourceOwners.of( mEvents[i].Info.Filepath );
+			else if ( Actions::Add == mEvents[i].ActionType )
+				moves.MoveOf[i] = destinationOwners.of( mEvents[i].Info.Filepath );
+		}
+	}
 	return hasMove;
 }
 
 void FileActionBatch::followEnclosingMoves( Moves& moves ) {
 	const size_t count = mEvents.size();
-	// The events that may refer to a moved directory's new tree, by path. Deletes refer to
-	// what was there before: they are not moved past the directory's arrival.
-	std::vector<size_t> byPath;
-	for ( size_t i = 0; i < count; i++ )
-		if ( mEvents[i].ActionType != Actions::Delete && !mEvents[i].Info.Filepath.empty() )
-			byPath.push_back( i );
+	// The directory moves by their destination, each with the one enclosing it.
+	std::unordered_map<std::string, size_t> destinations;
+	for ( size_t move = 0; move < count; move++ )
+		if ( moves.MoveOf[move] == move && mEvents[move].Info.isDirectory() )
+			destinations[mEvents[move].Info.Filepath.substr(
+				0, directoryLength( mEvents[move].Info.Filepath ) )] = move;
+	if ( destinations.empty() )
+		return;
+	NearestDirectory<size_t> enclosing( destinations, Moves::None );
+	std::unordered_map<size_t, size_t> outer;
+	for ( const auto& destination : destinations )
+		outer[destination.second] = enclosing.of( mEvents[destination.second].Info.Filepath );
 
 	// For each event, the deepest directory move after it whose destination contains it. That
-	// move follows the moves enclosing it the same way, so all of them come first.
+	// move follows the moves enclosing it the same way, so all of them come first. Deletes
+	// refer to what was there before: they are not moved past the directory's arrival.
 	std::vector<size_t> after( count, Moves::None );
-	bool sorted = false;
 	bool reorders = false;
-	for ( size_t move = 0; move < count; move++ ) {
-		if ( moves.MoveOf[move] != move || !mEvents[move].Info.isDirectory() )
+	for ( size_t i = 0; i < count; i++ ) {
+		if ( mEvents[i].ActionType == Actions::Delete || mEvents[i].Info.Filepath.empty() )
 			continue;
-		if ( !sorted ) {
-			std::sort( byPath.begin(), byPath.end(), [&]( size_t a, size_t b ) {
-				return mEvents[a].Info.Filepath < mEvents[b].Info.Filepath;
-			} );
-			sorted = true;
-		}
-		std::string prefix( mEvents[move].Info.Filepath );
-		if ( prefix.back() != FileSystem::getOSSlash() )
-			prefix += FileSystem::getOSSlash();
-		auto it = std::lower_bound(
-			byPath.begin(), byPath.end(), prefix,
-			[&]( size_t i, const std::string& path ) { return mEvents[i].Info.Filepath < path; } );
-		for ( ; it != byPath.end(); ++it ) {
-			const std::string& path = mEvents[*it].Info.Filepath;
-			if ( path.compare( 0, prefix.size(), prefix ) != 0 )
-				break;
-			if ( *it < move && path.size() > prefix.size() &&
-				 ( Moves::None == after[*it] || mEvents[after[*it]].Info.Filepath.size() <
-													mEvents[move].Info.Filepath.size() ) ) {
-				after[*it] = move;
+		for ( size_t move = enclosing.of( mEvents[i].Info.Filepath ); Moves::None != move;
+			  move = outer.at( move ) ) {
+			if ( move > i ) {
+				after[i] = move;
 				reorders = true;
+				break;
 			}
 		}
 	}
@@ -1452,19 +1479,21 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	// Whether a source event of a move waits for its destination. Not when both belong to one
 	// registration, which is removed with both, or when the move is resolved. A deleted
 	// directory waits for the moves out of it.
-	auto waitsForMove = [&]( size_t i ) {
+	// @return The move it waits for, or None.
+	auto blocker = [&]( size_t i ) {
 		const size_t move = moves->MoveOf[i];
 		if ( Moves::None == move ) {
 			auto out = movesOut.find( i );
-			if ( out == movesOut.end() )
-				return false;
-			for ( size_t pending : out->second )
-				if ( MoveState::Unresolved == state[pending] )
-					return true;
-			return false;
+			if ( out != movesOut.end() )
+				for ( size_t pending : out->second )
+					if ( MoveState::Unresolved == state[pending] )
+						return pending;
+			return Moves::None;
 		}
 		return move != i && mEvents[move].Owner != mEvents[i].Owner &&
-			   MoveState::Unresolved == state[move];
+					   MoveState::Unresolved == state[move]
+				   ? move
+				   : Moves::None;
 	};
 
 	auto process = [&]( size_t i ) {
@@ -1557,32 +1586,58 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		}
 	};
 
-	// Delivers the waiting events that no longer wait, until none does.
-	auto release = [&]() {
-		for ( bool progress = true; progress; ) {
-			progress = false;
-			for ( auto it = waiting.begin(); it != waiting.end(); ) {
-				std::deque<size_t>& queue = it->second;
-				while ( !queue.empty() && !waitsForMove( queue.front() ) ) {
-					const size_t i = queue.front();
-					queue.pop_front();
-					process( i );
-					progress = true;
-				}
-				it = queue.empty() ? waiting.erase( it ) : std::next( it );
+	// The registrations whose waiting events start with one that waits for a move, by that move.
+	std::unordered_map<size_t, std::vector<Watcher*>> blockedBy;
+
+	// A move was resolved: delivers the waiting events that no longer wait, those of the
+	// registrations it blocked, and of those the moves resolved meanwhile blocked.
+	auto release = [&]( size_t resolved ) {
+		std::vector<Watcher*> unblocked;
+		auto wake = [&]( size_t move ) {
+			auto blocked = blockedBy.find( move );
+			if ( blocked == blockedBy.end() )
+				return;
+			unblocked.insert( unblocked.end(), blocked->second.begin(), blocked->second.end() );
+			blockedBy.erase( blocked );
+		};
+		wake( resolved );
+		while ( !unblocked.empty() ) {
+			Watcher* owner = unblocked.back();
+			unblocked.pop_back();
+			auto it = waiting.find( owner );
+			if ( it == waiting.end() )
+				continue;
+			std::deque<size_t>& queue = it->second;
+			size_t move = Moves::None;
+			while ( !queue.empty() && Moves::None == ( move = blocker( queue.front() ) ) ) {
+				const size_t i = queue.front();
+				queue.pop_front();
+				process( i );
+				if ( moves->MoveOf[i] == i )
+					wake( i );
 			}
+			if ( queue.empty() )
+				waiting.erase( it );
+			else
+				blockedBy[move].push_back( owner );
 		}
 	};
 
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		auto queue = waiting.find( mEvents[i].Owner );
-		if ( queue != waiting.end() || waitsForMove( i ) ) {
+		if ( queue != waiting.end() ) {
+			queue->second.push_back( i );
+			continue;
+		}
+		const size_t move = blocker( i );
+		if ( Moves::None != move ) {
 			waiting[mEvents[i].Owner].push_back( i );
+			blockedBy[move].push_back( mEvents[i].Owner );
 			continue;
 		}
 		process( i );
 		if ( moves->MoveOf[i] == i && !waiting.empty() )
-			release();
+			release( i );
 	}
 
 	// Moves whose registrations wait on each other, as crossed moves between two registrations
