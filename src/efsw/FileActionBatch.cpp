@@ -6,8 +6,16 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <sys/stat.h>
 #include <unordered_map>
 #include <unordered_set>
+
+#if !defined( S_IFMT ) && defined( _S_IFMT )
+#define S_IFMT _S_IFMT
+#endif
+#if !defined( S_IFDIR ) && defined( _S_IFDIR )
+#define S_IFDIR _S_IFDIR
+#endif
 
 namespace efsw {
 
@@ -567,11 +575,11 @@ void FileActionBatch::followEnclosingMoves( Moves& moves ) {
 
 namespace {
 
-/// The kind of an entry, compared with its identity: an identity reused by an entry of another
-/// kind, as a directory created where a deleted file was may reuse its inode, is another entry.
-/// Directories come last.
-int kindOf( const FileInfo* entry ) {
-	return entry->isDirectory() ? 2 : entry->isRegularFile() ? 1 : 0;
+/// The kind of an entry, its file type, compared with its identity: an identity reused by an
+/// entry of another kind, as a directory created where a deleted file was may reuse its inode, or
+/// a socket where a FIFO was, is another entry.
+unsigned kindOf( const FileInfo* entry ) {
+	return entry->Permissions & S_IFMT;
 }
 
 /// An entry of a tree, by identity, pointing into a snapshot or an event.
@@ -645,11 +653,12 @@ struct TreeSide {
 
 	/// @return The directory with the identity, or NULL.
 	const FileInfo* directory( const FileIdentity& identity ) const {
-		auto it = std::lower_bound( ById.begin(), ById.end(), identity,
-									[]( const TreeEntry& entry, const FileIdentity& id ) {
-										return entry.Identity < id ||
-											   ( entry.Identity == id && kindOf( entry.Info ) < 2 );
-									} );
+		auto it =
+			std::lower_bound( ById.begin(), ById.end(), identity,
+							  []( const TreeEntry& entry, const FileIdentity& id ) {
+								  return entry.Identity < id ||
+										 ( entry.Identity == id && kindOf( entry.Info ) < S_IFDIR );
+							  } );
 		return it != ById.end() && it->Identity == identity && it->Info->isDirectory() ? it->Info
 																					   : NULL;
 	}

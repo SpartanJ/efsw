@@ -1496,6 +1496,44 @@ UTEST( FileActionBatch, ReusedIdentityOfAnotherKindInsideAMovedTree ) {
 				 utest_result, "kinds swapped between two identities" );
 }
 
+// The same for the other kinds of entries, whose file types tell them apart: a FIFO deleted and
+// a socket created at its path that reuses its inode, and a FIFO deleted and a character device
+// created at another path that reuses its inode. A FIFO kept in place is unchanged.
+UTEST( FileActionBatch, ReusedIdentityOfAnotherSpecialKind ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	// The file type bits, the same on every platform.
+	const unsigned fifo = 010000, characterDevice = 020000, socket = 0140000;
+	auto as = []( efsw::FileInfo info, unsigned type ) {
+		info.Permissions = type | 0644;
+		return info;
+	};
+	efsw::FileInfo reused = file.make( "outer/reused" );
+	efsw::FileInfo moved = file.make( "outer/moved" );
+	efsw::FileInfo kept = file.make( "outer/kept" );
+	tree.was( as( reused, fifo ), "reused" );
+	tree.was( as( moved, fifo ), "moved" );
+	tree.was( as( kept, fifo ), "kept" );
+	tree.is( second, as( reused, socket ), "reused" );
+	tree.is( second, as( moved, characterDevice ), "elsewhere" );
+	tree.is( second, as( kept, fifo ), "kept" );
+	tree.move( first, second );
+	runPass( batch, watches );
+
+	const std::vector<std::pair<efsw::Action, std::string>> expected{
+		{ efsw::Actions::Moved, "outer" },
+		{ efsw::Actions::Delete, "reused" },
+		{ efsw::Actions::Delete, "moved" },
+		{ efsw::Actions::Add, "elsewhere" },
+		{ efsw::Actions::Add, "reused" } };
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].first, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].second == std::get<1>( events[i] ) );
+	}
+}
+
 namespace {
 
 void changesAcrossAMovedTree( int* utest_result, Reporting reporting ) {
