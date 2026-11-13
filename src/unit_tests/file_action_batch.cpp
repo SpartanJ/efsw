@@ -1241,6 +1241,14 @@ void reportAt( FakeWatch& watch, const std::string& path, efsw::Action action,
 				  synthetic( path, entry.first, entry.second ) );
 }
 
+/// The identity the replay keeps for an entry: with its kind, so that an entry replaced by one of
+/// another kind that reuses its identity, a directory where a file was, is another entry.
+efsw::FileIdentity replayed( const std::pair<efsw::FileIdentity, bool>& entry ) {
+	return entry.second
+			   ? efsw::FileIdentity( entry.first.first | ( 1ull << 62 ), entry.first.second )
+			   : entry.first;
+}
+
 bool hasIdentity( const PlainTree& tree, const efsw::FileIdentity& identity ) {
 	for ( const auto& entry : tree )
 		if ( entry.second.first == identity )
@@ -1287,7 +1295,7 @@ void checkReplayInOrder( const PlainTree& before, const PlainTree& after, int* u
 	for ( const auto& entry : before ) {
 		lists[0].push_back(
 			synthetic( source + entry.first, entry.second.first, entry.second.second ) );
-		replay.Entries[source + entry.first] = entry.second.first;
+		replay.Entries[source + entry.first] = replayed( entry.second );
 		if ( Reporting::Entries == reporting && hasIdentity( otherAfter, entry.second.first ) &&
 			 !hasIdentity( otherBefore, entry.second.first ) )
 			reportAt( first, source + entry.first, efsw::Actions::Delete, entry.second );
@@ -1300,7 +1308,7 @@ void checkReplayInOrder( const PlainTree& before, const PlainTree& after, int* u
 			reportAt( second, destination + entry.first, efsw::Actions::Add, entry.second );
 	}
 	for ( const auto& entry : otherBefore ) {
-		replay.Entries[other + entry.first] = entry.second.first;
+		replay.Entries[other + entry.first] = replayed( entry.second );
 		if ( hasIdentity( otherAfter, entry.second.first ) )
 			continue;
 		reportAt( third, other + entry.first, efsw::Actions::Delete, entry.second );
@@ -1350,9 +1358,9 @@ void checkReplayInOrder( const PlainTree& before, const PlainTree& after, int* u
 		expected[other] = Unknown;
 		expected[destination] = outer;
 		for ( const auto& entry : after )
-			expected[destination + entry.first] = entry.second.first;
+			expected[destination + entry.first] = replayed( entry.second );
 		for ( const auto& entry : otherAfter )
-			expected[other + entry.first] = entry.second.first;
+			expected[other + entry.first] = replayed( entry.second );
 		if ( expected.size() != replay.Entries.size() ) {
 			problem = "the replayed tree has " + std::to_string( replay.Entries.size() ) +
 					  " entries instead of " + std::to_string( expected.size() );
@@ -1460,6 +1468,32 @@ UTEST( FileActionBatch, ChangesInsideAMovedTreeReplayInOrder ) {
 		{ { at( { "a" } ), { id( 10 ), true } }, { at( { "a", "b" } ), { id( 11 ), true } } },
 		{ { at( { "b" } ), { id( 11 ), true } }, { at( { "b", "a" } ), { id( 10 ), true } } },
 		utest_result, "inverted nesting" );
+}
+
+// An identity reused by an entry of another kind is another entry: a file deleted, and a
+// directory created that reuses its inode, at the same path or another, or the other way round.
+UTEST( FileActionBatch, ReusedIdentityOfAnotherKindInsideAMovedTree ) {
+	checkReplay( { { at( { "item" } ), { id( 10 ), false } } },
+				 { { at( { "item" } ), { id( 10 ), true } } }, utest_result,
+				 "file replaced by a directory" );
+	checkReplay( { { at( { "item" } ), { id( 10 ), true } },
+				   { at( { "item", "inside" } ), { id( 11 ), false } } },
+				 { { at( { "item" } ), { id( 10 ), false } } }, utest_result,
+				 "directory replaced by a file" );
+	checkReplay( { { at( { "a" } ), { id( 10 ), false } } },
+				 { { at( { "b" } ), { id( 10 ), true } } }, utest_result,
+				 "file deleted, directory created elsewhere" );
+	checkReplay(
+		{ { at( { "d" } ), { id( 10 ), true } }, { at( { "d", "f" } ), { id( 11 ), false } } },
+		{ { at( { "f" } ), { id( 11 ), false } }, { at( { "d" } ), { id( 10 ), false } } },
+		utest_result, "directory replaced by a file, its file moved out first" );
+	checkReplay( { { at( { "x" } ), { id( 10 ), false } },
+				   { at( { "y" } ), { id( 11 ), true } },
+				   { at( { "y", "f" } ), { id( 12 ), false } } },
+				 { { at( { "y" } ), { id( 10 ), true } },
+				   { at( { "y", "f" } ), { id( 12 ), false } },
+				   { at( { "x" } ), { id( 11 ), false } } },
+				 utest_result, "kinds swapped between two identities" );
 }
 
 namespace {
@@ -1623,6 +1657,8 @@ UTEST( FileActionBatch, RandomChangesInsideAMovedTreeReplay ) {
 			}
 			tree.insert( moved.begin(), moved.end() );
 		};
+		// The entries deleted so far, whose identities a new entry of the other kind may reuse.
+		std::vector<std::pair<efsw::FileIdentity, bool>> deleted;
 		const int changes = 1 + static_cast<int>( pick( 6 ) );
 		for ( int c = 0; c < changes; c++ ) {
 			std::vector<std::string> paths;
@@ -1634,10 +1670,17 @@ UTEST( FileActionBatch, RandomChangesInsideAMovedTreeReplay ) {
 					targets.push_back( entry.first );
 			const size_t kind = pick( 5 );
 			if ( paths.empty() || kind == 3 ) {
-				// Create.
-				const bool directory = pick( 3 ) == 0;
+				// Create, sometimes reusing a deleted entry's identity, with the other kind.
 				const std::string path = targets[pick( targets.size() )] + ReplayTree::slash() +
 										 "c" + std::to_string( nextInode );
+				if ( !deleted.empty() && pick( 2 ) == 0 ) {
+					const size_t reused = pick( deleted.size() );
+					tree[path] = { deleted[reused].first, !deleted[reused].second };
+					deleted.erase( deleted.begin() + reused );
+					nextInode++;
+					continue;
+				}
+				const bool directory = pick( 3 ) == 0;
 				tree[path] = { id( nextInode++ ), directory };
 				continue;
 			}
@@ -1645,10 +1688,14 @@ UTEST( FileActionBatch, RandomChangesInsideAMovedTreeReplay ) {
 			if ( kind == 2 ) {
 				// Delete, with what it holds.
 				moveTree( from, ReplayTree::slash() + "deleted" );
-				for ( auto it = tree.begin(); it != tree.end(); )
-					it = 0 == it->first.compare( 0, 8, ReplayTree::slash() + "deleted" )
-							 ? tree.erase( it )
-							 : std::next( it );
+				for ( auto it = tree.begin(); it != tree.end(); ) {
+					if ( 0 == it->first.compare( 0, 8, ReplayTree::slash() + "deleted" ) ) {
+						deleted.push_back( it->second );
+						it = tree.erase( it );
+					} else {
+						++it;
+					}
+				}
 				continue;
 			}
 			if ( kind == 4 ) {

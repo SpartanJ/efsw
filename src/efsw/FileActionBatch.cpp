@@ -567,10 +567,27 @@ void FileActionBatch::followEnclosingMoves( Moves& moves ) {
 
 namespace {
 
+/// The kind of an entry, compared with its identity: an identity reused by an entry of another
+/// kind, as a directory created where a deleted file was may reuse its inode, is another entry.
+/// Directories come last.
+int kindOf( const FileInfo* entry ) {
+	return entry->isDirectory() ? 2 : entry->isRegularFile() ? 1 : 0;
+}
+
 /// An entry of a tree, by identity, pointing into a snapshot or an event.
 struct TreeEntry {
 	FileIdentity Identity;
 	const FileInfo* Info;
+
+	/// Orders the entries by identity, then kind.
+	bool before( const TreeEntry& other ) const {
+		return Identity < other.Identity ||
+			   ( Identity == other.Identity && kindOf( Info ) < kindOf( other.Info ) );
+	}
+
+	bool sameEntry( const TreeEntry& other ) const {
+		return Identity == other.Identity && kindOf( Info ) == kindOf( other.Info );
+	}
 };
 
 /// One end of a directory move: the entries of the tree below the directory, by identity and by
@@ -585,10 +602,11 @@ struct TreeSide {
 		return entry->Filepath.substr( RootLength );
 	}
 
+	/// Sorts the entries by identity and kind, then by path: below the root, as they all share
+	/// it.
 	void index() {
 		std::sort( ById.begin(), ById.end(), []( const TreeEntry& a, const TreeEntry& b ) {
-			return a.Identity < b.Identity ||
-				   ( a.Identity == b.Identity && a.Info->Filepath < b.Info->Filepath );
+			return a.before( b ) || ( a.sameEntry( b ) && a.Info->Filepath < b.Info->Filepath );
 		} );
 		ById.erase( std::unique( ById.begin(), ById.end(),
 								 []( const TreeEntry& a, const TreeEntry& b ) {
@@ -625,12 +643,15 @@ struct TreeSide {
 				   : NULL;
 	}
 
-	/// @return An entry with the identity, or NULL. Directories have one.
-	const FileInfo* withIdentity( const FileIdentity& identity ) const {
-		auto it = std::lower_bound(
-			ById.begin(), ById.end(), identity,
-			[]( const TreeEntry& entry, const FileIdentity& id ) { return entry.Identity < id; } );
-		return it != ById.end() && it->Identity == identity ? it->Info : NULL;
+	/// @return The directory with the identity, or NULL.
+	const FileInfo* directory( const FileIdentity& identity ) const {
+		auto it = std::lower_bound( ById.begin(), ById.end(), identity,
+									[]( const TreeEntry& entry, const FileIdentity& id ) {
+										return entry.Identity < id ||
+											   ( entry.Identity == id && kindOf( entry.Info ) < 2 );
+									} );
+		return it != ById.end() && it->Identity == identity && it->Info->isDirectory() ? it->Info
+																					   : NULL;
 	}
 };
 
@@ -768,8 +789,8 @@ class FileActionBatch::TreePlanner {
 		mDirectories[identity] = index;
 		mNodes.emplace_back();
 		mNodes[index].Directory = true;
-		mNodes[index].Before = mBefore.withIdentity( identity );
-		mNodes[index].After = mAfter.withIdentity( identity );
+		mNodes[index].Before = mBefore.directory( identity );
+		mNodes[index].After = mAfter.directory( identity );
 		resolve( index );
 		return index;
 	}
@@ -1217,12 +1238,12 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		after.index();
 		for ( Event* added : unpairedDirectories ) {
 			const FileIdentity identity = added->Info.identity();
-			if ( before.withIdentity( identity ) && !after.withIdentity( identity ) )
+			if ( before.directory( identity ) && !after.directory( identity ) )
 				added->WithContents = true;
 		}
 
-		// The entries whose path below the root differs, by identity. Hard links share one:
-		// the links whose paths match are kept, and the rest are deleted and created.
+		// The entries whose path below the root differs, by identity and kind. Hard links share
+		// one: the links whose paths match are kept, and the rest are deleted and created.
 		auto samePlace = [&]( const FileInfo* a, const FileInfo* b ) {
 			return a->Filepath.compare( before.RootLength, std::string::npos, b->Filepath,
 										after.RootLength, std::string::npos ) == 0;
@@ -1230,15 +1251,15 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		std::vector<std::pair<const FileInfo*, const FileInfo*>> differing;
 		const FileInfo* const none = NULL;
 		for ( size_t b = 0, a = 0; b < before.ById.size() || a < after.ById.size(); ) {
-			const FileIdentity identity =
-				b < before.ById.size() && ( a == after.ById.size() ||
-											before.ById[b].Identity < after.ById[a].Identity )
-					? before.ById[b].Identity
-					: after.ById[a].Identity;
+			const TreeEntry& key =
+				b < before.ById.size() &&
+						( a == after.ById.size() || before.ById[b].before( after.ById[a] ) )
+					? before.ById[b]
+					: after.ById[a];
 			size_t bEnd = b, aEnd = a;
-			while ( bEnd < before.ById.size() && before.ById[bEnd].Identity == identity )
+			while ( bEnd < before.ById.size() && before.ById[bEnd].sameEntry( key ) )
 				bEnd++;
-			while ( aEnd < after.ById.size() && after.ById[aEnd].Identity == identity )
+			while ( aEnd < after.ById.size() && after.ById[aEnd].sameEntry( key ) )
 				aEnd++;
 			if ( bEnd - b <= 1 && aEnd - a <= 1 ) {
 				// The common case, without allocating.
@@ -1249,20 +1270,23 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				else if ( !samePlace( before.ById[b].Info, after.ById[a].Info ) )
 					differing.emplace_back( before.ById[b].Info, after.ById[a].Info );
 			} else {
+				// Both ends are sorted by path below the root: the links at the same path are
+				// found in one pass.
 				std::vector<const FileInfo*> gone, come;
-				for ( size_t i = b; i < bEnd; i++ )
-					gone.push_back( before.ById[i].Info );
-				for ( size_t i = a; i < aEnd; i++ )
-					come.push_back( after.ById[i].Info );
-				for ( auto g = gone.begin(); g != gone.end(); ) {
-					auto c = std::find_if( come.begin(), come.end(), [&]( const FileInfo* entry ) {
-						return samePlace( *g, entry );
-					} );
-					if ( c != come.end() ) {
-						come.erase( c );
-						g = gone.erase( g );
+				for ( size_t i = b, j = a; i < bEnd || j < aEnd; ) {
+					const int order = i == bEnd	  ? 1
+									  : j == aEnd ? -1
+												  : before.ById[i].Info->Filepath.compare(
+														before.RootLength, std::string::npos,
+														after.ById[j].Info->Filepath,
+														after.RootLength, std::string::npos );
+					if ( 0 == order ) {
+						i++;
+						j++;
+					} else if ( order < 0 ) {
+						gone.push_back( before.ById[i++].Info );
 					} else {
-						++g;
+						come.push_back( after.ById[j++].Info );
 					}
 				}
 				if ( gone.size() == 1 && come.size() == 1 ) {
@@ -1314,7 +1338,8 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				if ( relative.find( FileSystem::getOSSlash(), prefix.size() ) != std::string::npos )
 					continue;
 				const FileInfo* now = after.atPath( relative );
-				if ( now && now->identity() == ( *it )->identity() )
+				if ( now && now->identity() == ( *it )->identity() &&
+					 kindOf( now ) == kindOf( *it ) )
 					planner.consider( *it, now );
 			}
 		}
@@ -1440,7 +1465,13 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 
 	// The moves out of a deleted directory, by its Delete: it waits for them, or a listener
 	// would no longer find their sources. A directory's Delete comes before the Deletes inside it.
-	std::unordered_map<size_t, std::vector<size_t>> movesOut;
+	// Moves are resolved once, so each Delete keeps the first of its moves that may not be: one
+	// that waits for many is woken as many times, and looks at each of them once.
+	struct MovesOut {
+		std::vector<size_t> Moves;
+		size_t Next{ 0 };
+	};
+	std::unordered_map<size_t, MovesOut> movesOut;
 	bool deletesDirectories = false;
 	for ( size_t i = 0; i < mEvents.size() && !deletesDirectories; i++ )
 		deletesDirectories = Actions::Delete == mEvents[i].ActionType &&
@@ -1471,7 +1502,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 					  source != sources.end() &&
 					  0 == source->first->compare( 0, below.size(), below );
 					  ++source )
-					movesOut[i].push_back( source->second );
+					movesOut[i].Moves.push_back( source->second );
 			}
 		}
 	}
@@ -1484,11 +1515,13 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		const size_t move = moves->MoveOf[i];
 		if ( Moves::None == move ) {
 			auto out = movesOut.find( i );
-			if ( out != movesOut.end() )
-				for ( size_t pending : out->second )
-					if ( MoveState::Unresolved == state[pending] )
-						return pending;
-			return Moves::None;
+			if ( out == movesOut.end() )
+				return Moves::None;
+			MovesOut& pending = out->second;
+			while ( pending.Next < pending.Moves.size() &&
+					MoveState::Unresolved != state[pending.Moves[pending.Next]] )
+				pending.Next++;
+			return pending.Next < pending.Moves.size() ? pending.Moves[pending.Next] : Moves::None;
 		}
 		return move != i && mEvents[move].Owner != mEvents[i].Owner &&
 					   MoveState::Unresolved == state[move]
