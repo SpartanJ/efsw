@@ -1,5 +1,6 @@
 #include "test_util.hpp"
 #include "utest.h"
+#include <algorithm>
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileInfo.hpp>
 #include <efsw/FileSystem.hpp>
@@ -302,6 +303,212 @@ UTEST( FileActionBatch, HoldKeepsCompleteDirectoryMove ) {
 	EXPECT_EQ( 2u, listener.getEventCount() );
 	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Delete, "unrelated.txt" ) );
 	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Delete, "child.txt" ) );
+}
+
+// Entries whose names start with a moved directory's name, as dir2, dir-x and dir.txt start with
+// dir, are not inside it: their events are their own. '-' and '.' sort before the separator.
+UTEST( FileActionBatch, PrefixSiblingsStayOutOfAMovedDirectory ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "dir", true );
+	efsw::FileInfo child = file.make( "dir/child.txt" );
+	file.make( "dir2", true );
+	file.make( "dir-x", true );
+	efsw::FileInfo gone2 = file.make( "dir2/gone.txt" );
+	efsw::FileInfo goneX = file.make( "dir-x/gone.txt" );
+	efsw::FileInfo goneTxt = file.make( "dir.txt" );
+	efsw::FileInfo new2 = file.make( "dir2/new.txt" );
+	efsw::FileInfo newX = file.make( "dir-x/new.txt" );
+	efsw::FileInfo newTxt = file.make( "new.txt" );
+	first.report( "/src/", "dir", efsw::Actions::Delete, directory );
+	first.report( "/src/dir/", "child.txt", efsw::Actions::Delete, child );
+	first.report( "/src/dir2/", "gone2.txt", efsw::Actions::Delete, gone2 );
+	first.report( "/src/dir-x/", "goneX.txt", efsw::Actions::Delete, goneX );
+	first.report( "/src/", "dir.txt", efsw::Actions::Delete, goneTxt );
+	second.report( "/dst/", "dir", efsw::Actions::Add, directory );
+	second.report( "/dst/dir/", "child.txt", efsw::Actions::Add, child );
+	second.report( "/dst/dir2/", "new2.txt", efsw::Actions::Add, new2 );
+	second.report( "/dst/dir-x/", "newX.txt", efsw::Actions::Add, newX );
+	second.report( "/dst/", "dir.txt", efsw::Actions::Add, newTxt );
+
+	runPass( batch, watches );
+	EXPECT_EQ( 7u, listener.getEventCount() );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "dir" ) );
+	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Delete, "child.txt" ) );
+	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Add, "child.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "gone2.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "goneX.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "dir.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "new2.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "newX.txt" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "dir.txt" ) );
+}
+
+// A directory moved with a directory inside it, and a file inside that: the whole tree is one
+// move, reported by a single Moved event, whatever order the events were collected in.
+UTEST( FileActionBatch, NestedDirectoryMoveIsOneMovedEvent ) {
+	START_BATCH_TEST();
+	efsw::FileInfo outer = file.make( "outer", true );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/leaf.txt" );
+	for ( int deepestFirst = 0; deepestFirst < 2; deepestFirst++ ) {
+		listener.clearEvents();
+		if ( deepestFirst ) {
+			first.report( "/src/outer/inner/", "leaf.txt", efsw::Actions::Delete, leaf );
+			first.report( "/src/outer/", "inner", efsw::Actions::Delete, inner );
+			first.report( "/src/", "outer", efsw::Actions::Delete, outer );
+			second.report( "/dst/outer/inner/", "leaf.txt", efsw::Actions::Add, leaf );
+			second.report( "/dst/outer/", "inner", efsw::Actions::Add, inner );
+			second.report( "/dst/", "outer", efsw::Actions::Add, outer );
+		} else {
+			first.report( "/src/", "outer", efsw::Actions::Delete, outer );
+			first.report( "/src/outer/", "inner", efsw::Actions::Delete, inner );
+			first.report( "/src/outer/inner/", "leaf.txt", efsw::Actions::Delete, leaf );
+			second.report( "/dst/", "outer", efsw::Actions::Add, outer );
+			second.report( "/dst/outer/", "inner", efsw::Actions::Add, inner );
+			second.report( "/dst/outer/inner/", "leaf.txt", efsw::Actions::Add, leaf );
+		}
+		runPass( batch, watches );
+		auto events = listener.getEvents();
+		EXPECT_EQ( 1u, events.size() );
+		EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	}
+}
+
+// Entries renamed or relocated inside a directory moved as a whole are moves of their own: the
+// directory's Moved event does not report their new names. A renamed directory's contents keep
+// their path relative to it, and are reported by its Moved event. An entry moved into the tree
+// from elsewhere is a move of its own too.
+UTEST( FileActionBatch, RenamesInsideAMovedTreeAreMovesOfTheirOwn ) {
+	START_BATCH_TEST();
+	efsw::FileInfo outer = file.make( "outer", true );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/leaf.txt" );
+	efsw::FileInfo sub = file.make( "outer/sub", true );
+	efsw::FileInfo relocated = file.make( "outer/relocated.txt" );
+	efsw::FileInfo renamed = file.make( "outer/renamed.txt" );
+	efsw::FileInfo kept = file.make( "outer/kept.txt" );
+	efsw::FileInfo elsewhere = file.make( "elsewhere.txt" );
+	for ( int deepestFirst = 0; deepestFirst < 2; deepestFirst++ ) {
+		listener.clearEvents();
+		std::vector<std::pair<std::string, std::string>> sources{
+			{ "/src/", "outer" },
+			{ "/src/outer/", "inner" },
+			{ "/src/outer/inner/", "leaf.txt" },
+			{ "/src/outer/", "sub" },
+			{ "/src/outer/", "relocated.txt" },
+			{ "/src/outer/", "renamed.txt" },
+			{ "/src/outer/", "kept.txt" },
+			{ "/src/", "elsewhere.txt" } };
+		std::vector<std::pair<std::string, std::string>> destinations{
+			{ "/dst/", "outer" },
+			{ "/dst/outer/", "inner2" },
+			{ "/dst/outer/inner2/", "leaf.txt" },
+			{ "/dst/outer/", "sub" },
+			{ "/dst/outer/sub/", "relocated.txt" },
+			{ "/dst/outer/", "renamed2.txt" },
+			{ "/dst/outer/", "kept.txt" },
+			{ "/dst/outer/", "elsewhere.txt" } };
+		std::vector<efsw::FileInfo> infos{ outer,	  inner,   leaf, sub,
+										   relocated, renamed, kept, elsewhere };
+		for ( size_t n = 0; n < infos.size(); n++ ) {
+			size_t i = deepestFirst ? infos.size() - 1 - n : n;
+			first.report( sources[i].first, sources[i].second, efsw::Actions::Delete, infos[i] );
+		}
+		for ( size_t n = 0; n < infos.size(); n++ ) {
+			size_t i = deepestFirst ? infos.size() - 1 - n : n;
+			second.report( destinations[i].first, destinations[i].second, efsw::Actions::Add,
+						   infos[i] );
+		}
+		runPass( batch, watches );
+
+		auto events = listener.getEvents();
+		EXPECT_EQ( 5u, events.size() );
+		for ( const auto& event : events )
+			EXPECT_EQ( efsw::Actions::Moved, std::get<0>( event ) );
+		// The enclosing move comes first: the others happened in its new tree.
+		EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "inner2" ) );
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "relocated.txt" ) );
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "renamed2.txt" ) );
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "elsewhere.txt" ) );
+		std::string innerSource( "/src/outer/inner" );
+		std::replace( innerSource.begin(), innerSource.end(), '/', efsw::FileSystem::getOSSlash() );
+		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "inner2",
+										  efsw::FileSystem::canonicalSourcePath( innerSource ) ) );
+	}
+}
+
+namespace {
+
+/// A directory moved with a directory renamed inside it and a file modified there, collected
+/// deepest first, as a backend that scans deeper directories first collects them.
+/// @param removal 0: none. 1: the destination's listener removes the source registration on
+/// its first event. 2: an earlier registration's listener removes the destination's.
+void runNestedOrder( int removal, MovedFile& file, int* utest_result ) {
+	efsw::FileActionBatch batch;
+	TestListener sourceListener;
+	RemovingListener destinationListener;
+	RemovingListener earlierListener;
+	FakeWatch earlier( 3, batch, &earlierListener );
+	FakeWatch source( 1, batch, &sourceListener );
+	FakeWatch destination( 2, batch, &destinationListener );
+	if ( removal == 1 ) {
+		destinationListener.Batch = &batch;
+		destinationListener.Removed = &source;
+	} else if ( removal == 2 ) {
+		earlierListener.Batch = &batch;
+		earlierListener.Removed = &destination;
+	}
+	const std::string tag = std::to_string( removal );
+	efsw::FileInfo outer = file.make( "outer" + tag, true );
+	efsw::FileInfo inner = file.make( "outer" + tag + "/inner", true );
+	efsw::FileInfo leaf = file.make( "outer" + tag + "/inner/leaf.txt" );
+	efsw::FileInfo unrelated = file.make( "unrelated" + tag + ".txt" );
+
+	earlier.report( "/other/", "unrelated.txt", efsw::Actions::Add, unrelated );
+	source.report( "/src/outer/inner/", "leaf.txt", efsw::Actions::Delete, leaf );
+	source.report( "/src/outer/", "inner", efsw::Actions::Delete, inner );
+	source.report( "/src/", "outer", efsw::Actions::Delete, outer );
+	destination.report( "/dst/outer/inner2/", "leaf.txt", efsw::Actions::Add, leaf );
+	destination.report( "/dst/outer/inner2/", "leaf.txt", efsw::Actions::Modified, leaf );
+	destination.report( "/dst/outer/", "inner2", efsw::Actions::Add, inner );
+	destination.report( "/dst/", "outer", efsw::Actions::Add, outer );
+	runPass( batch, { &earlier, &source, &destination } );
+
+	if ( removal == 2 ) {
+		// The moves fell apart with their destination: the source gets its own events, in order.
+		EXPECT_EQ( 0u, destinationListener.getEventCount() );
+		auto events = sourceListener.getEvents();
+		ASSERT_EQ( 3u, events.size() );
+		EXPECT_TRUE( std::get<1>( events[0] ) == "leaf.txt" );
+		EXPECT_TRUE( std::get<1>( events[1] ) == "inner" );
+		EXPECT_TRUE( std::get<1>( events[2] ) == "outer" );
+		for ( const auto& event : events )
+			EXPECT_EQ( efsw::Actions::Delete, std::get<0>( event ) );
+		return;
+	}
+	EXPECT_EQ( 0u, sourceListener.getEventCount() );
+	auto events = destinationListener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "outer" );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "inner2" );
+	EXPECT_EQ( efsw::Actions::Modified, std::get<0>( events[2] ) );
+	EXPECT_TRUE( std::get<1>( events[2] ) == "leaf.txt" );
+}
+
+} // namespace
+
+// Events in a moved directory's new tree are delivered after its Moved event, and those in a
+// directory moved inside it after that one's, however they were collected, also when a
+// listener removes the source or the destination registration during delivery.
+UTEST( FileActionBatch, NestedEventsFollowTheirEnclosingMove ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runNestedOrder( 0, file, utest_result );
+	runNestedOrder( 1, file, utest_result );
+	runNestedOrder( 2, file, utest_result );
 }
 
 // A complete move whose destination comes after a held event of its watch is held with it:

@@ -201,6 +201,8 @@ void FileActionBatch::finishPass() {
 		hasMoves = matchMoves( moves );
 	mSegments.clear();
 	mReleased = 0;
+	if ( hasMoves )
+		followEnclosingMoves( moves );
 	deliver( NULL, hasMoves ? &moves : NULL );
 }
 
@@ -239,15 +241,29 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			identity.Deleted.push_back( i );
 	}
 
-	// The Add and Delete positions of each identity with one of each, by Add position: in
-	// collection order, which decides the moved directory a nested move's events belong to.
+	// The Add and Delete positions of each identity with one of each. Directories come first,
+	// outermost first, by destination path: a moved directory claims the events inside it
+	// before the moves nested in it are considered. Then the rest, in collection order.
 	std::vector<std::pair<size_t, size_t>> pairs;
 	for ( const auto& identity : candidates ) {
 		const Candidates& entries = identity.second;
 		if ( entries.Created.size() == 1 && entries.Deleted.size() == 1 )
 			pairs.emplace_back( entries.Created[0], entries.Deleted[0] );
 	}
-	std::sort( pairs.begin(), pairs.end() );
+	std::sort( pairs.begin(), pairs.end(),
+			   [&]( const std::pair<size_t, size_t>& a, const std::pair<size_t, size_t>& b ) {
+				   const bool aDirectory = mEvents[a.second].Info.isDirectory();
+				   const bool bDirectory = mEvents[b.second].Info.isDirectory();
+				   if ( aDirectory != bDirectory )
+					   return aDirectory;
+				   if ( aDirectory ) {
+					   const int order =
+						   mEvents[a.first].Info.Filepath.compare( mEvents[b.first].Info.Filepath );
+					   if ( order != 0 )
+						   return order < 0;
+				   }
+				   return a.first < b.first;
+			   } );
 
 	// The Deletes and Adds by path, built for the first directory move: the events inside a
 	// directory are a range of each.
@@ -256,9 +272,11 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 	auto byPath = [&]( size_t a, size_t b ) {
 		return mEvents[a].Info.Filepath < mEvents[b].Info.Filepath;
 	};
-	// The events inside a moved directory, not part of another move, belong to its move.
+	// The events inside a moved directory belong to its move, unless part of another move.
+	// @param enclosing The move that claimed the directory's own event, if any: a directory
+	// renamed or relocated inside a tree moved as a whole takes its contents back from it.
 	auto claimContents = [&]( const std::vector<size_t>& byPathIndex, const std::string& directory,
-							  size_t move ) {
+							  size_t move, size_t enclosing ) {
 		if ( directory.empty() )
 			return;
 		std::string prefix( directory );
@@ -271,15 +289,39 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 			const std::string& path = mEvents[*it].Info.Filepath;
 			if ( path.compare( 0, prefix.size(), prefix ) != 0 )
 				break;
-			if ( path.size() > prefix.size() && moves.MoveOf[*it] == Moves::None )
+			if ( path.size() > prefix.size() &&
+				 ( moves.MoveOf[*it] == Moves::None ||
+				   ( Moves::None != enclosing && moves.MoveOf[*it] == enclosing ) ) )
 				moves.MoveOf[*it] = move;
 		}
+	};
+
+	// Whether an entry keeps its path relative to the directory move that encloses both of its
+	// halves: then that move's Moved event reports it. A rename or relocation inside the moved
+	// tree does not, and is a move of its own.
+	auto keepsRelativePath = [&]( size_t enclosing, size_t deleted, size_t created ) {
+		// Lengths of the enclosing move's paths, without a trailing separator.
+		auto length = []( const std::string& directory ) {
+			return directory.empty() || directory.back() != FileSystem::getOSSlash()
+					   ? directory.size()
+					   : directory.size() - 1;
+		};
+		const size_t sourceLength = length( mEvents[moves.SourceOf[enclosing]].Info.Filepath );
+		const size_t destinationLength = length( mEvents[enclosing].Info.Filepath );
+		return mEvents[deleted].Info.Filepath.compare( sourceLength, std::string::npos,
+													   mEvents[created].Info.Filepath,
+													   destinationLength, std::string::npos ) == 0;
 	};
 
 	bool hasMove = false;
 	for ( const auto& pair : pairs ) {
 		const size_t created = pair.first;
 		const size_t deleted = pair.second;
+		const size_t enclosingSource = moves.MoveOf[deleted];
+		const size_t enclosingDestination = moves.MoveOf[created];
+		if ( Moves::None != enclosingSource && enclosingSource == enclosingDestination &&
+			 keepsRelativePath( enclosingSource, deleted, created ) )
+			continue;
 		const Event& source = mEvents[deleted];
 		const Event& destination = mEvents[created];
 		if ( source.Directory == destination.Directory ||
@@ -305,11 +347,97 @@ bool FileActionBatch::matchMoves( Moves& moves ) const {
 				std::sort( deletesByPath.begin(), deletesByPath.end(), byPath );
 				std::sort( addsByPath.begin(), addsByPath.end(), byPath );
 			}
-			claimContents( deletesByPath, source.Info.Filepath, created );
-			claimContents( addsByPath, destination.Info.Filepath, created );
+			claimContents( deletesByPath, source.Info.Filepath, created, enclosingSource );
+			claimContents( addsByPath, destination.Info.Filepath, created, enclosingDestination );
 		}
 	}
 	return hasMove;
+}
+
+void FileActionBatch::followEnclosingMoves( Moves& moves ) {
+	const size_t count = mEvents.size();
+	// The events that may refer to a moved directory's new tree, by path. Deletes refer to
+	// what was there before: they are not moved past the directory's arrival.
+	std::vector<size_t> byPath;
+	for ( size_t i = 0; i < count; i++ )
+		if ( mEvents[i].ActionType != Actions::Delete && !mEvents[i].Info.Filepath.empty() )
+			byPath.push_back( i );
+
+	// For each event, the deepest directory move after it whose destination contains it. That
+	// move follows the moves enclosing it the same way, so all of them come first.
+	std::vector<size_t> after( count, Moves::None );
+	bool sorted = false;
+	bool reorders = false;
+	for ( size_t move = 0; move < count; move++ ) {
+		if ( moves.MoveOf[move] != move || !mEvents[move].Info.isDirectory() )
+			continue;
+		if ( !sorted ) {
+			std::sort( byPath.begin(), byPath.end(), [&]( size_t a, size_t b ) {
+				return mEvents[a].Info.Filepath < mEvents[b].Info.Filepath;
+			} );
+			sorted = true;
+		}
+		std::string prefix( mEvents[move].Info.Filepath );
+		if ( prefix.back() != FileSystem::getOSSlash() )
+			prefix += FileSystem::getOSSlash();
+		auto it = std::lower_bound(
+			byPath.begin(), byPath.end(), prefix,
+			[&]( size_t i, const std::string& path ) { return mEvents[i].Info.Filepath < path; } );
+		for ( ; it != byPath.end(); ++it ) {
+			const std::string& path = mEvents[*it].Info.Filepath;
+			if ( path.compare( 0, prefix.size(), prefix ) != 0 )
+				break;
+			if ( *it < move && path.size() > prefix.size() &&
+				 ( Moves::None == after[*it] || mEvents[after[*it]].Info.Filepath.size() <
+													mEvents[move].Info.Filepath.size() ) ) {
+				after[*it] = move;
+				reorders = true;
+			}
+		}
+	}
+	if ( !reorders )
+		return;
+
+	// Each event that follows a move goes right after it, in collection order, each followed by
+	// its own followers. A move is always later than the events that follow it, so this ends.
+	std::vector<std::vector<size_t>> followers( count );
+	for ( size_t i = 0; i < count; i++ )
+		if ( Moves::None != after[i] )
+			followers[after[i]].push_back( i );
+	std::vector<size_t> order;
+	order.reserve( count );
+	std::vector<size_t> stack;
+	for ( size_t i = 0; i < count; i++ ) {
+		if ( Moves::None != after[i] )
+			continue;
+		stack.push_back( i );
+		while ( !stack.empty() ) {
+			const size_t next = stack.back();
+			stack.pop_back();
+			order.push_back( next );
+			const std::vector<size_t>& list = followers[next];
+			for ( auto follower = list.rbegin(); follower != list.rend(); ++follower )
+				stack.push_back( *follower );
+		}
+	}
+
+	std::vector<size_t> position( count );
+	for ( size_t i = 0; i < count; i++ )
+		position[order[i]] = i;
+	auto remap = [&]( const std::vector<size_t>& links ) {
+		std::vector<size_t> remapped( count, Moves::None );
+		for ( size_t i = 0; i < count; i++ )
+			if ( Moves::None != links[i] )
+				remapped[position[i]] = position[links[i]];
+		return remapped;
+	};
+	moves.MoveOf = remap( moves.MoveOf );
+	moves.SourceOf = remap( moves.SourceOf );
+	std::vector<Event> events;
+	events.reserve( count );
+	for ( size_t i : order )
+		events.push_back( std::move( mEvents[i] ) );
+	mEvents.swap( events );
 }
 
 void FileActionBatch::deliverEvent( FileWatchListener* listener, size_t index ) {
@@ -448,6 +576,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 void FileActionBatch::dispatch( FileWatchListener* listener, bool detectMoves ) {
 	Moves moves;
 	bool hasMoves = detectMoves && matchMoves( moves );
+	if ( hasMoves )
+		followEnclosingMoves( moves );
 	deliver( listener, hasMoves ? &moves : NULL );
 }
 

@@ -112,6 +112,11 @@ class FileActionBatch {
 	/// @return False when the batch has no move.
 	bool matchMoves( Moves& moves ) const;
 
+	/// Places the events that refer to the tree under a moved directory's destination, collected
+	/// before its move, right after that move: a backend that scans deeper directories first
+	/// collects them first, but they must not reach a listener before the directory exists.
+	void followEnclosingMoves( Moves& moves );
+
 	/// Delivers the events, as Moved events for moves when given. Clears the batch.
 	void deliver( FileWatchListener* listener, const Moves* moves );
 

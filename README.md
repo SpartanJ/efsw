@@ -165,6 +165,12 @@ reported as `Delete` and `Add`. When registrations are nested, a watch
 that covers both paths reports the move itself, and a nested watch that covers only one path gets
 its half as `Delete` or `Add`.
 
+A directory moved as a whole is reported by its own `Moved` event only: the entries inside it,
+whose paths relative to it are unchanged, are not reported. An entry renamed or relocated inside
+the moved tree before the next polling pass is reported as a `Moved` event of its own, after the
+directory's. The kqueue backend does not report a moved directory's contents at its source, so it
+may miss such a rename or relocation inside a directory moved between two registrations.
+
 To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
 until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the
 polling backends, a `Delete` in a watch scanned after another watch with the option is delayed by

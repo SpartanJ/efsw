@@ -114,6 +114,34 @@ UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
 		watches.DestinationListener.waitForActions( efsw::Actions::Add, "after_remove.txt" ) );
 }
 
+// A directory moved between two registrations, then a directory inside it renamed, possibly
+// before the next scan: the rename is reported as a move of its own, besides the directory's,
+// and the file inside the renamed directory is reported by neither.
+UTEST( CrossWatchMoves, RenameInsideMovedDirectoryIsReported ) {
+	if ( !useGeneric ) {
+		UTEST_SKIP( "native backends report the rename as it happens, and kqueue does not report "
+					"a moved directory's contents at its source, so it misses such a rename" );
+	}
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/outer" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/outer/inner" ) );
+	EXPECT_TRUE( createFile( watches.Source + "/outer/inner/leaf.txt", "x" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/outer", watches.Destination + "/outer" ) );
+	EXPECT_TRUE( renameFile( watches.Destination + "/outer/inner",
+							 watches.Destination + "/outer/renamed" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "outer" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "renamed" ) );
+	sleepMs( 300 );
+	expectSingleMove( watches, "outer", utest_result );
+	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, "renamed" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, "inner" ) );
+	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Moved, "leaf.txt" ) );
+	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, "leaf.txt" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, "leaf.txt" ) );
+}
+
 // efsw-agent forwards a cross-watch Moved with an absolute old_path: the real event, converted
 // as the agent does, is absolute and names the source.
 UTEST( CrossWatchMoves, AgentKeepsAbsoluteSourceOfMoveFromAnotherWatch ) {
