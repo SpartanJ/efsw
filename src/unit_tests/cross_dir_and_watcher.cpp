@@ -23,7 +23,8 @@ UTEST( CrossDirMove, FileBetweenTwoWatchedDirs ) {
 	EXPECT_TRUE( watchId2 > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, watchedDir1 ) );
+	EXPECT_TRUE( waitForPending( listener, watchedDir2 ) );
 	listener.clearEvents();
 
 	std::string fileInDir2 = watchedDir2 + "/test_file.txt";
@@ -110,7 +111,7 @@ UTEST( RemoveWatch, StopEventsAfterRemoval ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	std::string filePath = testDir + "/file_before_remove.txt";
@@ -120,14 +121,15 @@ UTEST( RemoveWatch, StopEventsAfterRemoval ) {
 
 	fileWatcher.removeWatch( watchId );
 
-	sleepMs( 100 );
-
 	listener.clearEvents();
 
 	std::string filePath2 = testDir + "/file_after_remove.txt";
 	EXPECT_TRUE( createFile( filePath2, "content" ) );
 
-	sleepMs( 100 );
+	{
+		MarkerWatch marker( fileWatcher, testDir + "_marker" );
+		EXPECT_TRUE( marker.waitForAllPending() );
+	}
 
 	ASSERT_EQ( 0, static_cast<int>( listener.getEventCount() ) );
 

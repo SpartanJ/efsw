@@ -18,7 +18,7 @@ UTEST( Modified, SingleFile ) {
 
 	fileWatcher.watch();
 
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 
 	listener.clearEvents();
 
@@ -44,12 +44,11 @@ UTEST( Modified, MultipleWrites ) {
 
 	fileWatcher.watch();
 
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	for ( int i = 0; i < 3; i++ ) {
 		EXPECT_TRUE( writeFile( testFile, "line" + std::to_string( i + 2 ) + "\n" ) );
-		sleepMs( 50 );
 	}
 
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "test_file.txt" ) );
@@ -73,7 +72,7 @@ UTEST( Modified, AppendToFile ) {
 
 	fileWatcher.watch();
 
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( writeFile( testFile, "_appended" ) );

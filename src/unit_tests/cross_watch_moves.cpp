@@ -49,14 +49,16 @@ struct TwoWatches {
 		if ( SourceId <= 0 || DestinationId <= 0 )
 			return false;
 		Watcher.watch();
-		createFile( Source + "/source_ready" );
-		createFile( Destination + "/destination_ready" );
-		bool ready = SourceListener.waitForActions( efsw::Actions::Add, "source_ready" ) &&
-					 DestinationListener.waitForActions( efsw::Actions::Add, "destination_ready" );
-		sleepMs( 200 );
+		const bool ready = waitForPending();
 		SourceListener.clearEvents();
 		DestinationListener.clearEvents();
 		return ready;
+	}
+
+	/// Waits until both registrations delivered the events of the changes made so far.
+	bool waitForPending() {
+		return efsw_test::waitForPending( SourceListener, Source ) &&
+			   efsw_test::waitForPending( DestinationListener, Destination );
 	}
 };
 
@@ -99,7 +101,7 @@ UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
 	EXPECT_TRUE(
 		watches.DestinationListener.checkEvent( efsw::Actions::Moved, "sub", canonicalSource ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
@@ -108,7 +110,6 @@ UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
 
 	watches.Watcher.removeWatch( watches.SourceId );
 	watches.SourceId = 0;
-	sleepMs( 300 );
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/after_remove.txt", "x" ) );
 	EXPECT_TRUE(
 		watches.DestinationListener.waitForActions( efsw::Actions::Add, "after_remove.txt" ) );
@@ -133,7 +134,7 @@ UTEST( CrossWatchMoves, RenameInsideMovedDirectoryIsReported ) {
 							 watches.Destination + "/outer/renamed" ) );
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "outer" ) );
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "renamed" ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "outer", utest_result );
 	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, "renamed" ) );
 	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, "inner" ) );
@@ -213,14 +214,15 @@ UTEST( CrossWatchMoves, RemovingDestinationRemovesMovedSubtree ) {
 
 	watches.Watcher.removeWatch( watches.DestinationId );
 	watches.DestinationId = 0;
-	sleepMs( 300 );
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
 	watches.SourceListener.clearEvents();
 	watches.DestinationListener.clearEvents();
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/after.txt", "x" ) );
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/after.txt", "x" ) );
-	sleepMs( 500 );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
 	EXPECT_EQ( 0u, watches.DestinationListener.getEventCount() );
-	EXPECT_EQ( 0u, watches.SourceListener.getEventCount() );
+	// Only the marker.
+	EXPECT_EQ( 1u, watches.SourceListener.getEventCount() );
 }
 
 // Registrations are added and removed while directory trees move between them. Run under
@@ -274,7 +276,6 @@ UTEST( CrossWatchMoves, RegistrationChurnDuringMoves ) {
 	}
 	stop = true;
 	mover.join();
-	sleepMs( 300 );
 	EXPECT_EQ( 40, registered );
 
 	// The original registrations still work.
@@ -298,29 +299,29 @@ UTEST( CrossWatchMoves, MoveWithinRegistrationFollowsNewParent ) {
 		const efsw::WatchID id = watcher.addWatch( root, &listener, true, crossMoveOptions );
 		ASSERT_GT( id, 0 );
 		watcher.watch();
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
 
 		EXPECT_TRUE( renameFile( root + "/a/sub", root + "/b/sub" ) );
-		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "sub" ) ||
-					 listener.waitForActions( efsw::Actions::Add, "sub" ) );
-		sleepMs( 300 );
+		EXPECT_TRUE(
+			listener.waitForAnyAction( { efsw::Actions::Moved, efsw::Actions::Add }, "sub" ) );
+		EXPECT_TRUE( waitForPending( listener, root ) );
 		EXPECT_TRUE( createFile( root + "/b/sub/before.txt", "x" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "before.txt" ) );
 
 		// The former parent goes away.
 		EXPECT_TRUE( removeDirectory( root + "/a" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "a" ) );
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
 		EXPECT_TRUE( createFile( root + "/b/sub/after.txt", "x" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "after.txt" ) );
 
 		// The new parent goes away, then comes back: it is watched again.
 		EXPECT_TRUE( removeDirectory( root + "/b" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "b" ) );
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
 		EXPECT_TRUE( createDirectory( root + "/b" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "b" ) );
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
 		EXPECT_TRUE( createFile( root + "/b/again.txt", "x" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "again.txt" ) );
 		watcher.removeWatch( id );
@@ -343,12 +344,20 @@ UTEST( CrossWatchMoves, SelfRemovalStopsLaterCallbacksOfAnAction ) {
 	struct RemovingListener : TestListener {
 		efsw::FileWatcher* Watcher{ NULL };
 		std::atomic<efsw::WatchID> Id{ 0 };
+		/// The events recorded when the registration was removed: none may follow.
+		std::atomic<size_t> CountAtRemoval{ 0 };
 		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
 							   efsw::Action action, const std::string& old = "" ) override {
 			TestListener::handleFileAction( id, dir, file, action, old );
+			// Only the move removes it: FSEvents may still report changes made before the
+			// registration, such as the setup's.
+			if ( file != "moved.txt" )
+				return;
 			efsw::WatchID registered = Id.exchange( 0 );
-			if ( registered > 0 )
+			if ( registered > 0 ) {
+				CountAtRemoval = getEventCount();
 				Watcher->removeWatch( registered );
+			}
 		}
 	} listener;
 	{
@@ -356,14 +365,17 @@ UTEST( CrossWatchMoves, SelfRemovalStopsLaterCallbacksOfAnAction ) {
 		listener.Watcher = &watcher;
 		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
 		ASSERT_GT( id, 0 );
+		MarkerWatch marker( watcher, root + "_marker" );
 		watcher.watch();
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		listener.clearEvents();
 		listener.Id = id;
 
 		EXPECT_TRUE( renameFile( outside + "/moved.txt", root + "/moved.txt" ) );
 		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "moved.txt" ) );
-		sleepMs( 500 );
-		EXPECT_EQ( 1u, listener.getEventCount() );
+		EXPECT_TRUE( marker.waitForAllPending() );
+		EXPECT_GT( listener.CountAtRemoval.load(), 0u );
+		EXPECT_EQ( listener.CountAtRemoval.load(), listener.getEventCount() );
 	}
 	removeDirectory( root );
 	removeDirectory( outside );
@@ -388,12 +400,20 @@ UTEST( CrossWatchMoves, SelfRemovalDuringDiscoveryStopsTheTree ) {
 	struct RemovingListener : TestListener {
 		efsw::FileWatcher* Watcher{ NULL };
 		std::atomic<efsw::WatchID> Id{ 0 };
+		/// The events recorded when the registration was removed: none may follow.
+		std::atomic<size_t> CountAtRemoval{ 0 };
 		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
 							   efsw::Action action, const std::string& old = "" ) override {
 			TestListener::handleFileAction( id, dir, file, action, old );
+			// Only the moved tree removes it: FSEvents may still report changes made before
+			// the registration, such as the setup's.
+			if ( ( dir + file ).find( "moved" ) == std::string::npos )
+				return;
 			efsw::WatchID registered = Id.exchange( 0 );
-			if ( registered > 0 )
+			if ( registered > 0 ) {
+				CountAtRemoval = getEventCount();
 				Watcher->removeWatch( registered );
+			}
 		}
 	} listener;
 	{
@@ -402,19 +422,20 @@ UTEST( CrossWatchMoves, SelfRemovalDuringDiscoveryStopsTheTree ) {
 		const efsw::WatchID id = watcher.addWatch(
 			root, &listener, true, { { efsw::Options::LinuxProduceSyntheticEvents, 1 } } );
 		ASSERT_GT( id, 0 );
+		MarkerWatch marker( watcher, root + "_marker" );
 		watcher.watch();
-		sleepMs( 300 );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		listener.clearEvents();
 		listener.Id = id;
 
 		EXPECT_TRUE( renameFile( outside + "/moved", root + "/moved" ) );
-		for ( int i = 0; i < 200 && listener.getEventCount() == 0; i++ )
+		for ( int i = 0; i < 200 && listener.CountAtRemoval == 0; i++ )
 			sleepMs( 10 );
-		EXPECT_EQ( 1u, listener.getEventCount() );
-		sleepMs( 300 );
+		EXPECT_GT( listener.CountAtRemoval.load(), 0u );
 		EXPECT_TRUE( createFile( root + "/moved/nested/after.txt", "x" ) );
 		EXPECT_TRUE( createFile( root + "/moved/nested/deeper/after.txt", "x" ) );
-		sleepMs( 500 );
-		EXPECT_EQ( 1u, listener.getEventCount() );
+		EXPECT_TRUE( marker.waitForAllPending() );
+		EXPECT_EQ( listener.CountAtRemoval.load(), listener.getEventCount() );
 	}
 	removeDirectory( root );
 	removeDirectory( outside );
@@ -488,8 +509,8 @@ UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
 				options = crossMoveOptions;
 			const efsw::WatchID id = watcher.addWatch( root, &listener, true, options );
 			ASSERT_GT( id, 0 );
+			MarkerWatch marker( watcher, root + "_marker" );
 			watcher.watch();
-			sleepMs( 300 );
 			listener.RemoveOnFirstEvent = id;
 
 			burst( root + "/sub0", "pending" );
@@ -500,7 +521,7 @@ UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
 			EXPECT_TRUE( listener.Removed.load() );
 			burst( root + "/sub0", "later" );
 			burst( root, "later" );
-			sleepMs( 500 );
+			EXPECT_TRUE( marker.waitForAllPending() );
 		}
 		EXPECT_EQ( 0, listener.EventsAfterRemoval.load() );
 		removeDirectory( root );
@@ -521,14 +542,13 @@ UTEST( CrossWatchMoves, RemovingAnotherRegistrationWithPendingEvents ) {
 	const std::string second = watches.Destination + "/second";
 	EXPECT_TRUE( createDirectory( first ) );
 	EXPECT_TRUE( createDirectory( second ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( watches.waitForPending() );
 	const efsw::WatchID firstId =
 		watches.Watcher.addWatch( first, &remover, true, crossMoveOptions );
 	const efsw::WatchID secondId =
 		watches.Watcher.addWatch( second, &removed, true, crossMoveOptions );
 	ASSERT_GT( firstId, 0 );
 	ASSERT_GT( secondId, 0 );
-	sleepMs( 300 );
 	remover.RemoveOnFirstEvent = secondId;
 
 	for ( int i = 0; i < 20; i++ ) {
@@ -539,7 +559,7 @@ UTEST( CrossWatchMoves, RemovingAnotherRegistrationWithPendingEvents ) {
 		sleepMs( 10 );
 	EXPECT_TRUE( remover.Removed.load() );
 	burst( second, "later" );
-	sleepMs( 500 );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
 	watches.Watcher.removeWatch( firstId );
 	EXPECT_EQ( 0, removed.EventsAfterRemoval.load() );
 }
@@ -567,7 +587,6 @@ UTEST( CrossWatchMoves, RemoveWatchWaitsForRunningCallback ) {
 	EXPECT_TRUE( createDirectory( directory ) );
 	const efsw::WatchID id = watches.Watcher.addWatch( directory, &slow, true );
 	ASSERT_GT( id, 0 );
-	sleepMs( 300 );
 
 	EXPECT_TRUE( createFile( directory + "/slow.txt", "x" ) );
 	for ( int i = 0; i < 300 && !slow.Entered; i++ )
@@ -609,15 +628,24 @@ UTEST( CrossWatchMoves, RepeatedAddRemoveKeepsDescriptors ) {
 	watcher.watch();
 	// The first registration may set up state that lives as long as the file watcher.
 	watcher.removeWatch( watcher.addWatch( root, &listener, true ) );
-	sleepMs( 200 );
-	const int before = openDescriptors();
+	// Counted once it is stable: a backend may close descriptors after removeWatch() returns.
+	int before = openDescriptors();
+	for ( int i = 0; i < 300; i++ ) {
+		sleepMs( 10 );
+		const int now = openDescriptors();
+		if ( now == before )
+			break;
+		before = now;
+	}
 	for ( int i = 0; i < 20; i++ ) {
 		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
 		EXPECT_GT( id, 0 );
-		sleepMs( 20 );
+		sleepMs( 5 );
 		watcher.removeWatch( id );
 	}
-	sleepMs( 300 );
+	// A backend may close descriptors after removeWatch() returns.
+	for ( int i = 0; i < 300 && openDescriptors() != before; i++ )
+		sleepMs( 10 );
 	EXPECT_EQ( before, openDescriptors() );
 	removeDirectory( root );
 }
@@ -645,7 +673,7 @@ UTEST( CrossWatchMoves, DirectoriesDuringMovesOfRegistration ) {
 		const bool out = i % 2 == 0;
 		renameFile( ( out ? watches.Source : watches.Destination ) + "/holder",
 					( out ? watches.Destination : watches.Source ) + "/holder" );
-		sleepMs( 20 );
+		sleepMs( 5 );
 	}
 	stop = true;
 	reader.join();
@@ -662,7 +690,7 @@ UTEST( CrossWatchMoves, DirectoryMoveFromNonRecursiveAddsCoverage ) {
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
@@ -678,11 +706,11 @@ UTEST( CrossWatchMoves, DirectoryMoveToNonRecursiveStopsSourceReports ) {
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
-	sleepMs( 500 );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
 	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Add, "inside.txt" ) );
 }
 
@@ -693,7 +721,7 @@ UTEST( CrossWatchMoves, CreateThenModifyKeepsOrder ) {
 
 	EXPECT_TRUE( createFile( watches.Source + "/written.txt", "content" ) );
 	EXPECT_TRUE( watches.SourceListener.waitForActions( efsw::Actions::Add, "written.txt" ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
 	const int added = watches.SourceListener.indexOf( efsw::Actions::Add, "written.txt" );
 	const int modified = watches.SourceListener.indexOf( efsw::Actions::Modified, "written.txt" );
 	EXPECT_NE( -1, added );
@@ -717,7 +745,7 @@ UTEST( CrossWatchMoves, MoveIntoNewDirectoryFollowsItsAdd ) {
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "newparent" ) );
 	EXPECT_TRUE(
 		watches.DestinationListener.waitForActions( efsw::Actions::Delete, "unrelated.txt" ) );
-	sleepMs( 500 );
+	EXPECT_TRUE( watches.waitForPending() );
 
 	const int parent = watches.DestinationListener.indexOf( efsw::Actions::Add, "newparent" );
 	int moved = watches.DestinationListener.indexOf( efsw::Actions::Moved, "moved" );
@@ -735,12 +763,11 @@ UTEST( CrossWatchMoves, CreateThenDeleteKeepsOrder ) {
 
 	EXPECT_TRUE( createFile( watches.Source + "/temporary.txt", "content" ) );
 	EXPECT_TRUE( removeFile( watches.Source + "/temporary.txt" ) );
-	const bool deletedSeen =
-		watches.SourceListener.waitForActions( efsw::Actions::Delete, "temporary.txt" );
 	// Polling backends may never observe a file that lived between two scans.
 	if ( !pollsSnapshots() )
-		EXPECT_TRUE( deletedSeen );
-	sleepMs( 300 );
+		EXPECT_TRUE(
+			watches.SourceListener.waitForActions( efsw::Actions::Delete, "temporary.txt" ) );
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
 	const int added = watches.SourceListener.indexOf( efsw::Actions::Add, "temporary.txt" );
 	const int deleted = watches.SourceListener.indexOf( efsw::Actions::Delete, "temporary.txt" );
 	if ( reportsEveryCreate() )
@@ -798,19 +825,18 @@ struct NestedRegistrationMove {
 		if ( SourceId <= 0 || NestedId <= 0 || DestinationId <= 0 )
 			return Failed;
 		Watcher.watch();
-		createFile( Source + "/sub/nested/nested_ready" );
-		createFile( Destination + "/destination_ready" );
-		if ( !NestedListener.waitForActions( efsw::Actions::Add, "nested_ready" ) ||
-			 !DestinationListener.waitForActions( efsw::Actions::Add, "destination_ready" ) )
+		if ( !waitForPending( NestedListener, Source + "/sub/nested" ) ||
+			 !waitForPending( DestinationListener, Destination ) )
 			return Failed;
-		sleepMs( 200 );
 
 		// Windows refuses to rename a directory while a directory inside it is open.
 		if ( !renameFile( Source + "/sub", Destination + "/sub" ) )
 			return MoveRefused;
 		if ( !DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) )
 			return Failed;
-		sleepMs( 300 );
+		if ( !waitForPending( SourceListener, Source ) ||
+			 !waitForPending( DestinationListener, Destination ) )
+			return Failed;
 		// The move must be reported once, not also through the Delete + Add fallback.
 		if ( -1 != SourceListener.indexOf( efsw::Actions::Delete, "sub" ) ||
 			 -1 != DestinationListener.indexOf( efsw::Actions::Add, "sub" ) )
@@ -861,7 +887,6 @@ UTEST( CrossWatchMoves, RemovingMovedExplicitRegistrationKeepsDestination ) {
 
 	watches.Watcher.removeWatch( watches.NestedId );
 	watches.NestedId = 0;
-	sleepMs( 300 );
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/nested/after.txt", "x" ) );
 	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
 	EXPECT_EQ( -1, watches.NestedListener.indexOf( efsw::Actions::Add, "after.txt" ) );
@@ -876,7 +901,6 @@ UTEST( CrossWatchMoves, RemovingDestinationKeepsMovedExplicitRegistration ) {
 
 	watches.Watcher.removeWatch( watches.DestinationId );
 	watches.DestinationId = 0;
-	sleepMs( 300 );
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/nested/after.txt", "x" ) );
 	EXPECT_TRUE( watches.NestedListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
 	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, "after.txt" ) );
@@ -908,14 +932,15 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 	watcher.watch();
 	EXPECT_TRUE( createFile( outer + "/inner/file.txt", "x" ) );
 	EXPECT_TRUE( innerListener.waitForActions( efsw::Actions::Add, "file.txt" ) );
-	sleepMs( 300 );
+	EXPECT_TRUE( waitForPending( innerListener, outer + "/inner" ) );
+	EXPECT_TRUE( waitForPending( outerListener, outer ) );
 	innerListener.clearEvents();
 	outerListener.clearEvents();
 
 	EXPECT_TRUE( renameFile( outer + "/inner/file.txt", outer + "/other/file.txt" ) );
 	EXPECT_TRUE( innerListener.waitForActions( efsw::Actions::Delete, "file.txt" ) );
-	EXPECT_TRUE( outerListener.waitForActions( efsw::Actions::Moved, "file.txt" ) ||
-				 outerListener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	EXPECT_TRUE( outerListener.waitForAnyAction( { efsw::Actions::Moved, efsw::Actions::Add },
+												 "file.txt" ) );
 
 	watcher.removeWatch( innerId );
 	watcher.removeWatch( outerId );

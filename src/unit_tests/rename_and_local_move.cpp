@@ -144,7 +144,6 @@ UTEST( LocalVsCrossMove, MovedAwayDuringTheMovedCallback ) {
 	EXPECT_TRUE( watchId1 > 0 );
 	EXPECT_TRUE( watchId2 > 0 );
 	fileWatcher.watch();
-	sleepMs( 300 );
 
 	EXPECT_TRUE( renameFile( watchedDir1 + "/file.txt", watchedDir1 + "/renamed.txt" ) );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "renamed.txt" ) );

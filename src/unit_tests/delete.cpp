@@ -17,7 +17,7 @@ UTEST( Delete, SingleFile ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
@@ -43,7 +43,7 @@ UTEST( Delete, MultipleFiles ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testDir + "/file1.txt" ) );
@@ -74,7 +74,7 @@ UTEST( Delete, Subdirectory ) {
 
 	fileWatcher.watch();
 
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
