@@ -40,9 +40,12 @@ class FileSystem {
 
 	static std::string getCurrentWorkingDirectory();
 
+	/// @return The path resolved, or an empty string when it cannot be, as when it does not
+	/// exist.
 	static std::string getRealPath( const std::string& path );
 
-	/// Returns a canonicalized path when the final path component may no longer exist.
+	/// Returns a canonicalized path when the final path components may no longer exist: the
+	/// deepest existing directory is resolved, and the rest kept.
 	static std::string canonicalSourcePath( const std::string& path );
 
 #if EFSW_OS == EFSW_OS_WIN

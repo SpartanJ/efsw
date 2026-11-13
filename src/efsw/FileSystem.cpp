@@ -172,13 +172,16 @@ std::string FileSystem::getCurrentWorkingDirectory() {
 std::string FileSystem::getRealPath( const std::string& path ) {
 	std::string realPath;
 #if defined( EFSW_PLATFORM_POSIX )
+	// On failure, the buffer holds what was resolved so far, or nothing defined.
 	char dir[PATH_MAX];
-	realpath( path.c_str(), &dir[0] );
-	realPath = std::string( dir );
+	if ( NULL != realpath( path.c_str(), &dir[0] ) )
+		realPath = std::string( dir );
 #elif EFSW_OS == EFSW_OS_WIN
 	wchar_t dir[_MAX_PATH + 1];
-	GetFullPathNameW( getWidePath( path ).c_str(), _MAX_PATH, &dir[0], nullptr );
-	realPath = String( dir ).toUtf8();
+	const DWORD length =
+		GetFullPathNameW( getWidePath( path ).c_str(), _MAX_PATH, &dir[0], nullptr );
+	if ( 0 != length && length < _MAX_PATH )
+		realPath = String( dir ).toUtf8();
 #else
 #warning FileSystem::getRealPath() not implemented on this platform.
 #endif
@@ -186,12 +189,23 @@ std::string FileSystem::getRealPath( const std::string& path ) {
 }
 
 std::string FileSystem::canonicalSourcePath( const std::string& path ) {
+	// The source may be gone with its directory, moved or deleted since: the deepest directory
+	// that still exists is resolved, and the rest of the path kept.
 	std::string directory( FileSystem::pathRemoveFileName( path ) );
-	std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
-	if ( canonicalDirectory.empty() )
-		return path;
-	FileSystem::dirAddSlashAtEnd( canonicalDirectory );
-	return canonicalDirectory + FileSystem::fileNameFromPath( path );
+	std::string rest( FileSystem::fileNameFromPath( path ) );
+	while ( !directory.empty() ) {
+		std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
+		if ( !canonicalDirectory.empty() ) {
+			FileSystem::dirAddSlashAtEnd( canonicalDirectory );
+			return canonicalDirectory + rest;
+		}
+		const std::string parent( FileSystem::pathRemoveFileName( directory ) );
+		if ( parent == directory )
+			break;
+		rest = FileSystem::fileNameFromPath( directory ) + getOSSlash() + rest;
+		directory = parent;
+	}
+	return path;
 }
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32

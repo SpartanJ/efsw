@@ -472,7 +472,10 @@ WatchID FileWatcherFSEvents::addWatch( const std::string& directory, FileWatchLi
 }
 
 void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
+	// The directory may be gone already: then its deepest existing ancestor is resolved.
 	std::string dir( FileSystem::getRealPath( directory ) );
+	if ( dir.empty() )
+		dir = FileSystem::canonicalSourcePath( directory );
 	FileSystem::dirAddSlashAtEnd( dir );
 
 	FSEventStreamRef replacedStream = NULL;
