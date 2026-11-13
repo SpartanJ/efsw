@@ -188,11 +188,29 @@ std::string FileSystem::getRealPath( const std::string& path ) {
 	return realPath;
 }
 
+static bool isAbsolutePath( const std::string& path ) {
+#if EFSW_OS == EFSW_OS_WIN
+	return ( path.size() >= 2 && path[1] == ':' ) ||
+		   ( !path.empty() && ( path[0] == '\\' || path[0] == '/' ) );
+#else
+	return !path.empty() && path[0] == '/';
+#endif
+}
+
 std::string FileSystem::canonicalSourcePath( const std::string& path ) {
+	if ( path.empty() )
+		return path;
+	// A relative path, even a bare name, is below the working directory.
+	std::string absolute( path );
+	if ( !isAbsolutePath( absolute ) ) {
+		std::string workingDirectory( getCurrentWorkingDirectory() );
+		dirAddSlashAtEnd( workingDirectory );
+		absolute = workingDirectory + path;
+	}
 	// The source may be gone with its directory, moved or deleted since: the deepest directory
 	// that still exists is resolved, and the rest of the path kept.
-	std::string directory( FileSystem::pathRemoveFileName( path ) );
-	std::string rest( FileSystem::fileNameFromPath( path ) );
+	std::string directory( FileSystem::pathRemoveFileName( absolute ) );
+	std::string rest( FileSystem::fileNameFromPath( absolute ) );
 	while ( !directory.empty() ) {
 		std::string canonicalDirectory( FileSystem::getRealPath( directory ) );
 		if ( !canonicalDirectory.empty() ) {

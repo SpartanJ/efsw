@@ -54,3 +54,20 @@ UTEST( FileSystem, CanonicalSourcePathKeepsMissingDirectories ) {
 				 real + slash + "gone" + slash + "deeper" + slash + "file" );
 	removeDirectory( base );
 }
+
+// A relative path, even a bare name, is resolved below the working directory.
+UTEST( FileSystem, CanonicalSourcePathOfARelativePath ) {
+	const std::string slash( 1, efsw::FileSystem::getOSSlash() );
+	const std::string base = getTemporaryDirectory() + "_relative";
+	removeDirectory( base );
+	EXPECT_TRUE( createDirectory( base ) );
+	EXPECT_TRUE( createFile( base + slash + "file.txt", "x" ) );
+	const std::string real = efsw::FileSystem::getRealPath( base );
+	const std::string previous = efsw::FileSystem::getCurrentWorkingDirectory();
+	ASSERT_TRUE( efsw::FileSystem::changeWorkingDirectory( base ) );
+	EXPECT_TRUE( efsw::FileSystem::canonicalSourcePath( "file.txt" ) == real + slash + "file.txt" );
+	EXPECT_TRUE( efsw::FileSystem::canonicalSourcePath( "gone" + slash + "file.txt" ) ==
+				 real + slash + "gone" + slash + "file.txt" );
+	efsw::FileSystem::changeWorkingDirectory( previous );
+	removeDirectory( base );
+}
