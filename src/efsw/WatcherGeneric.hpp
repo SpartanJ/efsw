@@ -24,6 +24,16 @@ class WatcherGeneric : public Watcher {
 
 	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
 
+	bool collectTree( const std::string& directory,
+					  std::vector<const FileInfo*>* entries ) override;
+
+	/// Moves the snapshot lists of the watched tree into lists, before the watch is deleted.
+	void takeSnapshots( std::vector<FileInfoList>& lists );
+
+	/// A subdirectory left the watch, which reports a Delete for each entry of its tree: while
+	/// a pass collects for move pairing, they are the batch's evidence of the tree.
+	void gaveUpTree( const FileInfo& directory );
+
 	void retire() override;
 
 	/// The watched directory was moved: every directory of the tree is now below directory.

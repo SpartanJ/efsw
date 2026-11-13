@@ -77,6 +77,9 @@ class WatcherKqueue : public Watcher {
 
 	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
 
+	bool collectTree( const std::string& directory,
+					  std::vector<const FileInfo*>* entries ) override;
+
 	void retire() override;
 
 	int lastErrno();
@@ -114,6 +117,13 @@ class WatcherKqueue : public Watcher {
 						bool emitEvents = true );
 
 	void sendDirChanged();
+
+	/// The directory of a watch below this one left it: while the root collects a pass for
+	/// move pairing, the snapshots of the watch's tree become the batch's evidence of it.
+	void giveUpTree( Watcher* watch, const FileInfo& directory );
+
+	/// Moves the snapshot lists of a watch's tree, kqueue or generic, into lists.
+	static void takeSnapshots( Watcher* watch, std::vector<FileInfoList>& lists );
 
 	WatcherKqueue* root();
 

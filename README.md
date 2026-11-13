@@ -166,10 +166,12 @@ that covers both paths reports the move itself, and a nested watch that covers o
 its half as `Delete` or `Add`.
 
 A directory moved as a whole is reported by its own `Moved` event only: the entries inside it,
-whose paths relative to it are unchanged, are not reported. An entry renamed or relocated inside
-the moved tree before the next polling pass is reported as a `Moved` event of its own, after the
-directory's. The kqueue backend does not report a moved directory's contents at its source, so it
-may miss such a rename or relocation inside a directory moved between two registrations.
+whose paths relative to it are unchanged, are not reported. On the polling backends, what changed
+inside the moved tree before the next polling pass is reported after the directory's `Moved`
+event, by comparing the tree's snapshots at both ends: entries deleted inside it first, at the
+paths the directory's `Moved` event gave them, then entries renamed or relocated inside it as
+`Moved` events, and new entries as `Add` events, parents first. This only uses snapshots the
+watches already keep, for the duration of one polling pass.
 
 To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
 until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the

@@ -39,6 +39,15 @@ class DirWatcherGeneric {
 
 	DirWatcherGeneric* findDirWatcher( std::string dir );
 
+	/// @return The watcher of the directory, this one or one below it, or NULL.
+	DirWatcherGeneric* findTree( const std::string& directory );
+
+	/// Appends the entries of the snapshots of this directory and those below it.
+	void collectEntries( std::vector<const FileInfo*>& entries ) const;
+
+	/// Moves the snapshot lists of this directory and those below it into lists.
+	void takeSnapshots( std::vector<FileInfoList>& lists );
+
 	DirWatcherGeneric* findDirWatcherFast( std::string dir );
 
 	/// Sets the directory, after it moved, and the directories of the tree below it.

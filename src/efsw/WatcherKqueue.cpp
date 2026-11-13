@@ -334,6 +334,7 @@ void WatcherKqueue::rescan() {
 			Watcher* watch = findWatcher( ( *it ).Filepath );
 
 			if ( NULL != watch ) {
+				giveUpTree( watch, *it );
 				removeWatch( watch->ID );
 			}
 		}
@@ -479,6 +480,45 @@ void WatcherKqueue::watch() {
 			mActionBatch.dispatch( Listener );
 		mCollectActions = false;
 	}
+}
+
+void WatcherKqueue::giveUpTree( Watcher* watch, const FileInfo& directory ) {
+	WatcherKqueue* rootWatch = root();
+	if ( !rootWatch->mCollectActions || NULL == rootWatch->SharedActionBatch )
+		return;
+	std::vector<FileInfoList> lists;
+	takeSnapshots( watch, lists );
+	rootWatch->SharedActionBatch->addSourceTree( directory, std::move( lists ) );
+}
+
+void WatcherKqueue::takeSnapshots( Watcher* watch, std::vector<FileInfoList>& lists ) {
+	if ( WatcherKqueue* kqueueWatch = dynamic_cast<WatcherKqueue*>( watch ) ) {
+		lists.push_back( std::move( kqueueWatch->mDirSnap.Files ) );
+		for ( const auto& child : kqueueWatch->mWatches )
+			takeSnapshots( child.second, lists );
+	} else if ( WatcherGeneric* genericWatch = dynamic_cast<WatcherGeneric*>( watch ) ) {
+		genericWatch->takeSnapshots( lists );
+	}
+}
+
+bool WatcherKqueue::collectTree( const std::string& directory,
+								 std::vector<const FileInfo*>* entries ) {
+	std::string path( directory );
+	FileSystem::dirAddSlashAtEnd( path );
+	if ( path != Directory ) {
+		// The watch below this one whose directory contains it.
+		for ( const auto& child : mWatches )
+			if ( 0 == path.compare( 0, child.second->Directory.size(), child.second->Directory ) )
+				return child.second->collectTree( path, entries );
+		return false;
+	}
+	if ( NULL != entries ) {
+		for ( const FileInfo& entry : mDirSnap.Files )
+			entries->push_back( &entry );
+		for ( const auto& child : mWatches )
+			child.second->collectTree( child.second->Directory, entries );
+	}
+	return true;
 }
 
 bool WatcherKqueue::snapshotHasAny( const std::set<FileIdentity>& identities ) const {

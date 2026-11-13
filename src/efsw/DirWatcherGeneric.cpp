@@ -180,6 +180,8 @@ void DirWatcherGeneric::watch( bool reportOwnChange ) {
 
 		DiffIterator( DirsDeleted ) {
 			handleAction( ( *it ).Filepath, Actions::Delete, "", *it );
+			if ( Directories.count( FileSystem::fileNameFromPath( ( *it ).Filepath ) ) )
+				Watch->gaveUpTree( *it );
 			removeDirectory( ( *it ).Filepath );
 		}
 
@@ -379,6 +381,41 @@ void DirWatcherGeneric::moveDirectory( std::string oldDir, std::string newDir ) 
 
 		dw->resetDirectory( newDir );
 	}
+}
+
+DirWatcherGeneric* DirWatcherGeneric::findTree( const std::string& directory ) {
+	const std::string& own = DirSnap.DirectoryInfo.Filepath;
+	auto length = []( const std::string& path ) {
+		return !path.empty() && path.back() == FileSystem::getOSSlash() ? path.size() - 1
+																		: path.size();
+	};
+	const size_t ownLength = length( own );
+	const size_t wantedLength = length( directory );
+	if ( wantedLength < ownLength || 0 != directory.compare( 0, ownLength, own, 0, ownLength ) )
+		return NULL;
+	if ( wantedLength == ownLength )
+		return this;
+	if ( directory[ownLength] != FileSystem::getOSSlash() )
+		return NULL;
+	for ( auto& child : Directories ) {
+		DirWatcherGeneric* found = child.second->findTree( directory );
+		if ( NULL != found )
+			return found;
+	}
+	return NULL;
+}
+
+void DirWatcherGeneric::collectEntries( std::vector<const FileInfo*>& entries ) const {
+	for ( const FileInfo& entry : DirSnap.Files )
+		entries.push_back( &entry );
+	for ( const auto& child : Directories )
+		child.second->collectEntries( entries );
+}
+
+void DirWatcherGeneric::takeSnapshots( std::vector<FileInfoList>& lists ) {
+	lists.push_back( std::move( DirSnap.Files ) );
+	for ( auto& child : Directories )
+		child.second->takeSnapshots( lists );
 }
 
 bool DirWatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) const {

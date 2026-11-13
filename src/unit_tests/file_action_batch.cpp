@@ -1,9 +1,13 @@
 #include "test_util.hpp"
 #include "utest.h"
 #include <algorithm>
+#include <array>
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileInfo.hpp>
 #include <efsw/FileSystem.hpp>
+#include <map>
+#include <random>
+#include <set>
 
 using namespace efsw_test;
 
@@ -24,6 +28,12 @@ class FakeWatch : public efsw::Watcher {
 	std::set<efsw::FileIdentity> Snapshot;
 	/// Events reported by the next scan.
 	std::vector<Pending> Next;
+	/// Evidence of directory trees that left the watch, given up by the next scan.
+	std::vector<std::pair<efsw::FileInfo, std::vector<efsw::FileInfoList>>> GiveUp;
+	/// The entries of the trees the watch watches, for collectTree().
+	std::vector<efsw::FileInfo> Tree;
+	/// Whether the watch watches inside the directories of Tree.
+	bool WatchesTrees{ true };
 	int Scans{ 0 };
 
 	FakeWatch( efsw::WatchID id, efsw::FileActionBatch& batch, efsw::FileWatchListener* listener ) :
@@ -44,6 +54,20 @@ class FakeWatch : public efsw::Watcher {
 			Batch.add( ID, event.Directory, event.Filename, event.Action, "", event.Info, Listener,
 					   this );
 		Next.clear();
+		for ( auto& tree : GiveUp )
+			Batch.addSourceTree( tree.first, std::move( tree.second ) );
+		GiveUp.clear();
+	}
+
+	bool collectTree( const std::string& directory,
+					  std::vector<const efsw::FileInfo*>* entries ) override {
+		if ( !WatchesTrees )
+			return false;
+		const std::string prefix = directory + efsw::FileSystem::getOSSlash();
+		for ( const efsw::FileInfo& entry : Tree )
+			if ( entries && 0 == entry.Filepath.compare( 0, prefix.size(), prefix ) )
+				entries->push_back( &entry );
+		return true;
 	}
 
 	void report( const std::string& directory, const std::string& filename, efsw::Action action,
@@ -56,6 +80,15 @@ class FakeWatch : public efsw::Watcher {
 		Next.push_back( { directory, filename, action, info } );
 	}
 };
+
+/// The entry with its path set, in the platform's separators, as snapshots list them.
+efsw::FileInfo at( efsw::FileInfo info, const std::string& path ) {
+	info.Filepath = path;
+	for ( char& c : info.Filepath )
+		if ( c == '/' )
+			c = efsw::FileSystem::getOSSlash();
+	return info;
+}
 
 /// A real file, so pairing sees a complete filesystem identity.
 struct MovedFile {
@@ -431,10 +464,10 @@ UTEST( FileActionBatch, RenamesInsideAMovedTreeAreMovesOfTheirOwn ) {
 		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "relocated.txt" ) );
 		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "renamed2.txt" ) );
 		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "elsewhere.txt" ) );
-		std::string innerSource( "/src/outer/inner" );
+		// From where the directory's Moved event put it.
+		std::string innerSource( "/dst/outer/inner" );
 		std::replace( innerSource.begin(), innerSource.end(), '/', efsw::FileSystem::getOSSlash() );
-		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "inner2",
-										  efsw::FileSystem::canonicalSourcePath( innerSource ) ) );
+		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "inner2", innerSource ) );
 	}
 }
 
@@ -834,4 +867,1015 @@ UTEST( FileActionBatch, CrossedMovesKeepSourceEventsWhenTheOtherWatchIsRemoved )
 	runCrossedMoves( true, false, false, file, utest_result );
 	runCrossedMoves( true, true, false, file, utest_result );
 	runCrossedMoves( true, false, true, file, utest_result );
+}
+
+namespace {
+
+/// A directory tree moved from the first watch to the second, which has evidence of it on both
+/// ends: the first watch gives up the snapshots of its tree, and the second watches the tree.
+struct MovedTree {
+	efsw::FileInfo Outer;
+	std::vector<efsw::FileInfoList> Before;
+
+	explicit MovedTree( MovedFile& file ) { Outer = file.make( "outer", true ); }
+
+	/// An entry of the tree before the move, by its path below outer.
+	void was( const efsw::FileInfo& info, const std::string& relative ) {
+		if ( Before.empty() )
+			Before.emplace_back();
+		Before[0].push_back( at( info, "/src/outer/" + relative ) );
+	}
+
+	/// An entry of the tree after the move, as the destination's snapshots list it.
+	void is( FakeWatch& destination, const efsw::FileInfo& info, const std::string& relative ) {
+		destination.Tree.push_back( at( info, "/dst/outer/" + relative ) );
+	}
+
+	void move( FakeWatch& source, FakeWatch& destination ) {
+		source.report( "/src/", "outer", efsw::Actions::Delete, Outer );
+		source.GiveUp.emplace_back( at( Outer, "/src/outer" ), std::move( Before ) );
+		destination.report( "/dst/", "outer", efsw::Actions::Add, Outer );
+	}
+};
+
+std::string slashes( std::string path ) {
+	for ( char& c : path )
+		if ( c == '/' )
+			c = efsw::FileSystem::getOSSlash();
+	return path;
+}
+
+} // namespace
+
+// A directory tree moved as a whole: one Moved event, and nothing for the entries it kept.
+UTEST( FileActionBatch, UnchangedTreeIsOneMovedEvent ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/leaf.txt" );
+	efsw::FileInfo top = file.make( "outer/top.txt" );
+	tree.was( inner, "inner" );
+	tree.was( leaf, "inner/leaf.txt" );
+	tree.was( top, "top.txt" );
+	tree.is( second, inner, "inner" );
+	tree.is( second, leaf, "inner/leaf.txt" );
+	tree.is( second, top, "top.txt" );
+	tree.move( first, second );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "outer" );
+}
+
+// What changed inside a moved directory tree before it was scanned is reported after its Moved
+// event: deleted entries first, each before its parent directory, where the Moved event put
+// them; then the entries that arrived, parents first, each moved one from where the moves before
+// it put it.
+UTEST( FileActionBatch, ChangesInsideAMovedTreeFollowItsMovedEvent ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/leaf.txt" );
+	efsw::FileInfo renamedFile = file.make( "outer/inner/x.txt" );
+	efsw::FileInfo deletedInside = file.make( "outer/inner/del.txt" );
+	efsw::FileInfo a = file.make( "outer/a.txt" );
+	efsw::FileInfo c = file.make( "outer/c.txt" );
+	efsw::FileInfo gone = file.make( "outer/gone.txt" );
+	efsw::FileInfo kept = file.make( "outer/kept.txt" );
+	efsw::FileInfo created = file.make( "outer/new.txt" );
+	tree.was( inner, "inner" );
+	tree.was( leaf, "inner/leaf.txt" );
+	tree.was( renamedFile, "inner/x.txt" );
+	tree.was( deletedInside, "inner/del.txt" );
+	tree.was( a, "a.txt" );
+	tree.was( c, "c.txt" );
+	tree.was( gone, "gone.txt" );
+	tree.was( kept, "kept.txt" );
+	tree.is( second, inner, "renamed" );
+	tree.is( second, leaf, "renamed/leaf.txt" );
+	tree.is( second, renamedFile, "renamed/y.txt" );
+	tree.is( second, a, "b.txt" );
+	tree.is( second, c, "renamed/c.txt" );
+	tree.is( second, kept, "kept.txt" );
+	tree.is( second, created, "new.txt" );
+	tree.move( first, second );
+	runPass( batch, watches );
+
+	struct Expected {
+		efsw::Action Action;
+		std::string Name;
+		std::string Old;
+	};
+	const std::vector<Expected> expected{
+		{ efsw::Actions::Moved, "outer", "" },
+		{ efsw::Actions::Delete, "del.txt", "" },
+		{ efsw::Actions::Delete, "gone.txt", "" },
+		{ efsw::Actions::Moved, "b.txt", slashes( "/dst/outer/a.txt" ) },
+		{ efsw::Actions::Add, "new.txt", "" },
+		{ efsw::Actions::Moved, "renamed", slashes( "/dst/outer/inner" ) },
+		{ efsw::Actions::Moved, "c.txt", slashes( "/dst/outer/c.txt" ) },
+		{ efsw::Actions::Moved, "y.txt", slashes( "/dst/outer/renamed/x.txt" ) } };
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].Action, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].Name == std::get<1>( events[i] ) );
+		if ( i > 0 )
+			EXPECT_TRUE( expected[i].Old == std::get<2>( events[i] ) );
+	}
+}
+
+// The source's evidence of a tree may be split: a generic watch that found its directory gone
+// emptied its snapshot and reported a Delete for each entry, while others gave up their
+// snapshots. Both count, once each.
+UTEST( FileActionBatch, TreeEvidenceFromSnapshotsAndDeletes ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/leaf.txt" );
+	efsw::FileInfo top = file.make( "outer/top.txt" );
+	tree.was( inner, "inner" );
+	tree.was( top, "top.txt" );
+	tree.is( second, inner, "renamed" );
+	tree.is( second, leaf, "renamed/leaf.txt" );
+	tree.is( second, top, "top.txt" );
+	// Reported as Deletes, and also in the snapshot given up.
+	first.report( "/src/outer/inner/", "leaf.txt", efsw::Actions::Delete, leaf );
+	first.report( "/src/outer/", "top.txt", efsw::Actions::Delete, top );
+	tree.move( first, second );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "outer" );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "renamed" );
+}
+
+// Hard links share an identity: the links whose paths match are kept, and a single remaining
+// one on each end is a move.
+UTEST( FileActionBatch, HardLinksInsideAMovedTree ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo linked = file.make( "outer/linked.txt" );
+	tree.was( linked, "a.txt" );
+	tree.was( linked, "h.txt" );
+	tree.is( second, linked, "a.txt" );
+	tree.is( second, linked, "h2.txt" );
+	tree.move( first, second );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "outer" );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "h2.txt" );
+	EXPECT_TRUE( std::get<2>( events[1] ) == slashes( "/dst/outer/h.txt" ) );
+}
+
+// The evidence is only used to compare the trees of a matched move: a directory that left the
+// watches, a destination that does not watch inside the directory, or a later pass, never report
+// it on its own.
+UTEST( FileActionBatch, EvidenceIsNeverReportedOnItsOwn ) {
+	START_BATCH_TEST();
+	efsw::FileInfo leaf = file.make( "leaf.txt" );
+	{
+		// Left every watch.
+		MovedTree tree( file );
+		tree.was( leaf, "leaf.txt" );
+		first.report( "/src/", "outer", efsw::Actions::Delete, tree.Outer );
+		first.GiveUp.emplace_back( at( tree.Outer, "/src/outer" ), std::move( tree.Before ) );
+		runPass( batch, watches );
+		auto events = listener.getEvents();
+		ASSERT_EQ( 1u, events.size() );
+		EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[0] ) );
+		// It arrives a pass later: the evidence is gone.
+		listener.clearEvents();
+		tree.is( second, leaf, "renamed.txt" );
+		second.report( "/dst/", "outer", efsw::Actions::Add, tree.Outer );
+		runPass( batch, watches );
+		events = listener.getEvents();
+		ASSERT_EQ( 1u, events.size() );
+		EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[0] ) );
+		second.Tree.clear();
+	}
+	{
+		// The destination does not watch inside it.
+		listener.clearEvents();
+		MovedTree tree( file );
+		tree.was( leaf, "leaf.txt" );
+		tree.is( second, leaf, "renamed.txt" );
+		second.WatchesTrees = false;
+		tree.move( first, second );
+		runPass( batch, watches );
+		auto events = listener.getEvents();
+		ASSERT_EQ( 1u, events.size() );
+		EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+		second.WatchesTrees = true;
+		second.Tree.clear();
+	}
+}
+
+namespace {
+
+/// A tree whose file was renamed after the move, delivered to a destination listener that
+/// removes a registration on the Moved event of the directory.
+/// @param destination Whether it removes its own registration, or the source's.
+void runRemovalDuringTree( bool destination, MovedFile& file, int* utest_result ) {
+	efsw::FileActionBatch batch;
+	TestListener sourceListener;
+	RemovingListener destinationListener;
+	FakeWatch source( 1, batch, &sourceListener );
+	FakeWatch target( 2, batch, &destinationListener );
+	destinationListener.Batch = &batch;
+	destinationListener.Removed = destination ? static_cast<efsw::Watcher*>( &target ) : &source;
+	MovedTree tree( file );
+	efsw::FileInfo leaf = file.make( "outer/leaf" + std::to_string( destination ) + ".txt" );
+	tree.was( leaf, "leaf.txt" );
+	tree.is( target, leaf, "renamed.txt" );
+	tree.move( source, target );
+	runPass( batch, { &source, &target } );
+
+	auto events = destinationListener.getEvents();
+	ASSERT_EQ( destination ? 1u : 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "outer" );
+	if ( !destination )
+		EXPECT_TRUE( std::get<1>( events[1] ) == "renamed.txt" );
+	EXPECT_EQ( 0u, sourceListener.getEventCount() );
+}
+
+} // namespace
+
+// A listener removes the destination's registration on the directory's Moved event: nothing more
+// is delivered to it. Removing the source's instead changes nothing for the destination.
+UTEST( FileActionBatch, RemovalDuringATreeStopsItsFollowers ) {
+	START_BATCH_TEST();
+	(void)watches;
+	runRemovalDuringTree( true, file, utest_result );
+	runRemovalDuringTree( false, file, utest_result );
+}
+
+namespace {
+
+/// Records the full path of every event, to replay them.
+class PathListener : public efsw::FileWatchListener {
+  public:
+	struct Recorded {
+		efsw::Action Action;
+		std::string Path;
+		std::string OldPath;
+	};
+	std::vector<Recorded> Events;
+
+	void handleFileAction( efsw::WatchID, const std::string& dir, const std::string& filename,
+						   efsw::Action action, const std::string& oldFilename ) override {
+		Events.push_back( { action, dir + filename, oldFilename } );
+	}
+};
+
+const efsw::FileIdentity Unknown( 0, 0 );
+
+/// A tree of paths, to which the delivered events are applied as a listener would apply them:
+/// each must name an entry that exists, or a free name in a directory that exists.
+class ReplayTree {
+  public:
+	std::map<std::string, efsw::FileIdentity> Entries;
+	/// The paths deleted so far.
+	std::vector<std::string> Deleted;
+
+	/// @return An empty string, or what was wrong with the event.
+	std::string apply( PathListener::Recorded event ) {
+		// Moved events give their sources canonically, with a drive on Windows; the fake paths
+		// have none.
+		event.Path = withoutDrive( event.Path );
+		event.OldPath = withoutDrive( event.OldPath );
+		switch ( event.Action ) {
+			case efsw::Actions::Delete:
+				if ( !Entries.count( event.Path ) ) {
+					// The generic backend reports the entries of a deleted directory after it.
+					for ( const std::string& deleted : Deleted )
+						if ( 0 == event.Path.compare( 0, deleted.size() + 1, deleted + slash() ) )
+							return "";
+					return "deletes a missing " + event.Path;
+				}
+				erase( event.Path );
+				Deleted.push_back( event.Path );
+				return "";
+			case efsw::Actions::Add:
+				if ( Entries.count( event.Path ) )
+					return "adds an existing " + event.Path;
+				if ( !Entries.count( parent( event.Path ) ) )
+					return "adds into a missing parent: " + event.Path;
+				Entries[event.Path] = Unknown;
+				return "";
+			case efsw::Actions::Moved: {
+				if ( !Entries.count( event.OldPath ) )
+					return "moves a missing " + event.OldPath;
+				if ( Entries.count( event.Path ) )
+					return "moves onto an existing " + event.Path;
+				if ( !Entries.count( parent( event.Path ) ) )
+					return "moves into a missing parent: " + event.Path;
+				if ( 0 ==
+					 event.Path.compare( 0, event.OldPath.size() + 1, event.OldPath + slash() ) )
+					return "moves into itself: " + event.Path;
+				std::map<std::string, efsw::FileIdentity> moved;
+				moved[event.Path] = Entries[event.OldPath];
+				const std::string below = event.OldPath + slash();
+				for ( auto it = Entries.lower_bound( below );
+					  it != Entries.end() && 0 == it->first.compare( 0, below.size(), below );
+					  ++it )
+					moved[event.Path + it->first.substr( event.OldPath.size() )] = it->second;
+				erase( event.OldPath );
+				Entries.insert( moved.begin(), moved.end() );
+				return "";
+			}
+			default:
+				return "";
+		}
+	}
+
+	static std::string slash() { return std::string( 1, efsw::FileSystem::getOSSlash() ); }
+
+	static std::string withoutDrive( const std::string& path ) {
+		return path.size() >= 2 && path[1] == ':' ? path.substr( 2 ) : path;
+	}
+
+  private:
+	static std::string parent( const std::string& path ) {
+		return path.substr( 0, path.rfind( efsw::FileSystem::getOSSlash() ) );
+	}
+
+	void erase( const std::string& path ) {
+		Entries.erase( path );
+		const std::string below = path + slash();
+		auto it = Entries.lower_bound( below );
+		while ( it != Entries.end() && 0 == it->first.compare( 0, below.size(), below ) )
+			it = Entries.erase( it );
+	}
+};
+
+/// A tree below a moved directory: paths below it, starting with a separator, by identity.
+typedef std::map<std::string, std::pair<efsw::FileIdentity, bool>> PlainTree;
+
+efsw::FileInfo synthetic( const std::string& path, const efsw::FileIdentity& identity,
+						  bool directory ) {
+	efsw::FileInfo info;
+	info.Filepath = path;
+	info.Device = identity.first;
+	info.Inode = identity.second;
+	info.Size = 1;
+	info.ModificationTime = 1;
+	info.LinkCount = 1;
+	info.Permissions = directory ? 040755 : 0100644;
+	return info;
+}
+
+/// Reports an event at a full path from the watch.
+void reportAt( FakeWatch& watch, const std::string& path, efsw::Action action,
+			   const std::pair<efsw::FileIdentity, bool>& entry ) {
+	const size_t slash = path.rfind( efsw::FileSystem::getOSSlash() );
+	watch.report( path.substr( 0, slash + 1 ), path.substr( slash + 1 ), action,
+				  synthetic( path, entry.first, entry.second ) );
+}
+
+bool hasIdentity( const PlainTree& tree, const efsw::FileIdentity& identity ) {
+	for ( const auto& entry : tree )
+		if ( entry.second.first == identity )
+			return true;
+	return false;
+}
+
+/// How the fake watches report entries moving between the tree and other.
+enum class Reporting {
+	/// As generic watches: the source reports a Delete for each entry that left, and other an
+	/// Add for each entry that arrived.
+	Entries,
+	/// As kqueue watches: the source reports none of the entries of a tree that left, and
+	/// other reports the entries that arrived in its directories, and the directories inside a
+	/// directory that arrived, not its files.
+	Directories
+};
+
+/// Moves outer, with the tree before, from the first watch to the second, which finds the tree
+/// after; replays the events delivered, and checks that they turn one tree into the other.
+/// Entries may move between the tree and a third watch, other, which has its own trees.
+/// @param order The order in which the watches are scanned: 0 for the source, 1 for the
+/// destination, 2 for other.
+void checkReplayInOrder( const PlainTree& before, const PlainTree& after, int* utest_result,
+						 const std::string& scenario, const PlainTree& otherBefore,
+						 const PlainTree& otherAfter, Reporting reporting,
+						 const std::array<int, 3>& order ) {
+	const std::string slash = ReplayTree::slash();
+	const std::string source = slash + "src" + slash + "outer";
+	const std::string destination = slash + "dst" + slash + "outer";
+	const std::string other = slash + "other";
+	const efsw::FileIdentity outer( 1, 1 );
+	efsw::FileActionBatch batch;
+	PathListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	std::vector<efsw::FileInfoList> lists( 1 );
+	ReplayTree replay;
+	replay.Entries[slash + "src"] = Unknown;
+	replay.Entries[slash + "dst"] = Unknown;
+	replay.Entries[other] = Unknown;
+	replay.Entries[source] = outer;
+	for ( const auto& entry : before ) {
+		lists[0].push_back(
+			synthetic( source + entry.first, entry.second.first, entry.second.second ) );
+		replay.Entries[source + entry.first] = entry.second.first;
+		if ( Reporting::Entries == reporting && hasIdentity( otherAfter, entry.second.first ) &&
+			 !hasIdentity( otherBefore, entry.second.first ) )
+			reportAt( first, source + entry.first, efsw::Actions::Delete, entry.second );
+	}
+	for ( const auto& entry : after ) {
+		second.Tree.push_back(
+			synthetic( destination + entry.first, entry.second.first, entry.second.second ) );
+		if ( hasIdentity( otherBefore, entry.second.first ) &&
+			 !hasIdentity( otherAfter, entry.second.first ) )
+			reportAt( second, destination + entry.first, efsw::Actions::Add, entry.second );
+	}
+	for ( const auto& entry : otherBefore ) {
+		replay.Entries[other + entry.first] = entry.second.first;
+		if ( hasIdentity( otherAfter, entry.second.first ) )
+			continue;
+		reportAt( third, other + entry.first, efsw::Actions::Delete, entry.second );
+		// A directory that left other gives up its tree, as the polling backends' watches do.
+		if ( entry.second.second ) {
+			std::vector<efsw::FileInfoList> tree( 1 );
+			const std::string below = entry.first + slash;
+			for ( const auto& inside : otherBefore )
+				if ( 0 == inside.first.compare( 0, below.size(), below ) )
+					tree[0].push_back( synthetic( other + inside.first, inside.second.first,
+												  inside.second.second ) );
+			third.GiveUp.emplace_back( synthetic( other + entry.first, entry.second.first, true ),
+									   std::move( tree ) );
+		}
+	}
+	for ( const auto& entry : otherAfter ) {
+		third.Tree.push_back(
+			synthetic( other + entry.first, entry.second.first, entry.second.second ) );
+		const std::string parent = entry.first.substr( 0, entry.first.rfind( slash[0] ) );
+		const bool parentExisted = parent.empty() || otherBefore.count( parent );
+		if ( !hasIdentity( otherBefore, entry.second.first ) &&
+			 ( Reporting::Entries == reporting || entry.second.second || parentExisted ) )
+			reportAt( third, other + entry.first, efsw::Actions::Add, entry.second );
+	}
+	first.report( slash + "src" + slash, "outer", efsw::Actions::Delete,
+				  synthetic( source, outer, true ) );
+	first.GiveUp.emplace_back( synthetic( source, outer, true ), std::move( lists ) );
+	second.report( slash + "dst" + slash, "outer", efsw::Actions::Add,
+				   synthetic( destination, outer, true ) );
+	// Twice: a pass may hold a Delete to the next one.
+	FakeWatch* watchers[3] = { &first, &second, &third };
+	const std::vector<FakeWatch*> scans{ watchers[order[0]], watchers[order[1]],
+										 watchers[order[2]] };
+	runPass( batch, scans );
+	runPass( batch, scans );
+
+	std::string problem;
+	for ( const auto& event : listener.Events ) {
+		problem = replay.apply( event );
+		if ( !problem.empty() )
+			break;
+	}
+	if ( problem.empty() ) {
+		std::map<std::string, efsw::FileIdentity> expected;
+		expected[slash + "src"] = Unknown;
+		expected[slash + "dst"] = Unknown;
+		expected[other] = Unknown;
+		expected[destination] = outer;
+		for ( const auto& entry : after )
+			expected[destination + entry.first] = entry.second.first;
+		for ( const auto& entry : otherAfter )
+			expected[other + entry.first] = entry.second.first;
+		if ( expected.size() != replay.Entries.size() ) {
+			problem = "the replayed tree has " + std::to_string( replay.Entries.size() ) +
+					  " entries instead of " + std::to_string( expected.size() );
+		} else {
+			for ( const auto& entry : expected ) {
+				auto found = replay.Entries.find( entry.first );
+				if ( found == replay.Entries.end() ) {
+					problem = "the replayed tree misses " + entry.first;
+					break;
+				}
+				if ( found->second != Unknown && found->second != entry.second ) {
+					problem = "the replayed tree has another entry at " + entry.first;
+					break;
+				}
+			}
+		}
+	}
+	if ( !problem.empty() ) {
+		printf( "%s, scanned %d%d%d: %s\n", scenario.c_str(), order[0], order[1], order[2],
+				problem.c_str() );
+		auto dump = []( const char* label, const PlainTree& tree ) {
+			for ( const auto& entry : tree )
+				printf( "  %s %s #%llu%s\n", label, entry.first.c_str(),
+						static_cast<unsigned long long>( entry.second.first.second ),
+						entry.second.second ? " (directory)" : "" );
+		};
+		dump( "before", before );
+		dump( "after", after );
+		dump( "other before", otherBefore );
+		dump( "other after", otherAfter );
+		for ( const auto& event : listener.Events )
+			printf( "  %d %s <- %s\n", (int)event.Action, event.Path.c_str(),
+					event.OldPath.c_str() );
+	}
+	EXPECT_TRUE( problem.empty() );
+}
+
+/// checkReplayInOrder(), in every order in which the watches may be scanned.
+void checkReplay( const PlainTree& before, const PlainTree& after, int* utest_result,
+				  const std::string& scenario, const PlainTree& otherBefore = PlainTree(),
+				  const PlainTree& otherAfter = PlainTree(),
+				  Reporting reporting = Reporting::Entries ) {
+	std::array<int, 3> order{ { 0, 1, 2 } };
+	do {
+		checkReplayInOrder( before, after, utest_result, scenario, otherBefore, otherAfter,
+							reporting, order );
+	} while ( std::next_permutation( order.begin(), order.end() ) );
+}
+
+std::string at( std::initializer_list<const char*> names ) {
+	std::string path;
+	for ( const char* name : names )
+		path += ReplayTree::slash() + name;
+	return path;
+}
+
+efsw::FileIdentity id( unsigned long inode ) {
+	return efsw::FileIdentity( 1, inode );
+}
+
+} // namespace
+
+// Changes that depend on one another inside a moved tree are delivered in an order a listener
+// can apply: a directory replaced by a new one at its path, with its file moved into the new
+// one; a chain of renames; swapped files; swapped directories; a directory deleted after an entry
+// moved out of it; and a directory moved into a directory that moved.
+UTEST( FileActionBatch, ChangesInsideAMovedTreeReplayInOrder ) {
+	// inner renamed to z, a new inner created, and z/file moved into it.
+	checkReplay( { { at( { "inner" } ), { id( 10 ), true } },
+				   { at( { "inner", "file" } ), { id( 11 ), false } } },
+				 { { at( { "z" } ), { id( 10 ), true } },
+				   { at( { "inner" } ), { id( 12 ), true } },
+				   { at( { "inner", "file" } ), { id( 11 ), false } } },
+				 utest_result, "replaced directory" );
+	// b renamed to c, then a to b.
+	checkReplay( { { at( { "a" } ), { id( 10 ), false } }, { at( { "b" } ), { id( 11 ), false } } },
+				 { { at( { "b" } ), { id( 10 ), false } }, { at( { "c" } ), { id( 11 ), false } } },
+				 utest_result, "chain" );
+	// a and b swapped.
+	checkReplay( { { at( { "a" } ), { id( 10 ), false } }, { at( { "b" } ), { id( 11 ), false } } },
+				 { { at( { "a" } ), { id( 11 ), false } }, { at( { "b" } ), { id( 10 ), false } } },
+				 utest_result, "swapped files" );
+	// Directories x and y swapped, with a file each.
+	checkReplay( { { at( { "x" } ), { id( 10 ), true } },
+				   { at( { "x", "f" } ), { id( 11 ), false } },
+				   { at( { "y" } ), { id( 12 ), true } },
+				   { at( { "y", "g" } ), { id( 13 ), false } } },
+				 { { at( { "y" } ), { id( 10 ), true } },
+				   { at( { "y", "f" } ), { id( 11 ), false } },
+				   { at( { "x" } ), { id( 12 ), true } },
+				   { at( { "x", "g" } ), { id( 13 ), false } } },
+				 utest_result, "swapped directories" );
+	// d/keep moved out, then d deleted with d/gone.
+	checkReplay( { { at( { "d" } ), { id( 10 ), true } },
+				   { at( { "d", "keep" } ), { id( 11 ), false } },
+				   { at( { "d", "gone" } ), { id( 12 ), false } } },
+				 { { at( { "keep" } ), { id( 11 ), false } } }, utest_result, "deleted directory" );
+	// p renamed to q, then r moved into q.
+	checkReplay(
+		{ { at( { "p" } ), { id( 10 ), true } }, { at( { "r" } ), { id( 11 ), true } } },
+		{ { at( { "q" } ), { id( 10 ), true } }, { at( { "q", "r" } ), { id( 11 ), true } } },
+		utest_result, "into a moved directory" );
+	// a moved into b, then b moved into a's old place: a/b swapped with nesting.
+	checkReplay(
+		{ { at( { "a" } ), { id( 10 ), true } }, { at( { "a", "b" } ), { id( 11 ), true } } },
+		{ { at( { "b" } ), { id( 11 ), true } }, { at( { "b", "a" } ), { id( 10 ), true } } },
+		utest_result, "inverted nesting" );
+}
+
+namespace {
+
+void changesAcrossAMovedTree( int* utest_result, Reporting reporting ) {
+	auto checkReplay = [&]( const PlainTree& before, const PlainTree& after, int* result,
+							const std::string& scenario, const PlainTree& otherBefore = PlainTree(),
+							const PlainTree& otherAfter = PlainTree() ) {
+		::checkReplay( before, after, result,
+					   scenario + ( Reporting::Directories == reporting ? " (directories)" : "" ),
+					   otherBefore, otherAfter, reporting );
+	};
+	// A file moved out to the other registration.
+	checkReplay( { { at( { "file" } ), { id( 10 ), false } } }, {}, utest_result, "file out", {},
+				 { { at( { "file" } ), { id( 10 ), false } } } );
+	// A directory, with its file, moved out; the file inside a renamed one.
+	checkReplay( { { at( { "d" } ), { id( 10 ), true } },
+				   { at( { "d", "f" } ), { id( 11 ), false } },
+				   { at( { "r" } ), { id( 12 ), true } },
+				   { at( { "r", "g" } ), { id( 13 ), false } } },
+				 { { at( { "r2" } ), { id( 12 ), true } } }, utest_result, "directory out", {},
+				 { { at( { "d" } ), { id( 10 ), true } },
+				   { at( { "d", "f" } ), { id( 11 ), false } },
+				   { at( { "g" } ), { id( 13 ), false } } } );
+	// A file moved out of a directory deleted after.
+	checkReplay(
+		{ { at( { "d" } ), { id( 10 ), true } }, { at( { "d", "f" } ), { id( 11 ), false } } }, {},
+		utest_result, "out of a deleted directory", {},
+		{ { at( { "f" } ), { id( 11 ), false } } } );
+	// A file and a directory, with its file, moved in.
+	checkReplay( { { at( { "in" } ), { id( 10 ), true } } },
+				 { { at( { "in" } ), { id( 10 ), true } },
+				   { at( { "in", "f" } ), { id( 11 ), false } },
+				   { at( { "e" } ), { id( 12 ), true } },
+				   { at( { "e", "g" } ), { id( 13 ), false } } },
+				 utest_result, "into the tree",
+				 { { at( { "f" } ), { id( 11 ), false } },
+				   { at( { "e" } ), { id( 12 ), true } },
+				   { at( { "e", "g" } ), { id( 13 ), false } } },
+				 {} );
+	// A directory moved out to other, while an unrelated Delete in other holds that move to the
+	// next pass.
+	checkReplay(
+		{ { at( { "n0" } ), { id( 10 ), true } },
+		  { at( { "n0", "n3" } ), { id( 13 ), false } },
+		  { at( { "n2" } ), { id( 12 ), false } } },
+		{ { at( { "m20" } ), { id( 12 ), false } } }, utest_result, "held move out",
+		{ { at( { "o0" } ), { id( 14 ), false } }, { at( { "o3" } ), { id( 17 ), true } } },
+		{ { at( { "o3" } ), { id( 17 ), true } },
+		  { at( { "o3", "n0" } ), { id( 10 ), true } },
+		  { at( { "o3", "n0", "n3" } ), { id( 13 ), false } } } );
+	// A directory moved out with a directory renamed inside it.
+	checkReplay( { { at( { "n0" } ), { id( 10 ), true } },
+				   { at( { "n0", "n1" } ), { id( 11 ), true } },
+				   { at( { "n0", "n1", "n2" } ), { id( 12 ), false } } },
+				 {}, utest_result, "renamed inside a directory moved out", {},
+				 { { at( { "n0" } ), { id( 10 ), true } },
+				   { at( { "n0", "m19" } ), { id( 11 ), true } },
+				   { at( { "n0", "m19", "n2" } ), { id( 12 ), false } } } );
+	// A file moved into a directory, which then moves out.
+	checkReplay(
+		{ { at( { "n1" } ), { id( 11 ), false } }, { at( { "n2" } ), { id( 12 ), true } } }, {},
+		utest_result, "into a directory moved out", {},
+		{ { at( { "m20" } ), { id( 12 ), true } },
+		  { at( { "m20", "m21" } ), { id( 11 ), false } } } );
+	// A directory moved out, while entries inside it move out elsewhere.
+	checkReplay( { { at( { "n0" } ), { id( 10 ), true } },
+				   { at( { "n0", "n5" } ), { id( 15 ), true } },
+				   { at( { "n0", "n6" } ), { id( 16 ), false } } },
+				 {}, utest_result, "out of a directory moved out",
+				 { { at( { "o5" } ), { id( 22 ), true } } },
+				 { { at( { "n0" } ), { id( 10 ), true } },
+				   { at( { "n6" } ), { id( 16 ), false } },
+				   { at( { "o5" } ), { id( 22 ), true } },
+				   { at( { "o5", "n5" } ), { id( 15 ), true } } } );
+	// A directory moved in from other, a directory moved out of it into the tree, and a file
+	// moved in from other into that one.
+	checkReplay( { { at( { "n0" } ), { id( 10 ), true } } },
+				 { { at( { "n0" } ), { id( 10 ), true } },
+				   { at( { "i23" } ), { id( 19 ), true } },
+				   { at( { "i23", "o1" } ), { id( 20 ), false } },
+				   { at( { "n0", "m26" } ), { id( 22 ), true } },
+				   { at( { "n0", "m26", "i24" } ), { id( 21 ), false } } },
+				 utest_result, "through a directory moved in",
+				 { { at( { "o0" } ), { id( 19 ), true } },
+				   { at( { "o0", "o1" } ), { id( 20 ), false } },
+				   { at( { "o0", "o3" } ), { id( 22 ), true } },
+				   { at( { "o2" } ), { id( 21 ), false } } },
+				 {} );
+	// A directory moved out to other, with a file deleted inside it: whichever watch is
+	// scanned first, its tree is compared.
+	checkReplay( { { at( { "inner" } ), { id( 10 ), true } },
+				   { at( { "inner", "gone" } ), { id( 11 ), false } } },
+				 {}, utest_result, "changed inside a directory moved out", {},
+				 { { at( { "inner" } ), { id( 10 ), true } } } );
+	// A file moved into the tree from a directory of other, which is deleted after.
+	checkReplay( {}, { { at( { "m25" } ), { id( 19 ), false } } }, utest_result,
+				 "out of a deleted directory of other",
+				 { { at( { "o0" } ), { id( 17 ), true } },
+				   { at( { "o0", "o2" } ), { id( 19 ), false } },
+				   { at( { "o1" } ), { id( 18 ), false } } },
+				 { { at( { "o1" } ), { id( 18 ), false } } } );
+	// A directory renamed, next to an entry whose name extends its own.
+	checkReplay( { { at( { "inner" } ), { id( 10 ), true } },
+				   { at( { "inner", "file" } ), { id( 11 ), false } },
+				   { at( { "inner-x" } ), { id( 12 ), false } } },
+				 { { at( { "renamed" } ), { id( 10 ), true } },
+				   { at( { "renamed", "file" } ), { id( 11 ), false } },
+				   { at( { "inner-x" } ), { id( 12 ), false } } },
+				 utest_result, "prefix sibling" );
+}
+
+} // namespace
+
+// Entries that move between the moved tree and another registration before the next scan, and
+// names that extend others: the delivered events still turn every tree into what is on disk,
+// whether the watches report each entry that moved, or only directories.
+UTEST( FileActionBatch, ChangesAcrossAMovedTreeReplay ) {
+	changesAcrossAMovedTree( utest_result, Reporting::Entries );
+	changesAcrossAMovedTree( utest_result, Reporting::Directories );
+}
+
+// Random trees, changed by random renames, moves, deletions, creations and swaps: the delivered
+// events always turn the tree before into the tree after.
+UTEST( FileActionBatch, RandomChangesInsideAMovedTreeReplay ) {
+	for ( unsigned seed = 1; seed <= 400; seed++ ) {
+		std::mt19937 random( seed );
+		auto pick = [&random]( size_t count ) {
+			return std::uniform_int_distribution<size_t>( 0, count - 1 )( random );
+		};
+		unsigned long nextInode = 10;
+		PlainTree tree;
+		std::vector<std::string> directories{ "" };
+		const int entries = 3 + static_cast<int>( pick( 12 ) );
+		for ( int i = 0; i < entries; i++ ) {
+			const bool directory = pick( 3 ) == 0;
+			const std::string path = directories[pick( directories.size() )] + ReplayTree::slash() +
+									 "n" + std::to_string( i );
+			tree[path] = { id( nextInode++ ), directory };
+			if ( directory )
+				directories.push_back( path );
+		}
+		const PlainTree before = tree;
+
+		auto parentOf = []( const std::string& path ) {
+			return path.substr( 0, path.rfind( efsw::FileSystem::getOSSlash() ) );
+		};
+		auto isDirectory = [&tree]( const std::string& path ) {
+			return path.empty() || ( tree.count( path ) && tree[path].second );
+		};
+		auto moveTree = [&tree]( const std::string& from, const std::string& to ) {
+			PlainTree moved;
+			for ( auto it = tree.begin(); it != tree.end(); ) {
+				if ( it->first == from ||
+					 0 == it->first.compare( 0, from.size() + 1, from + ReplayTree::slash() ) ) {
+					moved[to + it->first.substr( from.size() )] = it->second;
+					it = tree.erase( it );
+				} else {
+					++it;
+				}
+			}
+			tree.insert( moved.begin(), moved.end() );
+		};
+		const int changes = 1 + static_cast<int>( pick( 6 ) );
+		for ( int c = 0; c < changes; c++ ) {
+			std::vector<std::string> paths;
+			for ( const auto& entry : tree )
+				paths.push_back( entry.first );
+			std::vector<std::string> targets{ "" };
+			for ( const auto& entry : tree )
+				if ( entry.second.second )
+					targets.push_back( entry.first );
+			const size_t kind = pick( 5 );
+			if ( paths.empty() || kind == 3 ) {
+				// Create.
+				const bool directory = pick( 3 ) == 0;
+				const std::string path = targets[pick( targets.size() )] + ReplayTree::slash() +
+										 "c" + std::to_string( nextInode );
+				tree[path] = { id( nextInode++ ), directory };
+				continue;
+			}
+			const std::string from = paths[pick( paths.size() )];
+			if ( kind == 2 ) {
+				// Delete, with what it holds.
+				moveTree( from, ReplayTree::slash() + "deleted" );
+				for ( auto it = tree.begin(); it != tree.end(); )
+					it = 0 == it->first.compare( 0, 8, ReplayTree::slash() + "deleted" )
+							 ? tree.erase( it )
+							 : std::next( it );
+				continue;
+			}
+			if ( kind == 4 ) {
+				// Swap with another entry of the same kind, through a temporary name.
+				const std::string other = paths[pick( paths.size() )];
+				if ( other == from || tree[other].second != tree[from].second ||
+					 0 == other.compare( 0, from.size() + 1, from + ReplayTree::slash() ) ||
+					 0 == from.compare( 0, other.size() + 1, other + ReplayTree::slash() ) )
+					continue;
+				const std::string temporary = parentOf( from ) + ReplayTree::slash() + "tmp";
+				if ( tree.count( temporary ) )
+					continue;
+				moveTree( from, temporary );
+				moveTree( other, from );
+				moveTree( temporary, other );
+				continue;
+			}
+			// Rename or move, into a directory outside its own tree.
+			const std::string into = kind == 0 ? parentOf( from ) : targets[pick( targets.size() )];
+			if ( !isDirectory( into ) || into == from ||
+				 0 == into.compare( 0, from.size() + 1, from + ReplayTree::slash() ) )
+				continue;
+			const std::string to = into + ReplayTree::slash() + "m" + std::to_string( nextInode++ );
+			moveTree( from, to );
+		}
+		checkReplay( before, tree, utest_result, "seed " + std::to_string( seed ) );
+	}
+}
+
+// Random trees in the moved directory and in another registration, with entries moved between
+// them besides the changes inside the moved one: the delivered events turn both into what is on
+// disk. The fake other watch reports entries arriving and leaving, not changes inside it.
+UTEST( FileActionBatch, RandomChangesAcrossAMovedTreeReplay ) {
+	const std::string slash = ReplayTree::slash();
+	for ( unsigned seed = 1; seed <= 300; seed++ ) {
+		std::mt19937 random( seed );
+		auto pick = [&random]( size_t count ) {
+			return std::uniform_int_distribution<size_t>( 0, count - 1 )( random );
+		};
+		unsigned long nextInode = 10;
+		auto randomTree = [&]( PlainTree& tree, int prefix ) {
+			std::vector<std::string> directories{ "" };
+			const int entries = 2 + static_cast<int>( pick( 8 ) );
+			for ( int i = 0; i < entries; i++ ) {
+				const bool directory = pick( 3 ) == 0;
+				const std::string path = directories[pick( directories.size() )] + slash +
+										 ( prefix ? "o" : "n" ) + std::to_string( i );
+				tree[path] = { id( nextInode++ ), directory };
+				if ( directory )
+					directories.push_back( path );
+			}
+		};
+		PlainTree moved, other;
+		randomTree( moved, 0 );
+		randomTree( other, 1 );
+		const PlainTree before = moved, otherBefore = other;
+
+		// An entry crosses between the trees once at most: more would be a change inside other.
+		std::set<efsw::FileIdentity> crossed;
+		auto crosses = [&crossed]( const PlainTree& subtree ) {
+			for ( const auto& entry : subtree )
+				if ( crossed.count( entry.second.first ) )
+					return false;
+			for ( const auto& entry : subtree )
+				crossed.insert( entry.second.first );
+			return true;
+		};
+		auto take = []( PlainTree& tree, const std::string& from, const std::string& slashText ) {
+			PlainTree subtree;
+			for ( auto it = tree.begin(); it != tree.end(); ) {
+				if ( it->first == from ||
+					 0 == it->first.compare( 0, from.size() + 1, from + slashText ) ) {
+					subtree[it->first.substr( from.size() )] = it->second;
+					it = tree.erase( it );
+				} else {
+					++it;
+				}
+			}
+			return subtree;
+		};
+		auto put = []( PlainTree& tree, const std::string& to, const PlainTree& subtree ) {
+			for ( const auto& entry : subtree )
+				tree[to + entry.first] = entry.second;
+		};
+		auto directoriesOf = []( const PlainTree& tree ) {
+			std::vector<std::string> result{ "" };
+			for ( const auto& entry : tree )
+				if ( entry.second.second )
+					result.push_back( entry.first );
+			return result;
+		};
+		const int changes = 1 + static_cast<int>( pick( 6 ) );
+		for ( int c = 0; c < changes; c++ ) {
+			const size_t kind = pick( 6 );
+			if ( kind == 0 || moved.empty() ) {
+				// Created in the moved tree.
+				auto targets = directoriesOf( moved );
+				const std::string path =
+					targets[pick( targets.size() )] + slash + "c" + std::to_string( nextInode );
+				moved[path] = { id( nextInode++ ), pick( 3 ) == 0 };
+				continue;
+			}
+			std::vector<std::string> paths;
+			for ( const auto& entry : moved )
+				paths.push_back( entry.first );
+			if ( kind == 5 && !other.empty() ) {
+				// From other into the moved tree, renamed.
+				std::vector<std::string> otherPaths;
+				for ( const auto& entry : other )
+					otherPaths.push_back( entry.first );
+				const std::string from = otherPaths[pick( otherPaths.size() )];
+				auto targets = directoriesOf( moved );
+				const std::string to =
+					targets[pick( targets.size() )] + slash + "i" + std::to_string( nextInode++ );
+				PlainTree subtree = take( other, from, slash );
+				if ( crosses( subtree ) )
+					put( moved, to, subtree );
+				else
+					put( other, from, subtree );
+				continue;
+			}
+			const std::string from = paths[pick( paths.size() )];
+			if ( kind == 1 ) {
+				// Deleted, with what it holds.
+				take( moved, from, slash );
+				continue;
+			}
+			if ( kind == 4 ) {
+				// Out to other, keeping its name, into a directory other had: other reports what
+				// arrives there.
+				std::vector<std::string> targets{ "" };
+				for ( const auto& entry : other )
+					if ( entry.second.second && hasIdentity( otherBefore, entry.second.first ) )
+						targets.push_back( entry.first );
+				const std::string to =
+					targets[pick( targets.size() )] + from.substr( from.rfind( slash[0] ) );
+				if ( other.count( to ) )
+					continue;
+				PlainTree subtree = take( moved, from, slash );
+				// A directory holding entries no watch knew, as those created after the move,
+				// arrives in other reported as a directory only, as one from anywhere else.
+				bool known = true;
+				for ( const auto& entry : subtree )
+					known = known &&
+							( subtree.size() == 1 || hasIdentity( before, entry.second.first ) );
+				if ( known && crosses( subtree ) )
+					put( other, to, subtree );
+				else
+					put( moved, from, subtree );
+				continue;
+			}
+			// Renamed or moved inside the moved tree.
+			auto targets = directoriesOf( moved );
+			const std::string into = kind == 2 ? from.substr( 0, from.rfind( slash[0] ) )
+											   : targets[pick( targets.size() )];
+			if ( into == from || 0 == into.compare( 0, from.size() + 1, from + slash ) )
+				continue;
+			put( moved, into + slash + "m" + std::to_string( nextInode++ ),
+				 take( moved, from, slash ) );
+		}
+		checkReplay( before, moved, utest_result, "seed " + std::to_string( seed ), otherBefore,
+					 other );
+		checkReplay( before, moved, utest_result,
+					 "seed " + std::to_string( seed ) + " (directories)", otherBefore, other,
+					 Reporting::Directories );
+	}
+}
+
+namespace {
+
+/// A directory moved out to other, held to the next pass by an unrelated Delete in other, while
+/// its tree's move is delivered now, and a listener removes a registration on that Moved event:
+/// the source, the destination, or an unrelated one with held events of its own, which come
+/// before the held move. Other still gets the directory on the next pass.
+/// @param removal 0: the source. 1: the destination. 2: the unrelated registration.
+void runRemovalWithHeldMoves( int removal, int* utest_result ) {
+	const std::string slash = ReplayTree::slash();
+	efsw::FileActionBatch batch;
+	TestListener sourceListener, otherListener, unrelatedListener, earlierListener;
+	RemovingListener destinationListener;
+	FakeWatch earlier( 5, batch, &earlierListener );
+	FakeWatch unrelated( 4, batch, &unrelatedListener );
+	FakeWatch source( 1, batch, &sourceListener );
+	FakeWatch destination( 2, batch, &destinationListener );
+	FakeWatch other( 3, batch, &otherListener );
+	destinationListener.Batch = &batch;
+	destinationListener.Removed = removal == 0	 ? static_cast<efsw::Watcher*>( &source )
+								  : removal == 1 ? static_cast<efsw::Watcher*>( &destination )
+												 : static_cast<efsw::Watcher*>( &unrelated );
+	const std::pair<efsw::FileIdentity, bool> outer( id( 1 ), true ), n0( id( 10 ), true ),
+		n3( id( 13 ), false ), gone( id( 14 ), false ), lost( id( 30 ), false ),
+		seen( id( 31 ), false );
+	const std::string src = slash + "src" + slash + "outer";
+	const std::string dst = slash + "dst" + slash + "outer";
+	const std::string oth = slash + "other";
+	std::vector<efsw::FileInfoList> lists( 1 );
+	lists[0].push_back( synthetic( src + slash + "n0", n0.first, true ) );
+	lists[0].push_back( synthetic( src + slash + "n0" + slash + "n3", n3.first, false ) );
+	reportAt( earlier, slash + "early" + slash + "seen", efsw::Actions::Add, seen );
+	reportAt( unrelated, slash + "unrelated" + slash + "lost", efsw::Actions::Delete, lost );
+	reportAt( source, src + slash + "n0", efsw::Actions::Delete, n0 );
+	reportAt( source, src + slash + "n0" + slash + "n3", efsw::Actions::Delete, n3 );
+	reportAt( source, src, efsw::Actions::Delete, outer );
+	source.GiveUp.emplace_back( synthetic( src, outer.first, true ), std::move( lists ) );
+	reportAt( destination, dst, efsw::Actions::Add, outer );
+	reportAt( other, oth + slash + "gone", efsw::Actions::Delete, gone );
+	reportAt( other, oth + slash + "n0", efsw::Actions::Add, n0 );
+	reportAt( other, oth + slash + "n0" + slash + "n3", efsw::Actions::Add, n3 );
+	other.Tree.push_back( synthetic( oth + slash + "n0", n0.first, true ) );
+	other.Tree.push_back( synthetic( oth + slash + "n0" + slash + "n3", n3.first, false ) );
+	const std::vector<FakeWatch*> order{ &earlier, &unrelated, &source, &destination, &other };
+	runPass( batch, order );
+	EXPECT_NE( -1, destinationListener.indexOf( efsw::Actions::Moved, "outer" ) );
+	runPass( batch, order );
+
+	EXPECT_TRUE( otherListener.checkEvent( efsw::Actions::Add, "n0" ) ||
+				 otherListener.indexOf( efsw::Actions::Moved, "n0" ) != -1 );
+	if ( removal == 2 )
+		EXPECT_EQ( 0u, unrelatedListener.getEventCount() );
+}
+
+} // namespace
+
+// A listener removes a registration while the changes of a moved tree refer to held events:
+// the held events stay where they are until the next pass, which still delivers what remains.
+UTEST( FileActionBatch, RemovalWithHeldMovesOfATree ) {
+	runRemovalWithHeldMoves( 0, utest_result );
+	runRemovalWithHeldMoves( 1, utest_result );
+	runRemovalWithHeldMoves( 2, utest_result );
 }

@@ -54,6 +54,25 @@ bool WatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) 
 	return DirWatch->snapshotHasAny( identities );
 }
 
+bool WatcherGeneric::collectTree( const std::string& directory,
+								  std::vector<const FileInfo*>* entries ) {
+	DirWatcherGeneric* tree = DirWatch->findTree( directory );
+	if ( NULL == tree )
+		return false;
+	if ( NULL != entries )
+		tree->collectEntries( *entries );
+	return true;
+}
+
+void WatcherGeneric::takeSnapshots( std::vector<FileInfoList>& lists ) {
+	DirWatch->takeSnapshots( lists );
+}
+
+void WatcherGeneric::gaveUpTree( const FileInfo& directory ) {
+	if ( mCollectActions && NULL != SharedActionBatch )
+		SharedActionBatch->addSourceTree( directory, {} );
+}
+
 bool WatcherGeneric::pathInWatches( std::string path ) {
 	return DirWatch->pathInWatches( path );
 }
