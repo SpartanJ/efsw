@@ -116,14 +116,15 @@ static bool existsWithTrailingSlash( const std::string& filePath ) {
 
 bool FileInfo::exists( const std::string& filePath ) {
 #if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
-	if ( FileSystem::slashAtEnd( filePath ) )
+	if ( FileSystem::slashAtEnd( filePath ) && !FileSystem::isRootPath( filePath ) )
 		return existsWithTrailingSlash( filePath );
 	struct stat st;
 	return stat( filePath.c_str(), &st ) == 0;
 #else
 	// FileInfo::exists historically checked the path without its final slash.
-	const WidePath widePath( filePath.data(),
-							 filePath.size() - ( FileSystem::slashAtEnd( filePath ) ? 1 : 0 ) );
+	const bool removeSlash =
+		FileSystem::slashAtEnd( filePath ) && !FileSystem::isRootPath( filePath );
+	const WidePath widePath( filePath.data(), filePath.size() - ( removeSlash ? 1 : 0 ) );
 	if ( !widePath.get() )
 		return false;
 	struct _stat st;
@@ -179,12 +180,6 @@ FileInfo::FileInfo( const std::string& filepath, bool linkInfo ) :
 }
 
 void FileInfo::getInfo() {
-#if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
-	if ( Filepath.size() == 3 && Filepath[1] == ':' && Filepath[2] == FileSystem::getOSSlash() ) {
-		Filepath += FileSystem::getOSSlash();
-	}
-#endif
-
 	/// Why i'm doing this? stat in mingw32 doesn't work for directories if the dir path ends with a
 	/// path slash
 	bool slashAtEnd = FileSystem::slashAtEnd( Filepath );
