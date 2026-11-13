@@ -1927,7 +1927,7 @@ void reportChainedMoves( FakeWatch& first, FakeWatch& second, FakeWatch& third )
 
 /// A directory removed from the first watch after both of its files were moved out of it, one
 /// to the second watch and one to the third. Its Delete waits on both moves, and comes right
-/// after the second of them, before what the third watch reports after its move.
+/// after the second of them, before what the watch of that move reports after it.
 void reportDeleteAfterTwoMoves( FakeWatch& first, FakeWatch& second, FakeWatch& third ) {
 	const std::string slash = ReplayTree::slash();
 	const std::string gone = slash + "a" + slash + "gone" + slash;
@@ -1937,6 +1937,8 @@ void reportDeleteAfterTwoMoves( FakeWatch& first, FakeWatch& second, FakeWatch& 
 	first.report( gone, "two", efsw::Actions::Delete, synthetic( "", id( 11 ), false ) );
 	second.report( slash + "b" + slash, "one", efsw::Actions::Add,
 				   synthetic( "", id( 10 ), false ) );
+	second.report( slash + "b" + slash, "second", efsw::Actions::Modified,
+				   synthetic( "", id( 31 ), false ) );
 	third.report( slash + "c" + slash, "two", efsw::Actions::Add,
 				  synthetic( "", id( 11 ), false ) );
 	third.report( slash + "c" + slash, "third", efsw::Actions::Modified,
@@ -2006,6 +2008,7 @@ UTEST( FileActionBatch, DeleteWaitsForTwoMovesInScanOrder ) {
 
 	expectEvents( listener,
 				  { { efsw::Actions::Moved, "one" },
+					{ efsw::Actions::Modified, "second" },
 					{ efsw::Actions::Moved, "two" },
 					{ efsw::Actions::Delete, "gone" },
 					{ efsw::Actions::Modified, "third" } },
@@ -2026,6 +2029,7 @@ UTEST( FileActionBatch, DeleteWaitsForTwoMovesInReverseOrder ) {
 				  { { efsw::Actions::Moved, "two" },
 					{ efsw::Actions::Modified, "third" },
 					{ efsw::Actions::Moved, "one" },
-					{ efsw::Actions::Delete, "gone" } },
+					{ efsw::Actions::Delete, "gone" },
+					{ efsw::Actions::Modified, "second" } },
 				  utest_result );
 }
