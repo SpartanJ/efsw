@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <chrono>
 #include <efsw/FileWatcherInotify.hpp>
+#include <efsw/InotifyBatch.hpp>
 #include <utility>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
@@ -414,27 +416,32 @@ void FileWatcherInotify::run() {
 	// normally consecutive, but Linux does not guarantee that: unrelated events
 	// and other move pairs may occur between IN_MOVED_FROM and IN_MOVED_TO.
 	//
-	// Parse a complete read batch before delivering callbacks so cookie pairs can
+	// Parse a complete batch before delivering callbacks so cookie pairs can
 	// be identified without changing the order of unrelated events. We only
 	// coalesce pairs fully contained in this batch. Retaining a source across
-	// reads would require retaining every newer event too; otherwise a delayed
+	// batches would require retaining every newer event too; otherwise a delayed
 	// Delete or Moved could be delivered after an event that invalidated it.
-	//
-	// The kernel queues the two events of a rename one after the other, so a read
-	// may take IN_MOVED_FROM before IN_MOVED_TO is queued. When a batch ends with
-	// a source whose destination is not in it, nothing newer was read yet: the
-	// next read is appended to the batch, waiting for it a little.
-	struct BatchEvent {
-		int wd;
-		uint32_t mask;
-		uint32_t cookie;
-		std::string filename;
-	};
+	// A batch waits briefly for the destinations of its sources: see InotifyBatch.
 
-	struct MovePair {
-		MovePair() : destinationWd( -1 ) {}
+	// The batch's reads: the inotify descriptor, until the watcher shuts down.
+	struct Source {
+		int fd;
+		const Atomic<bool>& initOK;
 
-		int destinationWd;
+		bool wait( int timeoutMs ) {
+			pollfd more = { fd, POLLIN, 0 };
+			return poll( &more, 1, timeoutMs ) > 0 && ( more.revents & POLLIN );
+		}
+
+		ssize_t read( char* buffer, size_t size ) { return ::read( fd, buffer, size ); }
+
+		long long nowMs() const {
+			return std::chrono::duration_cast<std::chrono::milliseconds>(
+					   std::chrono::steady_clock::now().time_since_epoch() )
+				.count();
+		}
+
+		bool running() const { return initOK.load(); }
 	};
 
 	struct PendingMove {
@@ -448,10 +455,10 @@ void FileWatcherInotify::run() {
 	// has one entry per source owner of the descriptor, usually exactly one.
 	std::unordered_multimap<uint32_t, PendingMove> pendingMoves;
 	pendingMoves.reserve( 16 );
-	std::vector<BatchEvent> events;
-	events.reserve( 64 );
-	std::unordered_map<uint32_t, MovePair> movePairs;
-	movePairs.reserve( 16 );
+	InotifyBatch batch;
+	batch.Events.reserve( 64 );
+	batch.Destinations.reserve( 16 );
+	Source source{ mFD, mInitOK };
 	// Scratch buffers reused for every event.
 	std::vector<WatcherInotify*> owners;
 	std::vector<WatcherInotify*> destinationOwners;
@@ -514,52 +521,14 @@ void FileWatcherInotify::run() {
 	do {
 		pollfd fd = { mFD, POLLIN, 0 };
 		if ( poll( &fd, 1, 100 ) > 0 && ( fd.revents & POLLIN ) ) {
-			ssize_t len;
-
-			len = read( mFD, buff, BUFF_SIZE );
-
-			if ( len != -1 ) {
-				events.clear();
-				movePairs.clear();
-
-				auto parse = [&]( ssize_t length ) {
-					ssize_t i = 0;
-					while ( i < length ) {
-						struct inotify_event* pevent = (struct inotify_event*)&buff[i];
-						events.push_back( BatchEvent{ pevent->wd, pevent->mask, pevent->cookie,
-													  std::string( (char*)pevent->name ) } );
-
-						if ( pevent->mask & IN_MOVED_TO )
-							movePairs[pevent->cookie].destinationWd = pevent->wd;
-
-						i += sizeof( struct inotify_event ) + pevent->len;
-					}
-				};
-				parse( len );
-
-				// A source moved out of the watched directories has no destination: its
-				// Delete waits for this long when it ends a batch. The destination of a
-				// rename is normally queued within microseconds.
-				const int moveDestinationWaitMs = 20;
-				while ( !events.empty() && ( events.back().mask & IN_MOVED_FROM ) &&
-						!movePairs.count( events.back().cookie ) ) {
-					pollfd more = { mFD, POLLIN, 0 };
-					if ( poll( &more, 1, moveDestinationWaitMs ) <= 0 ||
-						 !( more.revents & POLLIN ) )
-						break;
-					const ssize_t extra = read( mFD, buff, BUFF_SIZE );
-					if ( extra <= 0 )
-						break;
-					parse( extra );
-				}
-
+			if ( batch.read( source, buff, BUFF_SIZE ) ) {
 				// Replay in kernel queue order. A source is deferred only when the
 				// complete pair will be represented by one Moved callback. Otherwise
 				// Delete is emitted at FROM and Add at TO, preserving their positions.
 				// Every event is delivered to each logical owner of its descriptor.
 				pendingMoves.clear();
 
-				for ( const auto& event : events ) {
+				for ( const auto& event : batch.Events ) {
 					{
 						Lock lock( mWatchesLock );
 						ownersLocked( event.wd, owners );
@@ -567,10 +536,10 @@ void FileWatcherInotify::run() {
 
 					if ( event.mask & IN_MOVED_FROM ) {
 						destinationOwners.clear();
-						auto pair = movePairs.find( event.cookie );
-						if ( pair != movePairs.end() && pair->second.destinationWd != -1 ) {
+						auto pair = batch.Destinations.find( event.cookie );
+						if ( pair != batch.Destinations.end() ) {
 							Lock lock( mWatchesLock );
-							ownersLocked( pair->second.destinationWd, destinationOwners );
+							ownersLocked( pair->second, destinationOwners );
 						}
 
 						// Each destination owner completes at most one source owner, so no

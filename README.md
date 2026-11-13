@@ -180,6 +180,12 @@ one more polling pass, with the later events of its watch, including the moves i
 other watch may only see the destination on its next scan. The order of events within one watch is preserved, but events of
 watches with the option can be delivered after later events of other watches.
 
+On Linux, inotify queues the two halves of a rename one after the other, so efsw can read the
+source before its destination is queued. Whether or not the option is set, a batch of events that
+holds a move's source without its destination waits up to 20 ms for it, counted from the batch's
+first read, and is then delivered in order. A file moved out of the watched directories has no
+destination, so its `Delete`, and the events read with it, can be delayed by up to 20 ms.
+
 On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
 recursively covers the other watch root. Recursive watching is implemented using one inotify
 watch per directory. `addWatch()` returns `Errors::FileOverlapping` for these overlapping
