@@ -51,9 +51,27 @@ void FileSystem::dirAddSlashAtEnd( std::string& dir ) {
 }
 
 void FileSystem::dirRemoveSlashAtEnd( std::string& dir ) {
-	if ( dir.size() >= 1 && dir[dir.size() - 1] == getOSSlash() ) {
+	if ( dir.size() >= 1 && dir[dir.size() - 1] == getOSSlash() && !isRootPath( dir ) ) {
 		dir.erase( dir.size() - 1 );
 	}
+}
+
+bool FileSystem::isRootPath( const std::string& path ) {
+	const char slash = getOSSlash();
+	if ( path.size() == 1 )
+		return path[0] == slash;
+#if EFSW_OS == EFSW_OS_WIN
+	if ( path.size() == 3 && path[1] == ':' && path[2] == slash )
+		return true;
+	// A share root: the separator after the share name ends the path.
+	if ( path.size() > 4 && path[0] == slash && path[1] == slash &&
+		 path[path.size() - 1] == slash ) {
+		const size_t server = path.find( slash, 2 );
+		return server != std::string::npos && server > 2 && server + 1 < path.size() - 1 &&
+			   path.find( slash, server + 1 ) == path.size() - 1;
+	}
+#endif
+	return false;
 }
 
 std::string FileSystem::fileNameFromPath( std::string filepath ) {

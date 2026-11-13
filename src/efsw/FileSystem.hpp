@@ -19,7 +19,12 @@ class FileSystem {
 
 	static void dirAddSlashAtEnd( std::string& dir );
 
+	/// Removes the final separator, unless the path is a root, whose separator is the path.
 	static void dirRemoveSlashAtEnd( std::string& dir );
+
+	/// @return Whether the path names a root: "/", or on Windows a lone separator, a drive root
+	/// such as "C:\" and a share root such as "\\server\share\".
+	static bool isRootPath( const std::string& path );
 
 	static std::string fileNameFromPath( std::string filepath );
 
