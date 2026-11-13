@@ -1908,3 +1908,124 @@ UTEST( FileActionBatch, DirectoryPathsWithAFinalSeparator ) {
 	EXPECT_EQ( efsw::Actions::Modified, std::get<0>( events[1] ) );
 	EXPECT_TRUE( std::get<1>( events[1] ) == "changed" );
 }
+
+namespace {
+
+/// Two moves that wait on each other in a chain: one goes from the first watch to the second,
+/// and two goes from the second watch to the third. The second watch reports the Delete of two
+/// before the Add of one, so the first watch's events wait for the second watch, which waits
+/// for the third. Resolving each move wakes the next registration in the chain, whose events
+/// then come before what the third watch reports later.
+void reportChainedMoves( FakeWatch& first, FakeWatch& second, FakeWatch& third ) {
+	first.report( "/a/", "one", efsw::Actions::Delete, synthetic( "", id( 10 ), false ) );
+	first.report( "/a/", "first", efsw::Actions::Modified, synthetic( "", id( 30 ), false ) );
+	second.report( "/b/", "two", efsw::Actions::Delete, synthetic( "", id( 11 ), false ) );
+	second.report( "/b/", "one", efsw::Actions::Add, synthetic( "", id( 10 ), false ) );
+	third.report( "/c/", "two", efsw::Actions::Add, synthetic( "", id( 11 ), false ) );
+	third.report( "/c/", "third", efsw::Actions::Modified, synthetic( "", id( 31 ), false ) );
+}
+
+/// A directory removed from the first watch after both of its files were moved out of it, one
+/// to the second watch and one to the third. Its Delete waits on both moves, and comes right
+/// after the second of them, before what the third watch reports after its move.
+void reportDeleteAfterTwoMoves( FakeWatch& first, FakeWatch& second, FakeWatch& third ) {
+	const std::string slash = ReplayTree::slash();
+	const std::string gone = slash + "a" + slash + "gone" + slash;
+	first.report( slash + "a" + slash, "gone", efsw::Actions::Delete,
+				  synthetic( "", id( 20 ), true ) );
+	first.report( gone, "one", efsw::Actions::Delete, synthetic( "", id( 10 ), false ) );
+	first.report( gone, "two", efsw::Actions::Delete, synthetic( "", id( 11 ), false ) );
+	second.report( slash + "b" + slash, "one", efsw::Actions::Add,
+				   synthetic( "", id( 10 ), false ) );
+	third.report( slash + "c" + slash, "two", efsw::Actions::Add,
+				  synthetic( "", id( 11 ), false ) );
+	third.report( slash + "c" + slash, "third", efsw::Actions::Modified,
+				  synthetic( "", id( 30 ), false ) );
+}
+
+void expectEvents( TestListener& listener,
+				   const std::vector<std::pair<efsw::Action, std::string>>& expected,
+				   int* utest_result ) {
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].first, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].second == std::get<1>( events[i] ) );
+	}
+}
+
+} // namespace
+
+UTEST( FileActionBatch, ChainedMovesWakeEachWaitingWatch ) {
+	efsw::FileActionBatch batch;
+	TestListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	reportChainedMoves( first, second, third );
+	runPass( batch, { &first, &second, &third } );
+
+	expectEvents( listener,
+				  { { efsw::Actions::Moved, "two" },
+					{ efsw::Actions::Moved, "one" },
+					{ efsw::Actions::Modified, "first" },
+					{ efsw::Actions::Modified, "third" } },
+				  utest_result );
+}
+
+// The same chain, but the third watch's listener removes the second registration when it
+// receives its move: the move into the second watch is canceled, so the first watch, woken
+// by the cancellation, gets its file's Delete, before what the third watch reports later.
+UTEST( FileActionBatch, RemovingAWatchWhileWakingTheChain ) {
+	efsw::FileActionBatch batch;
+	RemovingListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	listener.Batch = &batch;
+	listener.Removed = &second;
+	reportChainedMoves( first, second, third );
+	runPass( batch, { &first, &second, &third } );
+
+	expectEvents( listener,
+				  { { efsw::Actions::Moved, "two" },
+					{ efsw::Actions::Delete, "one" },
+					{ efsw::Actions::Modified, "first" },
+					{ efsw::Actions::Modified, "third" } },
+				  utest_result );
+}
+
+UTEST( FileActionBatch, DeleteWaitsForTwoMovesInScanOrder ) {
+	efsw::FileActionBatch batch;
+	TestListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	reportDeleteAfterTwoMoves( first, second, third );
+	runPass( batch, { &first, &second, &third } );
+
+	expectEvents( listener,
+				  { { efsw::Actions::Moved, "one" },
+					{ efsw::Actions::Moved, "two" },
+					{ efsw::Actions::Delete, "gone" },
+					{ efsw::Actions::Modified, "third" } },
+				  utest_result );
+}
+
+// The same, with the second move's destination scanned, and resolved, first.
+UTEST( FileActionBatch, DeleteWaitsForTwoMovesInReverseOrder ) {
+	efsw::FileActionBatch batch;
+	TestListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	reportDeleteAfterTwoMoves( first, second, third );
+	runPass( batch, { &first, &third, &second } );
+
+	expectEvents( listener,
+				  { { efsw::Actions::Moved, "two" },
+					{ efsw::Actions::Modified, "third" },
+					{ efsw::Actions::Moved, "one" },
+					{ efsw::Actions::Delete, "gone" } },
+				  utest_result );
+}
