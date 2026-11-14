@@ -1246,6 +1246,43 @@ UTEST( FileActionBatch, TwoHeldMovesWithRenamesInOnePass ) {
 	}
 }
 
+// A directory renamed within its directory while its contents changed, as when it left for
+// another watch and came back under another name in one pass: its snapshot reports a Delete and
+// an Add, which are the directory's move, by its name as a watch reports a rename. What moved
+// with it keeps its path relative to it.
+UTEST( FileActionBatch, DirectoryRenamedWhileItsContentsChanged ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "p", true );
+	efsw::FileInfo inner = file.make( "p/x", true );
+	efsw::FileInfo kept = file.make( "p/y" );
+	first.report( "/a/", "r", efsw::Actions::Add, directory );
+	first.report( "/a/r/", "x", efsw::Actions::Add, inner );
+	first.report( "/a/", "p", efsw::Actions::Delete, directory );
+	first.report( "/a/p/", "y", efsw::Actions::Delete, kept );
+	first.report( "/a/p/", "x", efsw::Actions::Delete, inner );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "r" );
+	EXPECT_TRUE( std::get<2>( events[0] ) == "p" );
+}
+
+// A directory added, then deleted with its parent, with both events in one pass: not a rename.
+UTEST( FileActionBatch, AddAndDeleteAtOnePathAreNotARename ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "x", true );
+	first.report( "/a/", "x", efsw::Actions::Add, directory );
+	first.report( "/a/", "x", efsw::Actions::Delete, directory );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[0] ) );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[1] ) );
+}
+
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.

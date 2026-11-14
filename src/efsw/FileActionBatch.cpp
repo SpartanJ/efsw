@@ -616,7 +616,13 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			continue;
 		const Event& source = mEvents[deleted];
 		const Event& destination = mEvents[created];
-		if ( source.Directory == destination.Directory ||
+		// Halves in one directory too: its snapshot pairs a rename there only when the entry did
+		// not change, while a directory whose contents changed is still the same directory. Not
+		// at one path: an entry added and deleted there was not renamed.
+		const size_t sourceLength = directoryLength( source.Info.Filepath );
+		if ( ( sourceLength == directoryLength( destination.Info.Filepath ) &&
+			   0 == source.Info.Filepath.compare( 0, sourceLength, destination.Info.Filepath, 0,
+												  sourceLength ) ) ||
 			 !source.Info.sameInode( destination.Info ) ||
 			 ( source.Info.isRegularFile() &&
 			   ( source.Info.LinkCount != 1 || destination.Info.LinkCount != 1 ) ) ||
@@ -1852,6 +1858,13 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 									  directoryLength( from ) );
 					}
 				}
+			}
+			// A rename within one directory of a watch, by the name alone, as a watch reports it.
+			if ( oldPath.empty() ) {
+				const Event& source = mEvents[moves->SourceOf[i]];
+				if ( source.Watch == destination.Watch &&
+					 source.Directory == destination.Directory )
+					oldPath = source.Filename;
 			}
 			if ( target && converted[i] ) {
 				target->handleFileAction( destination.Watch, destination.Directory,
