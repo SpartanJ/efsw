@@ -41,11 +41,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
-#include <climits>
 #include <fcntl.h>
 #include <map>
 #include <mutex>
@@ -291,7 +291,15 @@ int main( int argc, char** argv ) {
 		registrationOf[id] = i;
 	}
 	fileWatcher.watch();
-	std::this_thread::sleep_for( std::chrono::milliseconds( generic ? 3 * ms : 100 ) );
+	// The waits of a polling backend: the generic one, or kqueue, the native backend of the
+	// BSDs, which scans every --ms too. Not the random draws, which a seed reproduces.
+#if defined( __FreeBSD__ ) || defined( __NetBSD__ ) || defined( __OpenBSD__ ) || \
+	defined( __DragonFly__ )
+	const bool polling = true;
+#else
+	const bool polling = generic;
+#endif
+	std::this_thread::sleep_for( std::chrono::milliseconds( polling ? 3 * ms : 100 ) );
 
 	// What the events say is there: absolute paths under the watched directories.
 	std::set<std::string> model;
@@ -428,7 +436,7 @@ int main( int argc, char** argv ) {
 		// Waits for the events: up to two more polling passes and a margin, or for inotify's
 		// batches. Under heavy load events can arrive later, and are then reported by the next
 		// round, which fails too.
-		std::this_thread::sleep_for( std::chrono::milliseconds( generic ? 5 * ms : 150 ) );
+		std::this_thread::sleep_for( std::chrono::milliseconds( polling ? 5 * ms : 150 ) );
 		std::vector<Event> events;
 		{
 			std::lock_guard<std::mutex> lock( gMutex );

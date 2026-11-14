@@ -162,9 +162,10 @@ mind when reading results:
   tool, so seed numbers in earlier reports still give the same operations.
 - Campaigns so far ran on Linux, with inotify and the generic backend. On macOS and FreeBSD the
   fuzzer builds, and the generic backend (`--generic`) passes the same seeds. The native
-  backends there don't pass, for known reasons:
-  - **FSEvents** may report more actions than occurred, as the main README says: an `Add` for a
-    file that was only written, or a `Delete` for a file created and removed between two
-    events. The replay reports those as errors.
-  - **kqueue** reports an event of a subdirectory with that subdirectory's own watch ID, not the
-    one `addWatch()` returned, so the fuzzer can't tell which registration it belongs to.
+  backends there:
+  - **FSEvents** doesn't pass: it may report more actions than occurred, as the main README
+    says, such as an `Add` for a file that was only written, or a `Delete` for a file created
+    and removed between two events. The replay reports those as errors.
+  - **kqueue** scans like the generic backend, every `--ms`, and the fuzzer waits for it as
+    such on the BSDs. Seeds 1 to 12 still find failures in 6 of them, with events missing or
+    reported twice. They haven't been investigated yet.
