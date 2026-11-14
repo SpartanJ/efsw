@@ -5,6 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
+#include <algorithm>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 
@@ -197,19 +198,104 @@ void FileWatcherFSEvents::pairCrossWatchMoves( size_t eventCount ) {
 		}
 	}
 
-	for ( size_t i = 0; i < eventCount; ++i ) {
-		const FSEvent& first = mEventBuffer[i];
-		if ( mClaimedBy[i] || first.inode == 0 ||
-			 !( first.Flags & efswFSEventStreamEventFlagItemRenamed ) )
+	for ( const auto& chain : mInodeChains )
+		pairInode( chain.second.First, eventCount );
+}
+
+void FileWatcherFSEvents::pairInode( size_t first, size_t eventCount ) {
+	std::vector<size_t>& records = mChainRecords;
+	records.clear();
+	for ( size_t k = first; k != noEvent; k = mInodeNext[k] )
+		if ( !mClaimedBy[k] && ( mEventBuffer[k].Flags & efswFSEventStreamEventFlagItemRenamed ) )
+			records.push_back( k );
+	if ( records.size() < 2 )
+		return;
+	if ( records.size() == 2 ) {
+		if ( mEventBuffer[records[0]].Path != mEventBuffer[records[1]].Path )
+			pairCrossWatchMove( records[0], records[1], eventCount );
+		return;
+	}
+
+	// A move pairs a path that no longer exists with the one where the inode is now: a
+	// directory, or a file with no other link, so there is one on each volume, since inode
+	// numbers are only unique within one. Pairing claims every record at both paths, so the
+	// inode moves between registrations at most once per volume in a callback. Each path is
+	// looked at once, and each source tried once per destination: whether it pairs with one
+	// does not depend on the records.
+	const Uint64 inode = mEventBuffer[first].inode;
+	mPathStates.clear();
+	mDestinations.clear();
+	for ( size_t record : records ) {
+		const std::string& path = mEventBuffer[record].Path;
+		if ( PathDestination == pathState( path, inode ) &&
+			 std::find_if( mDestinations.begin(), mDestinations.end(),
+						   [&path]( const std::string* known ) { return *known == path; } ) ==
+				 mDestinations.end() )
+			mDestinations.push_back( &path );
+	}
+	for ( const std::string* destination : mDestinations )
+		pairWithDestination( *destination, inode, eventCount );
+}
+
+FileWatcherFSEvents::PathState FileWatcherFSEvents::pathState( const std::string& path,
+															   Uint64 inode ) {
+	auto known = mPathStates.find( path );
+	if ( known != mPathStates.end() )
+		return known->second;
+	PathState state = PathMissing;
+	if ( FileInfo::exists( path ) ) {
+		struct stat now;
+		state =
+			stat( path.c_str(), &now ) == 0 && static_cast<Uint64>( now.st_ino ) == inode &&
+					( S_ISDIR( now.st_mode ) || ( S_ISREG( now.st_mode ) && now.st_nlink == 1 ) )
+				? PathDestination
+				: PathOther;
+	}
+	mPathStates.emplace( path, state );
+	return state;
+}
+
+void FileWatcherFSEvents::pairWithDestination( const std::string& destination, Uint64 inode,
+											   size_t eventCount ) {
+	const std::vector<size_t>& records = mChainRecords;
+	mFailedSources.clear();
+	// The next records to try as a destination and as a source: each only moves forward.
+	size_t nextDestination = 0;
+	size_t nextSource = 0;
+	for ( size_t r = 0; r < records.size(); r++ ) {
+		const size_t record = records[r];
+		// Paired with an earlier destination, on another volume.
+		if ( mClaimedBy[record] )
 			continue;
-		for ( size_t j = mInodeNext[i]; j != noEvent; j = mInodeNext[j] ) {
-			const FSEvent& second = mEventBuffer[j];
-			if ( mClaimedBy[j] || first.Path == second.Path ||
-				 !( second.Flags & efswFSEventStreamEventFlagItemRenamed ) )
-				continue;
-			if ( pairCrossWatchMove( i, j, eventCount ) )
-				break;
+		const std::string& path = mEventBuffer[record].Path;
+		if ( path == destination ) {
+			// The first later source that pairs with it. A later destination record has fewer
+			// sources after it, all tried here: none would pair either.
+			for ( nextSource = std::max( nextSource, r + 1 ); nextSource < records.size();
+				  nextSource++ ) {
+				const size_t source = records[nextSource];
+				const std::string& sourcePath = mEventBuffer[source].Path;
+				if ( mClaimedBy[source] || PathMissing != pathState( sourcePath, inode ) ||
+					 mFailedSources.count( sourcePath ) )
+					continue;
+				if ( pairCrossWatchMove( record, source, eventCount ) )
+					return;
+				mFailedSources.insert( sourcePath );
+			}
+			return;
 		}
+		if ( PathMissing != pathState( path, inode ) || mFailedSources.count( path ) )
+			continue;
+		// The first later destination record.
+		nextDestination = std::max( nextDestination, r + 1 );
+		while ( nextDestination < records.size() &&
+				mEventBuffer[records[nextDestination]].Path != destination )
+			nextDestination++;
+		if ( nextDestination == records.size() )
+			continue;
+		if ( pairCrossWatchMove( record, records[nextDestination], eventCount ) )
+			return;
+		mFailedSources.insert( path );
 	}
 }
 
