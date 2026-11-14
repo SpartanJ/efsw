@@ -314,20 +314,26 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 		auto hold = i < mReleased ? holdFrom.end() : holdFrom.find( mEvents[i].Owner );
 		return hold != holdFrom.end() && i >= hold->second;
 	};
-	// A held move's source stays where it is for the listener until the next pass: the deleted
-	// directories of this pass that contain it are held with it, or its Moved event would name a
-	// source the listener was told is gone. Holding their watches can hold more moves: repeated
-	// until nothing more is held, at most once per watch.
-	std::unordered_map<std::string, size_t>& deletedDirectories = mScratch.DeletedDirectories;
-	deletedDirectories.clear();
+	// A held move's source stays where it is for the listener until the next pass: the
+	// directories of this pass that contain it, deleted or moved, are held with it. Otherwise a
+	// deleted one's Delete would come first, and the move would name a source the listener was
+	// told is gone; a moved one's tree would be compared without the move out of it, and report
+	// the entry deleted. A move is held from its destination. Holding their watches can hold more
+	// moves: repeated until nothing more is held, at most once per watch.
+	std::unordered_map<std::string, size_t>& leftDirectories = mScratch.LeftDirectories;
+	leftDirectories.clear();
 	for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
 		const Event& event = mEvents[i];
-		if ( Actions::Delete == event.ActionType && Moves::None == moves.MoveOf[i] &&
-			 NULL != event.Owner && event.Info.isDirectory() )
-			deletedDirectories.emplace(
-				event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ), i );
+		const size_t move = moves.MoveOf[i];
+		// An event released from the previous pass is not held again.
+		if ( Actions::Delete == event.ActionType && event.Info.isDirectory() &&
+			 NULL != event.Owner &&
+			 ( Moves::None == move || ( NULL != mEvents[move].Owner && move >= mReleased ) ) )
+			leftDirectories.emplace(
+				event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ),
+				Moves::None == move ? i : move );
 	}
-	for ( bool held = !deletedDirectories.empty(); held; ) {
+	for ( bool held = !leftDirectories.empty(); held; ) {
 		held = false;
 		for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
 			const size_t move = moves.MoveOf[i];
@@ -338,8 +344,8 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 			for ( size_t slash = source.find( FileSystem::getOSSlash(), 1 );
 				  slash != std::string::npos && slash + 1 < source.size();
 				  slash = source.find( FileSystem::getOSSlash(), slash + 1 ) ) {
-				auto directory = deletedDirectories.find( source.substr( 0, slash ) );
-				if ( directory == deletedDirectories.end() || inHeldRange( directory->second ) )
+				auto directory = leftDirectories.find( source.substr( 0, slash ) );
+				if ( directory == leftDirectories.end() || inHeldRange( directory->second ) )
 					continue;
 				Watcher* owner = mEvents[directory->second].Owner;
 				auto hold = holdFrom.find( owner );

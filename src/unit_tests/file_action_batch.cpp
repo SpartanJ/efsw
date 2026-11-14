@@ -1355,6 +1355,32 @@ UTEST( FileActionBatch, DeletedDirectoryWaitsForAHeldMoveOutOfIt ) {
 	EXPECT_EQ( 3u, listener.getEventCount() );
 }
 
+// A directory moved, and a file moved out of it to a watch whose earlier Delete holds the file's
+// move to the next pass: the directory's move waits with it. Delivered in one pass, the file's
+// move follows the directory's Moved event, which reports it deleted from the tree, so it is
+// added where it went, instead of a move from a source the listener was told is gone.
+UTEST( FileActionBatch, MovedDirectoryWaitsForAHeldMoveOutOfIt ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo leaving = file.make( "outer/x" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( leaving, "x" );
+	first.report( "/src/outer/", "x", efsw::Actions::Delete, leaving );
+	tree.move( first, second );
+	third.report( "/other/", "unrelated", efsw::Actions::Delete, unrelated );
+	third.report( "/other/", "x", efsw::Actions::Add, leaving );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	runPass( batch, watches );
+	auto events = listener.getEvents();
+	ASSERT_EQ( 4u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Delete, "x" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Add, "x" ) );
+}
+
 // A directory moved to a watch scanned first, out of a directory its own watch found renamed:
 // the move comes before that rename, so its source is named as the listener knows it, under the
 // directory's old name.
@@ -2327,10 +2353,10 @@ UTEST( FileActionBatch, RandomChangesAcrossAMovedTreeReplay ) {
 
 namespace {
 
-/// A directory moved out to other, held to the next pass by an unrelated Delete in other, while
-/// its tree's move is delivered now, and a listener removes a registration on that Moved event:
-/// the source, the destination, or an unrelated one with held events of its own, which come
-/// before the held move. Other still gets the directory on the next pass.
+/// A directory moved out to other, held to the next pass by an unrelated Delete in other, with
+/// its tree's move, which waits for it, and a listener removes a registration on that Moved
+/// event: the source, the destination, or an unrelated one with held events of its own, which
+/// come before it. Other still gets the directory.
 /// @param removal 0: the source. 1: the destination. 2: the unrelated registration.
 void runRemovalWithHeldMoves( int removal, int* utest_result ) {
 	const std::string slash = ReplayTree::slash();
@@ -2369,13 +2395,18 @@ void runRemovalWithHeldMoves( int removal, int* utest_result ) {
 	other.Tree.push_back( synthetic( oth + slash + "n0" + slash + "n3", n3.first, false ) );
 	const std::vector<FakeWatch*> order{ &earlier, &unrelated, &source, &destination, &other };
 	runPass( batch, order );
-	EXPECT_NE( -1, destinationListener.indexOf( efsw::Actions::Moved, "outer" ) );
 	runPass( batch, order );
 
+	EXPECT_NE( -1, destinationListener.indexOf( efsw::Actions::Moved, "outer" ) );
 	EXPECT_TRUE( otherListener.checkEvent( efsw::Actions::Add, "n0" ) ||
 				 otherListener.indexOf( efsw::Actions::Moved, "n0" ) != -1 );
-	if ( removal == 2 )
-		EXPECT_EQ( 0u, unrelatedListener.getEventCount() );
+	// The unrelated registration gets nothing after its removal: only its Delete, which came
+	// before the Moved event.
+	if ( removal == 2 ) {
+		EXPECT_GE( 1u, unrelatedListener.getEventCount() );
+		if ( 1u == unrelatedListener.getEventCount() )
+			EXPECT_EQ( 0, unrelatedListener.indexOf( efsw::Actions::Delete, "lost" ) );
+	}
 }
 
 } // namespace
