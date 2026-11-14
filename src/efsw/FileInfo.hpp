@@ -37,8 +37,6 @@ class FileInfo {
 
 	bool operator!=( const FileInfo& Other ) const;
 
-	FileInfo& operator=( const FileInfo& Other );
-
 	bool isDirectory() const;
 
 	bool isRegularFile() const;

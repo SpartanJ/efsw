@@ -303,19 +303,6 @@ bool FileInfo::exists() {
 	return FileInfo::exists( Filepath );
 }
 
-FileInfo& FileInfo::operator=( const FileInfo& Other ) {
-	this->Filepath = Other.Filepath;
-	this->Size = Other.Size;
-	this->ModificationTime = Other.ModificationTime;
-	this->GroupId = Other.GroupId;
-	this->OwnerId = Other.OwnerId;
-	this->Permissions = Other.Permissions;
-	this->Device = Other.Device;
-	this->Inode = Other.Inode;
-	this->LinkCount = Other.LinkCount;
-	return *this;
-}
-
 bool FileInfo::sameInode( const FileInfo& Other ) const {
 	return inodeSupported() && Inode != 0 && Device == Other.Device && Inode == Other.Inode;
 }
