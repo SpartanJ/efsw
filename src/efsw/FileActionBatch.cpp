@@ -392,6 +392,81 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 	return true;
 }
 
+bool FileActionBatch::rescanBeforeMovedTrees( const Moves& moves ) {
+	std::vector<bool>& rescanned = mScratch.Rescanned;
+	const size_t count = rescanned.size();
+	// The segments before the last one with a compared directory move whose tree lost entries.
+	size_t before = 0;
+	std::unordered_map<std::string, FileIdentity> roots;
+	bool rootsFound = false;
+	for ( size_t move : moves.Reconciled ) {
+		size_t s = 0;
+		while ( s < count && !( mSegments[s].Begin <= move && move < mSegments[s].End ) )
+			s++;
+		if ( s >= count || s <= before )
+			continue;
+		if ( !rootsFound ) {
+			roots = evidenceRoots();
+			rootsFound = true;
+		}
+		if ( movedTreeLostEntries( moves, move, roots ) )
+			before = s;
+	}
+	bool any = false;
+	for ( size_t s = 0; s < before; s++ ) {
+		// Copied, a rescan adds a segment.
+		const Segment segment = mSegments[s];
+		if ( rescanned[s] || NULL == segment.Owner )
+			continue;
+		size_t begin = mEvents.size();
+		segment.Owner->watch();
+		addHalves( begin );
+		addSegment( segment.Owner, begin );
+		rescanned[s] = true;
+		any = true;
+	}
+	return any;
+}
+
+bool FileActionBatch::movedTreeLostEntries(
+	const Moves& moves, size_t move, const std::unordered_map<std::string, FileIdentity>& roots ) {
+	const Event& destination = mEvents[move];
+	const Event& source = mEvents[moves.SourceOf[move]];
+	// The evidence of the directory's own tree, or of the tree it left, below it.
+	auto tree = mSourceTrees.find( source.Info.identity() );
+	if ( tree == mSourceTrees.end() )
+		tree =
+			mSourceTrees.find( enclosingRoot( roots, source.Info.Filepath, FileIdentity( 0, 0 ) ) );
+	if ( tree == mSourceTrees.end() || NULL == destination.Owner )
+		return false;
+	std::vector<const FileInfo*>& arrived = mScratch.Arrived;
+	arrived.clear();
+	if ( !destinationTree( move, arrived ) )
+		return false;
+	std::vector<FileIdentity>& identities = mScratch.ArrivedIdentities;
+	identities.clear();
+	for ( const FileInfo* entry : arrived )
+		if ( entry->Inode != 0 )
+			identities.push_back( entry->identity() );
+	std::sort( identities.begin(), identities.end() );
+
+	const std::string& root = source.Info.Filepath;
+	const size_t length = directoryLength( root );
+	for ( const FileInfoList& list : tree->second ) {
+		for ( const FileInfo& entry : list ) {
+			if ( entry.Inode == 0 || entry.Filepath.size() <= length + 1 ||
+				 entry.Filepath[length] != FileSystem::getOSSlash() ||
+				 entry.Filepath.compare( 0, length, root, 0, length ) != 0 )
+				continue;
+			const FileIdentity identity = entry.identity();
+			if ( !std::binary_search( identities.begin(), identities.end(), identity ) &&
+				 !halvesOf( identity ).Added )
+				return true;
+		}
+	}
+	return false;
+}
+
 void FileActionBatch::finishPass() {
 	addHalves( 0 );
 	bool unpaired = false;
@@ -400,10 +475,15 @@ void FileActionBatch::finishPass() {
 	if ( unpaired )
 		rescanMoveSources();
 	else
-		mScratch.Rescanned.clear();
+		mScratch.Rescanned.assign( mSegments.size(), false );
 
 	Moves& moves = mMoves;
 	bool hasMoves = matchMoves( moves );
+	if ( hasMoves && rescanBeforeMovedTrees( moves ) ) {
+		mScratch.HalvesSeen.forEach(
+			[&unpaired]( const Halves& halves ) { unpaired = unpaired || !halves.paired(); } );
+		hasMoves = matchMoves( moves );
+	}
 	if ( unpaired && holdMoveSources( moves ) )
 		hasMoves = matchMoves( moves );
 	mSegments.clear();

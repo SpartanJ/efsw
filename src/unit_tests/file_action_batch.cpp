@@ -989,6 +989,26 @@ UTEST( FileActionBatch, ChangesInsideAMovedTreeFollowItsMovedEvent ) {
 	}
 }
 
+/// A watch whose entries arrive after its first scan of the pass: only a rescan reports them.
+class LateWatch : public FakeWatch {
+  public:
+	std::vector<Pending> Late;
+
+	using FakeWatch::FakeWatch;
+
+	void watch() override {
+		FakeWatch::watch();
+		Next.swap( Late );
+	}
+
+	void reportLate( const std::string& directory, const std::string& filename, efsw::Action action,
+					 const efsw::FileInfo& info ) {
+		report( directory, filename, action, info );
+		Late.push_back( Next.back() );
+		Next.pop_back();
+	}
+};
+
 // A directory moved to a watch whose scan renamed files inside it, the halves of a swap seen
 // at different moments: the comparison of its trees reports the swap, and the watch's own
 // rename, from a name the listener never saw, is not reported too.
@@ -1023,6 +1043,47 @@ UTEST( FileActionBatch, RenameFoundInsideAComparedTreeIsItsComparison ) {
 		EXPECT_EQ( expected[i].Action, std::get<0>( events[i] ) );
 		EXPECT_TRUE( expected[i].Name == std::get<1>( events[i] ) );
 		EXPECT_TRUE( expected[i].Old == std::get<2>( events[i] ) );
+	}
+}
+
+// A directory moved out of a moved one to a watch scanned before the destination, after that
+// scan: the tree lost it, so the watches scanned before are scanned again, and find it in the same
+// pass. With no Delete of its own to pair with, it is reported as deleted from the tree, then
+// added with what it holds, as a directory that left a compared tree.
+UTEST( FileActionBatch, EntryMovedOutOfAMovedTreeToAnEarlierWatch ) {
+	START_BATCH_TEST();
+	LateWatch other( 4, batch, &listener );
+	MovedTree tree( file );
+	efsw::FileInfo inner = file.make( "outer/inner", true );
+	efsw::FileInfo leaf = file.make( "outer/inner/file" );
+	efsw::FileInfo kept = file.make( "outer/kept" );
+	tree.was( inner, "inner" );
+	tree.was( leaf, "inner/file" );
+	tree.was( kept, "kept" );
+	tree.is( second, kept, "kept" );
+	tree.move( first, second );
+	other.reportLate( "/other/", "inner", efsw::Actions::Add, inner );
+	other.Tree.push_back( at( inner, "/other/inner" ) );
+	other.Tree.push_back( at( leaf, "/other/inner/file" ) );
+	runPass( batch, { &other, &second, &first } );
+	runPass( batch, { &other, &second, &first } );
+
+	// Its scan of each pass, and the rescan.
+	EXPECT_EQ( 3, other.Scans );
+	struct Expected {
+		efsw::Action Action;
+		std::string Name;
+	};
+	const std::vector<Expected> expected{ { efsw::Actions::Moved, "outer" },
+										  { efsw::Actions::Delete, "file" },
+										  { efsw::Actions::Delete, "inner" },
+										  { efsw::Actions::Add, "inner" },
+										  { efsw::Actions::Add, "file" } };
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].Action, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].Name == std::get<1>( events[i] ) );
 	}
 }
 

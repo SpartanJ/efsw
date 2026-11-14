@@ -312,9 +312,12 @@ class FileActionBatch {
 		/// The halves seen for each identity of the pass.
 		IdentityTable<Halves> HalvesSeen;
 		std::vector<bool> Rescanned;
+		// rescanBeforeMovedTrees().
+		std::vector<const FileInfo*> Arrived;
 		// destinationTree().
 		std::unordered_map<std::string, const FileInfo*> TreeAtHold;
 		std::vector<FileInfo> RenamedAtHold;
+		std::vector<FileIdentity> ArrivedIdentities;
 		/// Identities of unpaired Adds, sorted when looked up.
 		std::vector<FileIdentity> Later;
 		IdentityTable<Candidates> MoveCandidates;
@@ -408,6 +411,17 @@ class FileActionBatch {
 	/// watch collected inside it since are undone, since they are reported after its Moved event.
 	/// @return False when the destination does not watch inside the directory.
 	bool destinationTree( size_t move, std::vector<const FileInfo*>& entries );
+
+	/// Scans again the watches scanned before a compared directory move whose tree lost
+	/// entries: an entry that left it after their scan, to one of them, is found by the rescan.
+	/// @return True when a watch was scanned again.
+	bool rescanBeforeMovedTrees( const Moves& moves );
+
+	/// @return Whether an entry of the tree a compared directory move left is neither in the tree
+	/// at its destination nor added anywhere in the pass: it may have moved to a watch that was
+	/// scanned before it left.
+	bool movedTreeLostEntries( const Moves& moves, size_t move,
+							   const std::unordered_map<std::string, FileIdentity>& roots );
 };
 
 } // namespace efsw
