@@ -411,6 +411,20 @@ void FileWatcherInotify::renameWatchedDirectoriesLocked( const std::string& oldP
 	}
 }
 
+void FileWatcherInotify::reportOverflow() {
+	// Each registration hears it from its root watch. Watches are only deleted by the event loop,
+	// which calls this, so the roots stay valid while their listeners run.
+	std::vector<WatcherInotify*> roots;
+	{
+		Lock lock( mRealWatchesLock );
+		roots.reserve( mRealWatches.size() );
+		for ( const auto& real : mRealWatches )
+			roots.push_back( real.second );
+	}
+	for ( WatcherInotify* root : roots )
+		handleAction( root, "", IN_Q_OVERFLOW );
+}
+
 void FileWatcherInotify::run() {
 	// inotify reports a rename as two events connected by a cookie. The pair is
 	// normally consecutive, but Linux does not guarantee that: unrelated events
@@ -529,6 +543,12 @@ void FileWatcherInotify::run() {
 				pendingMoves.clear();
 
 				for ( const auto& event : batch.Events ) {
+					// An overflow belongs to no watch descriptor: its wd is -1.
+					if ( event.mask & IN_Q_OVERFLOW ) {
+						reportOverflow();
+						continue;
+					}
+
 					{
 						Lock lock( mWatchesLock );
 						ownersLocked( event.wd, owners );

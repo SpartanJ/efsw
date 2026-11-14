@@ -45,7 +45,8 @@ class ScriptedSource {
 		const char* begin = reinterpret_cast<const char*>( &header );
 		bytes.insert( bytes.end(), begin, begin + sizeof( header ) );
 		std::vector<char> padded( header.len, '\0' );
-		std::memcpy( padded.data(), name.data(), name.size() );
+		if ( !name.empty() )
+			std::memcpy( padded.data(), name.data(), name.size() );
 		bytes.insert( bytes.end(), padded.begin(), padded.end() );
 	}
 
@@ -215,6 +216,22 @@ UTEST( InotifyBatch, ShutdownDuringTheWaitEndsIt ) {
 	EXPECT_EQ( 2u, events.size() );
 	EXPECT_EQ( 1, source.Waits );
 	EXPECT_EQ( 1, source.Now );
+}
+
+// A queue overflow, which has no descriptor and no name, is part of the batch like any event.
+UTEST( InotifyBatch, OverflowIsAnEvent ) {
+	ScriptedSource source;
+	source.readAt( 0 );
+	source.event( 1, IN_CREATE, 0, "a" );
+	source.event( -1, IN_Q_OVERFLOW, 0, "" );
+	efsw::InotifyBatch batch;
+	ASSERT_TRUE( readBatch( batch, source ) );
+	const auto& events = batch.Events;
+
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( -1, events[1].wd );
+	EXPECT_TRUE( ( events[1].mask & IN_Q_OVERFLOW ) != 0 );
+	EXPECT_TRUE( events[1].filename.empty() );
 }
 
 #endif

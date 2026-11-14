@@ -45,6 +45,9 @@ class FileWatcherInotify : public FileWatcherImpl {
 	std::vector<std::string> directories() override;
 
   protected:
+	/// The event queue overflowed and events were lost: tells every registration once.
+	void reportOverflow();
+
 	/// Logical watches by native inotify descriptor. A native descriptor watches one physical
 	/// directory, and normally has one owner. It has several owners when registrations overlap
 	/// after a topology change, for example when a directory holding an explicit registration
