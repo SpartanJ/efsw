@@ -344,4 +344,32 @@ UTEST( InotifyMovedDirectories, NewDirectoryWhoseParentMovedOn ) {
 	}
 }
 
+// A directory created, moved into another directory of the registration, and that directory
+// renamed, before any of it was handled: when the move is handled the directory moved on with
+// its new parent, and it waits for the parent's rename to be watched where it ended.
+UTEST( InotifyMovedDirectories, NewDirectoryMovedThenItsParentRenamed ) {
+	const std::string root = getTemporaryDirectory() + "_moved_parent_renamed";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	ASSERT_TRUE( createDirectory( root + "/p" ) );
+	PathListener listener;
+	{
+		LockableWatcher watcher;
+		ASSERT_GT( watcher.addWatch( root, &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( root + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_TRUE( createDirectory( root + "/x" ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/x" ).c_str(), ( root + "/p/y" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/p" ).c_str(), ( root + "/q" ).c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( root ) );
+		ASSERT_TRUE( createFile( root + "/q/y/f", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/q/y/f" ) );
+	}
+	removeDirectory( root );
+}
+
 #endif

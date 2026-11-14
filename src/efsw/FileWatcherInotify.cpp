@@ -708,7 +708,13 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath,
 	// A directory that arrived, but moved on with its parent before this: covered once an event
 	// relocates the parent's watch.
 	if ( arrived && watch->Recursive && !FileSystem::isDirectory( fpath ) ) {
-		mPendingCoverage.emplace( static_cast<WatcherInotify*>( watch ), *arrived );
+		bool covered = false;
+		{
+			Lock lock( mWatchesLock );
+			covered = NULL != findWatchLocked( fpath, watch->ID );
+		}
+		if ( !covered )
+			mPendingCoverage.emplace( static_cast<WatcherInotify*>( watch ), *arrived );
 		return;
 	}
 
@@ -901,8 +907,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			// it.
 			coverRelocated();
 			// The registration may not have watched it at its source: it arrived in the same
-			// batch, after its coverage was installed without it.
-			checkForNewWatcher( watch, fpath );
+			// batch, after its coverage was installed without it. If it moved on since, it waits
+			// for its parent's relocation, as an arrival does.
+			checkForNewWatcher( watch, fpath, &filename );
 		}
 
 		watch->OldFileName = "";
