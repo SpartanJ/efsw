@@ -1183,6 +1183,31 @@ UTEST( FileActionBatch, HeldMoveIsFollowedByARenameInsideIt ) {
 	EXPECT_TRUE( std::get<2>( events[2] ) == "f" );
 }
 
+// The same, with a file added inside the directory: its watch's Add follows the held move.
+UTEST( FileActionBatch, HeldMoveIsFollowedByAnAddInsideIt ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo leaf = file.make( "outer/f" );
+	efsw::FileInfo added = file.make( "outer/new" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	tree.is( second, leaf, "f" );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	tree.is( second, added, "new" );
+	second.report( "/dst/outer/", "new", efsw::Actions::Add, added );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Add, "new" ) );
+}
+
 // Two held moves compared in one pass, each with renames inside it since it arrived, the first
 // with an entry renamed before the move too: the renamed entries of both comparisons stay valid
 // until the pass is delivered.

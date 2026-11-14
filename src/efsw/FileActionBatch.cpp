@@ -700,7 +700,11 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			if ( Actions::Delete == mEvents[i].ActionType ) {
 				moves.MoveOf[i] = sourceOwners.of( mEvents[i].Info.Filepath );
 			} else if ( Actions::Add == mEvents[i].ActionType ) {
-				moves.MoveOf[i] = destinationOwners.of( mEvents[i].Info.Filepath );
+				// Not for a move held from the previous pass, compared with the tree it arrived
+				// with: what its watch added inside it since follows it.
+				const size_t move = destinationOwners.of( mEvents[i].Info.Filepath );
+				if ( Moves::None == move || move >= mPassReleased || i < mPassReleased )
+					moves.MoveOf[i] = move;
 			} else if ( Actions::Moved == mEvents[i].ActionType && !comparedTrees.empty() ) {
 				// A rename the destination's scan found inside a compared tree: the comparison
 				// reports it, from the tree the directory left. Not for a move held from the
