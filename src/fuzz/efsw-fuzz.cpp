@@ -38,6 +38,7 @@
 //
 // POSIX only. Usage: efsw-fuzz --help
 #include <efsw/efsw.hpp>
+#include "replay.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -260,8 +261,10 @@ int main( int argc, char** argv ) {
 		close( open( ( wroot[i] + "/g" ).c_str(), O_CREAT | O_WRONLY, 0644 ) );
 	}
 
-	efsw::FileWatcher fileWatcher( generic, ms );
 	Listener listener;
+	// The worker is joined before its listener is destroyed, including callbacks caused by
+	// removing the temporary tree at exit.
+	efsw::FileWatcher fileWatcher( generic, ms );
 	// The w* index of each registration, W for the root.
 	std::map<efsw::WatchID, int> registrationOf;
 	bool opted[W + 1];
@@ -456,8 +459,10 @@ int main( int argc, char** argv ) {
 		for ( const Event& event : events ) {
 			int registration = registrationOf.count( event.id ) ? registrationOf[event.id] : -1;
 			std::string path = join( event.dir, event.file );
-			if ( registration < 0 || registrationOfPath( path ) != registration )
+			if ( registration < 0 || registrationOfPath( path ) != registration ) {
 				errors.push_back( "event outside its registration: " + path );
+				continue;
+			}
 			if ( event.action == efsw::Actions::Add ) {
 				if ( model.count( path ) )
 					errors.push_back( "Add of existing " + path );
@@ -478,8 +483,7 @@ int main( int argc, char** argv ) {
 									  ? event.old
 									  : join( event.dir, event.old );
 				int oldRegistration = registrationOfPath( old );
-				if ( oldRegistration != registration &&
-					 !( oldRegistration >= 0 && opted[oldRegistration] && opted[registration] ) )
+				if ( !efsw_fuzz::Replay::allowsMove( oldRegistration, registration, opted ) )
 					errors.push_back( "Moved across non-opted registrations: " + old + " -> " +
 									  path );
 				if ( !model.count( old ) && !( lenient && under( old, addedDirs ) ) )
