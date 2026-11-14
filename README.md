@@ -173,6 +173,12 @@ paths the directory's `Moved` event gave them, then entries renamed or relocated
 `Moved` events, and new entries as `Add` events, parents first. This only uses snapshots the
 watches already keep, for the duration of one polling pass.
 
+kqueue only reports that a watched directory changed, not what changed, so efsw rescans each
+directory it is told about, and every directory of a tree has its own snapshot. When a directory
+moved between watches is changed inside while it arrives, on a heavily loaded system its
+directories may be scanned far enough apart that the comparison of its tree misses some of those
+changes, or reports part of them again. The changes made after its arrival are reported normally.
+
 To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
 until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the
 polling backends, a `Delete` in a watch scanned after another watch with the option is delayed by
