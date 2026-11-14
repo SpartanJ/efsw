@@ -22,6 +22,12 @@ class LockableWatcher : public efsw::FileWatcherInotify {
   public:
 	LockableWatcher() : FileWatcherInotify( nullptr ) {}
 
+	// The event thread makes virtual calls: it stops before this class is destroyed.
+	~LockableWatcher() override {
+		mInitOK = false;
+		efSAFE_DELETE( mThread );
+	}
+
 	efsw::Mutex& actionLock() { return mInitLock; }
 
 	/// Waits until the event thread has read every queued event: it then only parses them before
