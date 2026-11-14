@@ -102,7 +102,9 @@ class FileWatcherInotify : public FileWatcherImpl {
 	/// registration's watches of the moved subtree are handed over to a recursive destination,
 	/// or removed for a non-recursive one. Other registrations inside the subtree keep their
 	/// native watches, which a recursive destination then shares.
-	void moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
+	/// @return false, doing nothing, when either registration was removed: the caller then
+	/// reports the move as unpaired.
+	bool moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
 									WatcherInotify* dst, const std::string& dstFile );
 
 	/// Adds a logical watch to mWatches and mWatchesRef. mWatchesLock must be held.

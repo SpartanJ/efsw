@@ -623,8 +623,12 @@ void FileWatcherInotify::run() {
 							} else if ( ( event.mask & IN_ISDIR ) && source->ID != owner->ID ) {
 								// The moved subtree is still watched natively, but its watches
 								// belong to the source registration and must be handed over.
-								moveDirectoryBetweenRoots( source, sourceFilename, owner,
-														   event.filename );
+								if ( !moveDirectoryBetweenRoots( source, sourceFilename, owner,
+																 event.filename ) ) {
+									if ( !source->Removed )
+										emitMovedOutside( source, sourceFilename );
+									handleAction( owner, event.filename, event.mask );
+								}
 							} else {
 								emitCrossDirectoryMove( source, sourceFilename, owner,
 														event.filename );
@@ -695,11 +699,11 @@ void FileWatcherInotify::emitCrossDirectoryMove( Watcher* src, const std::string
 	dst->OldFileName = std::move( oldDstFilename );
 }
 
-void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
+bool FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
 													WatcherInotify* dst,
 													const std::string& dstFile ) {
 	if ( !dst->Listener || !mInitOK )
-		return;
+		return true;
 
 	std::string oldPath( src->Directory + srcFile );
 	std::string newPath( dst->Directory + dstFile );
@@ -707,6 +711,11 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 	FileSystem::dirAddSlashAtEnd( newPath );
 
 	Lock initLock( mInitLock );
+	// The event thread checked both registrations without the lock: either may have been
+	// removed since. Handing watches over to a removed registration would keep them reporting to
+	// it after removeWatch() returned.
+	if ( src->Removed || dst->Removed )
+		return false;
 	std::vector<WatcherInotify*> sourceOwned;
 	std::vector<WatcherInotify*> shared;
 	{
@@ -777,6 +786,7 @@ void FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 	}
 
 	notify( dst, dstFile, Actions::Moved, src->Directory + srcFile );
+	return true;
 }
 
 void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filename,
