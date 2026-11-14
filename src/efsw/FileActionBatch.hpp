@@ -1,6 +1,7 @@
 #ifndef EFSW_FILEACTIONBATCH_HPP
 #define EFSW_FILEACTIONBATCH_HPP
 
+#include <deque>
 #include <efsw/FileInfo.hpp>
 #include <efsw/Watcher.hpp>
 #include <efsw/efsw.hpp>
@@ -316,7 +317,8 @@ class FileActionBatch {
 		std::vector<const FileInfo*> Arrived;
 		// destinationTree().
 		std::unordered_map<std::string, const FileInfo*> TreeAtHold;
-		std::vector<FileInfo> RenamedAtHold;
+		/// Kept for the pass: tree changes point to them until it is delivered.
+		std::deque<FileInfo> RenamedAtHold;
 		std::vector<FileIdentity> ArrivedIdentities;
 		/// Identities of unpaired Adds, sorted when looked up.
 		std::vector<FileIdentity> Later;

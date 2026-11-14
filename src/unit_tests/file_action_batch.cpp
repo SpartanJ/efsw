@@ -1183,6 +1183,69 @@ UTEST( FileActionBatch, HeldMoveIsFollowedByARenameInsideIt ) {
 	EXPECT_TRUE( std::get<2>( events[2] ) == "f" );
 }
 
+// Two held moves compared in one pass, each with renames inside it since it arrived, the first
+// with an entry renamed before the move too: the renamed entries of both comparisons stay valid
+// until the pass is delivered.
+UTEST( FileActionBatch, TwoHeldMovesWithRenamesInOnePass ) {
+	START_BATCH_TEST();
+	efsw::FileInfo o1 = file.make( "o1", true );
+	efsw::FileInfo o2 = file.make( "o2", true );
+	efsw::FileInfo a = file.make( "o1/a" );
+	efsw::FileInfo b = file.make( "o2/b" );
+	efsw::FileInfo c = file.make( "o2/c" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	std::vector<efsw::FileInfoList> before1( 1 ), before2( 1 );
+	before1[0].push_back( at( a, "/src/o1/e" ) );
+	before2[0].push_back( at( b, "/src/o2/e2" ) );
+	before2[0].push_back( at( c, "/src/o2/h2" ) );
+	second.Tree = { at( a, "/dst/o1/f" ), at( b, "/dst/o2/f2" ), at( c, "/dst/o2/i2" ) };
+	// Held by the Delete before the moves in their destination's watch.
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	first.report( "/src/", "o1", efsw::Actions::Delete, o1 );
+	first.GiveUp.emplace_back( at( o1, "/src/o1" ), std::move( before1 ) );
+	first.report( "/src/", "o2", efsw::Actions::Delete, o2 );
+	first.GiveUp.emplace_back( at( o2, "/src/o2" ), std::move( before2 ) );
+	second.report( "/dst/", "o1", efsw::Actions::Add, o1 );
+	second.report( "/dst/", "o2", efsw::Actions::Add, o2 );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.Tree = { at( a, "/dst/o1/g" ), at( b, "/dst/o2/g2" ), at( c, "/dst/o2/j2" ) };
+	second.report( "/dst/o1/", "g", efsw::Actions::Moved, a );
+	second.Next.back().Old = "f";
+	second.report( "/dst/o2/", "g2", efsw::Actions::Moved, b );
+	second.Next.back().Old = "f2";
+	second.report( "/dst/o2/", "j2", efsw::Actions::Moved, c );
+	second.Next.back().Old = "i2";
+	runPass( batch, watches );
+
+	// Each move with its renames before the hold, from the tree it left, then the renames since,
+	// as the watch found them.
+	struct Expected {
+		std::string Name;
+		std::string Old;
+	};
+	const std::vector<Expected> expected{ { "unrelated", "" },
+										  { "o1", "" },
+										  { "f", slashes( "/dst/o1/e" ) },
+										  { "o2", "" },
+										  { "f2", slashes( "/dst/o2/e2" ) },
+										  { "i2", slashes( "/dst/o2/h2" ) },
+										  { "g", "f" },
+										  { "g2", "f2" },
+										  { "j2", "i2" } };
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[0] ) );
+	for ( size_t i = 1; i < expected.size(); i++ ) {
+		EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].Name == std::get<1>( events[i] ) );
+		// The directories' sources are absolute, with a drive on Windows: not compared.
+		if ( !expected[i].Old.empty() )
+			EXPECT_TRUE( expected[i].Old == std::get<2>( events[i] ) );
+	}
+}
+
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.

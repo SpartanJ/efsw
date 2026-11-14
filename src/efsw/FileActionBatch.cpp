@@ -360,14 +360,9 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 	auto key = []( const std::string& path ) { return path.substr( 0, directoryLength( path ) ); };
 	std::unordered_map<std::string, const FileInfo*>& tree = mScratch.TreeAtHold;
 	tree.clear();
-	// The entries renamed since, at their names before: reserved, so that they do not move.
-	std::vector<FileInfo>& renamed = mScratch.RenamedAtHold;
-	renamed.clear();
-	size_t renames = 0;
-	for ( size_t i = mPassReleased; i < mEvents.size(); i++ )
-		if ( Actions::Moved == mEvents[i].ActionType && inside( mEvents[i] ) )
-			renames++;
-	renamed.reserve( renames );
+	// The entries renamed since, at their names before. The tree changes found point to them
+	// until the pass is delivered: kept for the pass, in a deque, where they do not move.
+	std::deque<FileInfo>& renamed = mScratch.RenamedAtHold;
 	for ( size_t i = begin; i < entries.size(); i++ )
 		tree[key( entries[i]->Filepath )] = entries[i];
 	for ( size_t i = mEvents.size(); i-- > mPassReleased; ) {
@@ -473,6 +468,7 @@ bool FileActionBatch::movedTreeLostEntries(
 }
 
 void FileActionBatch::finishPass() {
+	mScratch.RenamedAtHold.clear();
 	addHalves( 0 );
 	bool unpaired = false;
 	mScratch.HalvesSeen.forEach(
