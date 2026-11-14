@@ -217,6 +217,36 @@ workspace "efsw"
 			targetname "efsw-unit_tests-reldbginfo"
 			conf_warnings()
 
+	-- The file system fuzzer: POSIX only. See src/fuzz/README.md.
+	if not os.istarget("windows") then
+	project "efsw-fuzz"
+		kind "ConsoleApp"
+		language "C++"
+		links { "efsw-static-lib" }
+		files { "src/fuzz/*.cpp" }
+		includedirs { "include" }
+		conf_links()
+
+		filter "configurations:debug"
+			defines { "DEBUG" }
+			symbols "On"
+			targetname "efsw-fuzz-debug"
+			conf_warnings()
+
+		filter "configurations:release"
+			defines { "NDEBUG" }
+			optimize "On"
+			targetname "efsw-fuzz-release"
+			conf_warnings()
+
+		filter "configurations:relwithdbginfo"
+			defines { "NDEBUG" }
+			symbols "On"
+			optimize "On"
+			targetname "efsw-fuzz-reldbginfo"
+			conf_warnings()
+	end
+
 	project "efsw-test-stdc"
 		kind "ConsoleApp"
 		language "C"

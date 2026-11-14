@@ -113,6 +113,8 @@ or
 
 There is also a cmake file that I don't officially support but it works just fine, provided by [Mohammed Nafees](https://github.com/mnafees) and improved by [Eugene Shalygin](https://github.com/zeule).
 
+The premake workspace also builds the unit tests (`efsw-unit_tests`). Outside Windows, premake and cmake also build a file system fuzzer (`efsw-fuzz`) that replays the events efsw reports against random changes to real directories: see [src/fuzz/README.md](src/fuzz/README.md).
+
 **Packages**
 ------------
 
