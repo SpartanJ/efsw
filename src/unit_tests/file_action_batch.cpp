@@ -1283,6 +1283,29 @@ UTEST( FileActionBatch, AddAndDeleteAtOnePathAreNotARename ) {
 	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[1] ) );
 }
 
+// A directory moved out of one deleted in the same pass, to a watch whose earlier Delete holds
+// it to the next pass: the deleted directory is held with it, so that the move does not name a
+// source the listener was told is gone, and the directory's Delete still waits for it.
+UTEST( FileActionBatch, DeletedDirectoryWaitsForAHeldMoveOutOfIt ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "d", true );
+	efsw::FileInfo moved = file.make( "d/n5", true );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	first.report( "/a/", "d", efsw::Actions::Delete, directory );
+	first.report( "/a/d/", "n5", efsw::Actions::Delete, moved );
+	third.report( "/c/", "unrelated", efsw::Actions::Delete, unrelated );
+	third.report( "/c/", "n5", efsw::Actions::Add, moved );
+	runPass( batch, watches );
+	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Delete, "d" ) );
+
+	runPass( batch, watches );
+	const int move = listener.indexOf( efsw::Actions::Moved, "n5" );
+	const int deleted = listener.indexOf( efsw::Actions::Delete, "d" );
+	EXPECT_LE( 0, move );
+	EXPECT_LT( move, deleted );
+	EXPECT_EQ( 3u, listener.getEventCount() );
+}
+
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.

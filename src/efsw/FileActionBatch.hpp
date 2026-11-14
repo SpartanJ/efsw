@@ -313,6 +313,8 @@ class FileActionBatch {
 		/// The halves seen for each identity of the pass.
 		IdentityTable<Halves> HalvesSeen;
 		std::vector<bool> Rescanned;
+		// holdMoveSources().
+		std::unordered_map<std::string, size_t> DeletedDirectories;
 		// rescanBeforeMovedTrees().
 		std::vector<const FileInfo*> Arrived;
 		// destinationTree().

@@ -314,6 +314,43 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 		auto hold = i < mReleased ? holdFrom.end() : holdFrom.find( mEvents[i].Owner );
 		return hold != holdFrom.end() && i >= hold->second;
 	};
+	// A held move's source stays where it is for the listener until the next pass: the deleted
+	// directories of this pass that contain it are held with it, or its Moved event would name a
+	// source the listener was told is gone. Holding their watches can hold more moves: repeated
+	// until nothing more is held, at most once per watch.
+	std::unordered_map<std::string, size_t>& deletedDirectories = mScratch.DeletedDirectories;
+	deletedDirectories.clear();
+	for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
+		const Event& event = mEvents[i];
+		if ( Actions::Delete == event.ActionType && Moves::None == moves.MoveOf[i] &&
+			 NULL != event.Owner && event.Info.isDirectory() )
+			deletedDirectories.emplace(
+				event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ), i );
+	}
+	for ( bool held = !deletedDirectories.empty(); held; ) {
+		held = false;
+		for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
+			const size_t move = moves.MoveOf[i];
+			if ( Actions::Delete != mEvents[i].ActionType || Moves::None == move || move == i ||
+				 !inHeldRange( move ) )
+				continue;
+			const std::string& source = mEvents[i].Info.Filepath;
+			for ( size_t slash = source.find( FileSystem::getOSSlash(), 1 );
+				  slash != std::string::npos && slash + 1 < source.size();
+				  slash = source.find( FileSystem::getOSSlash(), slash + 1 ) ) {
+				auto directory = deletedDirectories.find( source.substr( 0, slash ) );
+				if ( directory == deletedDirectories.end() || inHeldRange( directory->second ) )
+					continue;
+				Watcher* owner = mEvents[directory->second].Owner;
+				auto hold = holdFrom.find( owner );
+				if ( hold == holdFrom.end() )
+					holdFrom.emplace( owner, directory->second );
+				else
+					hold->second = std::min( hold->second, directory->second );
+				held = true;
+			}
+		}
+	}
 	// A complete move follows its destination, where its Moved event is delivered. Held, it
 	// still pairs on the next pass. A released event can be held once more this way, but
 	// not after: its destination is then released too.
