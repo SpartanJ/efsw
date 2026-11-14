@@ -989,6 +989,43 @@ UTEST( FileActionBatch, ChangesInsideAMovedTreeFollowItsMovedEvent ) {
 	}
 }
 
+// A directory moved to a watch whose scan renamed files inside it, the halves of a swap seen
+// at different moments: the comparison of its trees reports the swap, and the watch's own
+// rename, from a name the listener never saw, is not reported too.
+UTEST( FileActionBatch, RenameFoundInsideAComparedTreeIsItsComparison ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo a = file.make( "outer/a" );
+	efsw::FileInfo b = file.make( "outer/b" );
+	tree.was( a, "a" );
+	tree.was( b, "b" );
+	// Swapped through t: a to t, b to a, t to b.
+	tree.is( second, b, "a" );
+	tree.is( second, a, "b" );
+	tree.move( first, second );
+	second.report( "/dst/outer/", "b", efsw::Actions::Moved, a );
+	second.Next.back().Old = "t";
+	runPass( batch, watches );
+
+	struct Expected {
+		efsw::Action Action;
+		std::string Name;
+		std::string Old;
+	};
+	const std::vector<Expected> expected{
+		{ efsw::Actions::Moved, "outer", slashes( "/src/outer" ) },
+		{ efsw::Actions::Delete, "b", "" },
+		{ efsw::Actions::Moved, "b", slashes( "/dst/outer/a" ) },
+		{ efsw::Actions::Add, "a", "" } };
+	auto events = listener.getEvents();
+	ASSERT_EQ( expected.size(), events.size() );
+	for ( size_t i = 0; i < expected.size(); i++ ) {
+		EXPECT_EQ( expected[i].Action, std::get<0>( events[i] ) );
+		EXPECT_TRUE( expected[i].Name == std::get<1>( events[i] ) );
+		EXPECT_TRUE( expected[i].Old == std::get<2>( events[i] ) );
+	}
+}
+
 // A directory moved to a watch whose earlier Delete holds it to the next pass, where its scan
 // finds a file of the directory renamed out of it: the held move is compared with the tree it
 // arrived with, and the rename follows it, reported once.
