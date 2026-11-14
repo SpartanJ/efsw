@@ -383,6 +383,8 @@ void FileWatcherInotify::renameWatchedDirectoriesLocked( const std::string& oldP
 			if ( -1 == String::strStartsWith( oldPath, moved->Directory ) )
 				continue;
 			unindexWatchLocked( moved );
+			if ( !mPendingCoverage.empty() && mPendingCoverage.count( moved ) )
+				mRelocated.push_back( moved );
 			if ( moved->Directory == oldPath ) {
 				moved->Directory = newPath;
 				moved->DirInfo = FileInfo( newPath );
@@ -543,11 +545,6 @@ void FileWatcherInotify::run() {
 				pendingMoves.clear();
 
 				for ( const auto& event : batch.Events ) {
-					// Directories that had moved on when their arrival was handled: a later
-					// event moved them with their parent, whose watch has the new path. Covered
-					// as soon as it exists, before the events after it are reported.
-					retryPendingCoverage();
-
 					// An overflow belongs to no watch descriptor: its wd is -1.
 					if ( event.mask & IN_Q_OVERFLOW ) {
 						reportOverflow();
@@ -557,6 +554,20 @@ void FileWatcherInotify::run() {
 					{
 						Lock lock( mWatchesLock );
 						ownersLocked( event.wd, owners );
+					}
+
+					// A pending directory that left its parent is no longer looked for there.
+					if ( !mPendingCoverage.empty() && ( event.mask & IN_ISDIR ) &&
+						 ( event.mask & ( IN_DELETE | IN_MOVED_FROM ) ) ) {
+						for ( WatcherInotify* owner : owners ) {
+							auto range = mPendingCoverage.equal_range( owner );
+							for ( auto it = range.first; it != range.second; ) {
+								if ( it->second == event.filename )
+									it = mPendingCoverage.erase( it );
+								else
+									++it;
+							}
+						}
 					}
 
 					if ( event.mask & IN_MOVED_FROM ) {
@@ -653,9 +664,6 @@ void FileWatcherInotify::run() {
 					}
 				}
 
-				retryPendingCoverage();
-				// What could not be found by the end of the batch moved on again.
-				mPendingCoverage.clear();
 			}
 		}
 
@@ -663,6 +671,7 @@ void FileWatcherInotify::run() {
 			Lock lock( mWatchesLock );
 			if ( !mDeletedWatches.empty() ) {
 				for ( auto w : mDeletedWatches ) {
+					mPendingCoverage.erase( w );
 					efSAFE_DELETE( w );
 				}
 				mDeletedWatches.clear();
@@ -673,20 +682,21 @@ void FileWatcherInotify::run() {
 	delete[] buff;
 }
 
-void FileWatcherInotify::retryPendingCoverage() {
-	if ( mPendingCoverage.empty() )
+void FileWatcherInotify::coverRelocated() {
+	if ( mRelocated.empty() )
 		return;
-	Lock initLock( mInitLock );
-	// The watches are deleted after the batch, so the parents are still valid.
-	for ( size_t i = 0; i < mPendingCoverage.size(); ) {
-		const PendingCoverage& pending = mPendingCoverage[i];
-		std::string path( pending.Parent->Directory + pending.Name );
-		if ( !mInitOK || pending.Parent->Removed || FileSystem::isDirectory( path ) ) {
-			if ( mInitOK && !pending.Parent->Removed )
-				checkForNewWatcher( pending.Parent, path );
-			mPendingCoverage.erase( mPendingCoverage.begin() + i );
-		} else {
-			i++;
+	std::vector<WatcherInotify*> relocated;
+	relocated.swap( mRelocated );
+	for ( WatcherInotify* parent : relocated ) {
+		auto range = mPendingCoverage.equal_range( parent );
+		for ( auto it = range.first; it != range.second; ) {
+			const std::string path( parent->Directory + it->second );
+			if ( parent->Removed || !FileSystem::isDirectory( path ) ) {
+				++it;
+				continue;
+			}
+			checkForNewWatcher( parent, path );
+			it = mPendingCoverage.erase( it );
 		}
 	}
 }
@@ -695,9 +705,10 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath,
 											 const std::string* arrived ) {
 	FileSystem::dirAddSlashAtEnd( fpath );
 
-	// A directory that arrived, but moved on before this: retried after the batch.
+	// A directory that arrived, but moved on with its parent before this: covered once an event
+	// relocates the parent's watch.
 	if ( arrived && watch->Recursive && !FileSystem::isDirectory( fpath ) ) {
-		mPendingCoverage.push_back( { static_cast<WatcherInotify*>( watch ), *arrived } );
+		mPendingCoverage.emplace( static_cast<WatcherInotify*>( watch ), *arrived );
 		return;
 	}
 
@@ -803,6 +814,9 @@ bool FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 		}
 	}
 
+	// Directories that had moved on when their arrival was handled may have moved with it.
+	coverRelocated();
+
 	// Install recursive coverage before notifying, like a plain Add does.
 	if ( dst->Recursive ) {
 		if ( sourceOwned.empty() ) {
@@ -879,8 +893,13 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			FileSystem::dirAddSlashAtEnd( opath );
 			FileSystem::dirAddSlashAtEnd( fpath );
 
-			Lock lock( mWatchesLock );
-			renameWatchedDirectoriesLocked( opath, fpath );
+			{
+				Lock lock( mWatchesLock );
+				renameWatchedDirectoriesLocked( opath, fpath );
+			}
+			// Directories that had moved on when their arrival was handled may have moved with
+			// it.
+			coverRelocated();
 		}
 
 		watch->OldFileName = "";
