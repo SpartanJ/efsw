@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <efsw/FileSystem.hpp>
 #include <efsw/FileWatcherWin32.hpp>
 #include <efsw/Lock.hpp>
@@ -250,6 +251,7 @@ void FileWatcherWin32::eraseCrossWatchEvent( CrossWatchEvents::iterator it ) {
 			break;
 		}
 	}
+	mCrossWatchBySequence.erase( it->Sequence );
 	mCrossWatchEvents.erase( it );
 }
 
@@ -311,8 +313,9 @@ void FileWatcherWin32::holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD ac
 				 ( destinationInfo.isDirectory() ||
 				   ( destinationInfo.isRegularFile() && destinationInfo.LinkCount == 1 ) ) ) {
 				eraseCrossWatchEvent( match );
-				// Older held halves for either path happened before this move.
-				flushCrossWatchEventsFor( source, sourceName );
+				// Older held halves for either path happened before this move, as did those
+				// inside the source, which the move takes away.
+				flushCrossWatchEventsFor( source, sourceName, true );
 				flushCrossWatchEventsFor( destination, destinationName );
 				if ( source == destination ) {
 					// A move within one registration uses the same relative-name handling.
@@ -340,30 +343,62 @@ void FileWatcherWin32::holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD ac
 	CrossWatchEvents::iterator held = std::prev( mCrossWatchEvents.end() );
 	mCrossWatchById.emplace( id, held );
 	mCrossWatchByName.emplace( held->FileName, held );
+	mCrossWatchBySequence.emplace( held->Sequence, held );
 }
 
-void FileWatcherWin32::flushCrossWatchEventsFor( WatcherWin32* watch,
-												 const std::string& fileName ) {
-	// Report one half per iteration, oldest first, and search again afterwards: the listener
-	// may re-enter and remove watches, which invalidates any iterator kept across the call.
-	while ( !mCrossWatchEvents.empty() ) {
-		CrossWatchEvents::iterator oldest = mCrossWatchEvents.end();
-		auto consider = [&]( const std::string& name ) {
-			auto range = mCrossWatchByName.equal_range( name );
-			for ( auto it = range.first; it != range.second; ++it ) {
-				if ( it->second->Watch == watch &&
-					 ( oldest == mCrossWatchEvents.end() ||
-					   it->second->Sequence < oldest->Sequence ) )
-					oldest = it->second;
-			}
-		};
-		consider( fileName );
-		for ( size_t separator = fileName.find_first_of( "\\/" ); separator != std::string::npos;
-			  separator = fileName.find_first_of( "\\/", separator + 1 ) )
-			consider( fileName.substr( 0, separator ) );
-		if ( oldest == mCrossWatchEvents.end() )
-			return;
-		emitCrossWatchEvent( oldest );
+void FileWatcherWin32::flushCrossWatchEventsFor( WatcherWin32* watch, const std::string& fileName,
+												 bool withContents ) {
+	if ( mCrossWatchEvents.empty() )
+		return;
+	std::vector<ULONGLONG>& held = mFlushedSequences;
+	held.clear();
+	// The held halves of the watch in [from, to) older than before.
+	auto collect = [&]( std::multimap<std::string, CrossWatchEvents::iterator>::iterator from,
+						std::multimap<std::string, CrossWatchEvents::iterator>::iterator to,
+						ULONGLONG before ) {
+		for ( ; from != to; ++from )
+			if ( from->second->Watch == watch && from->second->Sequence < before )
+				held.push_back( from->second->Sequence );
+	};
+	// The names inside a path start with it and a separator: one range for each.
+	auto inside = [&]( const std::string& name, ULONGLONG before ) {
+		for ( char separator : { '\\', '/' } ) {
+			std::string below( name );
+			below += separator;
+			std::string end( below );
+			end.back()++;
+			collect( mCrossWatchByName.lower_bound( below ), mCrossWatchByName.lower_bound( end ),
+					 before );
+		}
+	};
+	const ULONGLONG any = ~static_cast<ULONGLONG>( 0 );
+	auto atName = [&]( const std::string& name ) {
+		auto range = mCrossWatchByName.equal_range( name );
+		for ( auto it = range.first; it != range.second; ++it ) {
+			if ( it->second->Watch != watch )
+				continue;
+			held.push_back( it->second->Sequence );
+			// A held removal takes the path away: what was held inside it before goes first.
+			if ( it->second->Removed )
+				inside( name, it->second->Sequence );
+		}
+	};
+	atName( fileName );
+	for ( size_t separator = fileName.find_first_of( "\\/" ); separator != std::string::npos;
+		  separator = fileName.find_first_of( "\\/", separator + 1 ) )
+		atName( fileName.substr( 0, separator ) );
+	if ( withContents )
+		inside( fileName, any );
+	if ( held.empty() )
+		return;
+	std::sort( held.begin(), held.end() );
+	held.erase( std::unique( held.begin(), held.end() ), held.end() );
+	// Report them oldest first. The listener may re-enter and remove watches, which discards
+	// their held halves and invalidates iterators: look each one up again.
+	for ( size_t i = 0; i < held.size(); i++ ) {
+		auto found = mCrossWatchBySequence.find( held[i] );
+		if ( found != mCrossWatchBySequence.end() )
+			emitCrossWatchEvent( found->second );
 	}
 }
 

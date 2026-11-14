@@ -7,6 +7,7 @@
 
 #include <efsw/WatcherWin32.hpp>
 #include <list>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -56,8 +57,12 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	void holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD action, std::string fileName,
 									 const LARGE_INTEGER& fileId );
 	/// Reports the held halves of a watch that concern a path or one of its parent
-	/// directories, so an event reported immediately cannot overtake them.
-	void flushCrossWatchEventsFor( WatcherWin32* watch, const std::string& fileName );
+	/// directories, oldest first, so an event reported immediately cannot overtake them.
+	/// @param withContents Also those inside the path, for an event that takes the path away,
+	/// such as a rename's old name: they would otherwise be reported after it, at a path that
+	/// no longer exists.
+	void flushCrossWatchEventsFor( WatcherWin32* watch, const std::string& fileName,
+								   bool withContents = false );
 	/// @return Milliseconds until the oldest held half expires, or INFINITE.
 	DWORD crossWatchTimeout() const;
 	/// Reports every held half whose wait interval expired, in arrival order.
@@ -86,9 +91,13 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	CrossWatchEvents mCrossWatchEvents;
 	/// Reused copy of mWatches, flushed when the completion wait times out.
 	std::vector<WatcherStructWin32*> mFlushedWatches;
-	/// Indexes into mCrossWatchEvents, by file identity and by watch-relative name.
+	/// Indexes into mCrossWatchEvents: by file identity, by watch-relative name, ordered so that
+	/// the names inside a directory are one range, and by sequence.
 	std::unordered_multimap<LONGLONG, CrossWatchEvents::iterator> mCrossWatchById;
-	std::unordered_multimap<std::string, CrossWatchEvents::iterator> mCrossWatchByName;
+	std::multimap<std::string, CrossWatchEvents::iterator> mCrossWatchByName;
+	std::unordered_map<ULONGLONG, CrossWatchEvents::iterator> mCrossWatchBySequence;
+	/// Reused list of the sequences of the held halves a flush reports.
+	std::vector<ULONGLONG> mFlushedSequences;
 	ULONGLONG mCrossWatchSequence{ 0 };
 
 	void emitCrossWatchEvent( CrossWatchEvents::iterator it );

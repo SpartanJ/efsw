@@ -125,6 +125,10 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 		}
 	} while ( pNotify->NextEntryOffset != 0 );
 
+	ProcessExtendedEvents( pWatch );
+}
+
+void ProcessExtendedEvents( WatcherWin32* pWatch ) {
 	FileWatcherWin32* fileWatcher = static_cast<FileWatcherWin32*>( pWatch->Watch );
 	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
 		// A listener removed this watch: the rest of the buffer is not reported.
@@ -139,9 +143,12 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 													 std::move( event.FileName ), event.FileId );
 			continue;
 		}
-		// Anything reported immediately must not overtake a held Add/Remove of its path.
+		// Anything reported immediately must not overtake a held Add/Remove of its path, nor,
+		// when it takes the path away, one inside it.
 		if ( pWatch->ReportCrossDirectoryMoves )
-			fileWatcher->flushCrossWatchEventsFor( pWatch, event.FileName );
+			fileWatcher->flushCrossWatchEventsFor( pWatch, event.FileName,
+												   FILE_ACTION_RENAMED_OLD_NAME == event.Action ||
+													   FILE_ACTION_REMOVED == event.Action );
 
 		const std::string& nfile = event.FileName;
 		bool skip = false;
