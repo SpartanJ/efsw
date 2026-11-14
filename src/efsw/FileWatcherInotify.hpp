@@ -138,7 +138,21 @@ class FileWatcherInotify : public FileWatcherImpl {
 	/// registration, now lives below newPath. mWatchesLock must be held.
 	void renameWatchedDirectoriesLocked( const std::string& oldPath, const std::string& newPath );
 
-	void checkForNewWatcher( Watcher* watch, std::string fpath );
+	/// Installs recursive coverage of a directory that arrived in a watched one.
+	/// @param arrived The directory's name in watch, when an event reported it: if it no longer
+	/// exists, it is retried after each later event of the batch, which may have moved it.
+	void checkForNewWatcher( Watcher* watch, std::string fpath, const std::string* arrived = NULL );
+
+	/// A directory whose coverage is retried after the batch, by its parent's watch and name.
+	struct PendingCoverage {
+		WatcherInotify* Parent;
+		std::string Name;
+	};
+	/// Only used by the event thread.
+	std::vector<PendingCoverage> mPendingCoverage;
+	/// Installs the coverage of the pending directories that exist again, where their parents'
+	/// watches are now.
+	void retryPendingCoverage();
 
 	/// Calls the listener of a watch, unless the watch was removed. mInitLock must be held:
 	/// removeWatch() takes it, so a registration cannot be removed, and its listener destroyed,

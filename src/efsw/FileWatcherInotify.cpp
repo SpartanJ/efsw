@@ -543,6 +543,11 @@ void FileWatcherInotify::run() {
 				pendingMoves.clear();
 
 				for ( const auto& event : batch.Events ) {
+					// Directories that had moved on when their arrival was handled: a later
+					// event moved them with their parent, whose watch has the new path. Covered
+					// as soon as it exists, before the events after it are reported.
+					retryPendingCoverage();
+
 					// An overflow belongs to no watch descriptor: its wd is -1.
 					if ( event.mask & IN_Q_OVERFLOW ) {
 						reportOverflow();
@@ -647,6 +652,10 @@ void FileWatcherInotify::run() {
 						}
 					}
 				}
+
+				retryPendingCoverage();
+				// What could not be found by the end of the batch moved on again.
+				mPendingCoverage.clear();
 			}
 		}
 
@@ -664,8 +673,33 @@ void FileWatcherInotify::run() {
 	delete[] buff;
 }
 
-void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath ) {
+void FileWatcherInotify::retryPendingCoverage() {
+	if ( mPendingCoverage.empty() )
+		return;
+	Lock initLock( mInitLock );
+	// The watches are deleted after the batch, so the parents are still valid.
+	for ( size_t i = 0; i < mPendingCoverage.size(); ) {
+		const PendingCoverage& pending = mPendingCoverage[i];
+		std::string path( pending.Parent->Directory + pending.Name );
+		if ( !mInitOK || pending.Parent->Removed || FileSystem::isDirectory( path ) ) {
+			if ( mInitOK && !pending.Parent->Removed )
+				checkForNewWatcher( pending.Parent, path );
+			mPendingCoverage.erase( mPendingCoverage.begin() + i );
+		} else {
+			i++;
+		}
+	}
+}
+
+void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath,
+											 const std::string* arrived ) {
 	FileSystem::dirAddSlashAtEnd( fpath );
+
+	// A directory that arrived, but moved on before this: retried after the batch.
+	if ( arrived && watch->Recursive && !FileSystem::isDirectory( fpath ) ) {
+		mPendingCoverage.push_back( { static_cast<WatcherInotify*>( watch ), *arrived } );
+		return;
+	}
 
 	/// If the watcher is recursive, checks if the new file is a folder, and creates a watcher
 	if ( watch->Recursive && FileSystem::isDirectory( fpath ) ) {
@@ -812,7 +846,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			// listener can react to Add immediately and create files in the new
 			// directory, so publishing the event first leaves a window where those
 			// files are missed by inotify.
-			checkForNewWatcher( watch, fpath );
+			checkForNewWatcher( watch, fpath, ( action & IN_ISDIR ) ? &filename : NULL );
 
 			notify( watch, filename, Actions::Add );
 			notify( watch, filename, Actions::Modified );
@@ -837,7 +871,7 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 
 		watch->OldFileName = "";
 	} else if ( IN_CREATE & action ) {
-		checkForNewWatcher( watch, fpath );
+		checkForNewWatcher( watch, fpath, ( action & IN_ISDIR ) ? &filename : NULL );
 
 		notify( watch, filename, Actions::Add );
 	} else if ( IN_MOVED_FROM & action ) {

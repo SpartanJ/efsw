@@ -220,4 +220,41 @@ UTEST( InotifyMovedDirectories, RenamedThenMovedAway ) {
 	removeDirectory( root );
 }
 
+// A directory created, then its parent moved, before the creation was handled: the watch of the
+// new directory is installed where the move put it, within the registration or in the one the
+// parent moved to, so what happens inside it is reported.
+UTEST( InotifyMovedDirectories, NewDirectoryWhoseParentMovedOn ) {
+	for ( bool toOtherRegistration : { false, true } ) {
+		const std::string root = getTemporaryDirectory() + "_parent_moved";
+		const std::string first = root + "/a";
+		const std::string second = root + "/b";
+		removeDirectory( root );
+		ASSERT_TRUE( createDirectory( root ) );
+		ASSERT_TRUE( createDirectory( first ) );
+		ASSERT_TRUE( createDirectory( second ) );
+		ASSERT_TRUE( createDirectory( first + "/p" ) );
+		const std::string moved = toOtherRegistration ? second + "/q" : first + "/q";
+		PathListener listener;
+		{
+			LockableWatcher watcher;
+			ASSERT_GT( watcher.addWatch( first, &listener, true, crossMoves ), 0 );
+			ASSERT_GT( watcher.addWatch( second, &listener, true, crossMoves ), 0 );
+			watcher.watch();
+			{
+				// The event thread waits for the lock to report the wake-up, while the
+				// creation and the move are queued behind it, to be read together.
+				efsw::Lock lock( watcher.actionLock() );
+				ASSERT_TRUE( createDirectory( first + "/wake" ) );
+				ASSERT_TRUE( watcher.waitUntilBlocked() );
+				ASSERT_TRUE( createDirectory( first + "/p/d" ) );
+				ASSERT_EQ( 0, std::rename( ( first + "/p" ).c_str(), moved.c_str() ) );
+			}
+			ASSERT_TRUE( listener.settle( first ) );
+			ASSERT_TRUE( createFile( moved + "/d/x.txt", "x" ) );
+			EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, moved + "/d/x.txt" ) );
+		}
+		removeDirectory( root );
+	}
+}
+
 #endif
