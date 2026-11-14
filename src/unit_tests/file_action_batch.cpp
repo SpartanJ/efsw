@@ -67,7 +67,10 @@ class FakeWatch : public efsw::Watcher {
 					  std::vector<const efsw::FileInfo*>* entries ) override {
 		if ( !WatchesTrees )
 			return false;
-		const std::string prefix = directory + efsw::FileSystem::getOSSlash();
+		// With or without a final separator, as the backends report directories.
+		std::string prefix( directory );
+		if ( prefix.empty() || prefix.back() != efsw::FileSystem::getOSSlash() )
+			prefix += efsw::FileSystem::getOSSlash();
 		for ( const efsw::FileInfo& entry : Tree )
 			if ( entries && 0 == entry.Filepath.compare( 0, prefix.size(), prefix ) )
 				entries->push_back( &entry );
@@ -2827,4 +2830,42 @@ UTEST( FileActionBatch, HoldInsideADeletedDirectoryHoldsTheDirectory ) {
 	EXPECT_NE( -1, moved );
 	EXPECT_NE( -1, deleted );
 	EXPECT_LT( moved, deleted );
+}
+
+// A directory renamed in its watch while another directory moved into it from another watch,
+// both compared with their trees, and the inner one reported, as the polling backends report
+// directories, with a final separator. The inner move enters the outer tree: what it holds is
+// reported by its own comparison, once, not again by the outer one.
+UTEST( FileActionBatch, DirectoryMovedIntoAMovedTreeIsReportedOnce ) {
+	START_BATCH_TEST();
+	efsw::FileInfo outer = file.make( "outer", true );
+	efsw::FileInfo kept = file.make( "outer/kept" );
+	efsw::FileInfo inner = file.make( "inner", true );
+	efsw::FileInfo carried = file.make( "inner/carried" );
+	efsw::FileInfo joined = file.make( "joined" );
+	std::vector<efsw::FileInfoList> outerBefore( 1 ), innerBefore( 1 );
+	outerBefore[0].push_back( at( kept, "/b/d/kept" ) );
+	innerBefore[0].push_back( at( carried, "/a/d/carried" ) );
+	first.report( "/a/", "d", efsw::Actions::Delete, inner );
+	first.GiveUp.emplace_back( at( inner, "/a/d" ), std::move( innerBefore ) );
+	second.report( "/b/", "n4", efsw::Actions::Add, outer );
+	second.report( "/b/n4/", "d", efsw::Actions::Add, inner );
+	second.Next.back().Info.Filepath += efsw::FileSystem::getOSSlash();
+	second.report( "/b/", "d", efsw::Actions::Delete, outer );
+	second.GiveUp.emplace_back( at( outer, "/b/d" ), std::move( outerBefore ) );
+	second.Tree = { at( kept, "/b/n4/kept" ), at( inner, "/b/n4/d" ),
+					at( carried, "/b/n4/d/carried" ), at( joined, "/b/n4/d/joined" ) };
+	runPass( batch, { &second, &first, &third } );
+
+	auto events = listener.getEvents();
+	int joinedAdds = 0;
+	for ( const auto& event : events ) {
+		EXPECT_TRUE( std::get<1>( event ) != "kept" );
+		EXPECT_TRUE( std::get<1>( event ) != "carried" );
+		if ( efsw::Actions::Add == std::get<0>( event ) && std::get<1>( event ) == "joined" )
+			joinedAdds++;
+	}
+	EXPECT_EQ( 1, joinedAdds );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "n4" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "d" ) );
 }

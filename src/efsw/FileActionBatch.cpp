@@ -64,13 +64,14 @@ static size_t directoryLength( const std::string& directory ) {
 }
 
 /// @return The value of the directory among roots, by path without a final separator, that
-/// contains the path; or none.
+/// contains the path, not the path itself even when it ends with a separator; or none.
 template <typename Value>
 static Value enclosingRoot( const std::unordered_map<std::string, Value>& roots,
 							const std::string& path, Value none ) {
-	if ( roots.empty() )
+	const size_t length = directoryLength( path );
+	if ( roots.empty() || 0 == length )
 		return none;
-	for ( size_t slash = path.rfind( FileSystem::getOSSlash() );
+	for ( size_t slash = path.rfind( FileSystem::getOSSlash(), length - 1 );
 		  slash != std::string::npos && slash > 0;
 		  slash = path.rfind( FileSystem::getOSSlash(), slash - 1 ) ) {
 		auto root = roots.find( path.substr( 0, slash ) );
