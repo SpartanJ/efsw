@@ -270,6 +270,32 @@ UTEST( InotifyMovedDirectories, HandoverIntoCoveredDirectory ) {
 	removeDirectory( root );
 }
 
+// A directory created, then renamed before its creation was handled: the creation no longer
+// finds it, and the rename reports it moved from a path the registration never watched. It is
+// covered where the rename put it, so what happens inside it is reported.
+UTEST( InotifyMovedDirectories, NewDirectoryRenamedBeforeItsCreationWasHandled ) {
+	const std::string root = getTemporaryDirectory() + "_new_renamed";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	PathListener listener;
+	{
+		LockableWatcher watcher;
+		ASSERT_GT( watcher.addWatch( root, &listener, true, {} ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( root + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_TRUE( createDirectory( root + "/s" ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/s" ).c_str(), ( root + "/t" ).c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( root ) );
+		ASSERT_TRUE( createFile( root + "/t/x.txt", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/t/x.txt" ) );
+	}
+	removeDirectory( root );
+}
+
 // A directory created, then its parent moved, before the creation was handled: the watch of the
 // new directory is installed where the move put it, within the registration or in the one the
 // parent moved to, so what happens inside it is reported. The move may be read with the

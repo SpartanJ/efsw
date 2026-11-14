@@ -900,6 +900,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			// Directories that had moved on when their arrival was handled may have moved with
 			// it.
 			coverRelocated();
+			// The registration may not have watched it at its source: it arrived in the same
+			// batch, after its coverage was installed without it.
+			checkForNewWatcher( watch, fpath );
 		}
 
 		watch->OldFileName = "";
