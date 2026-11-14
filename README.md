@@ -121,57 +121,79 @@ Community has been kind and contributed the recipes for different popular packag
 **Platform limitations and clarifications**
 -------------------------------------------
 
-Directory paths are expected to be encoded as UTF-8 strings in all platforms.
+### General
 
-handleFileAction returns UTF-8 strings in all platforms.
+* Directory paths are expected as UTF-8 strings on every platform, and `handleFileAction` reports
+  UTF-8 strings.
+* A file may be reported as `Modified` several times while it is copied, typically after each write
+  flush: file watchers cannot avoid it. To open a file after a modification event, wait a
+  reasonable time after the last event.
+* The Windows and macOS FSEvents backends cannot follow symlinks: they ignore `followSymlinks()`
+  and `allowOutOfScopeLinks()`.
+* The generic watcher, kqueue, and FSEvents before macOS 10.7, whose events only name the changed
+  directories, keep a cache of the watched directory trees to detect changes, which costs memory.
+* The generic watcher detects renames and moves by filesystem identity: device and inode on POSIX,
+  volume serial number and file index on Windows. Without a stable, unambiguous identity, it
+  reports `Delete` and `Add` events instead.
 
-File modification events may be reported multiple times during a copy operation, typically after each write flush. This behavior is inherent to how file watchers operate and cannot be altered. If you need to open the file after receiving a modification event, it is recommended to wait for a reasonable period of time after the last event to avoid potential issues.
+### Linux (inotify)
 
-Windows and FSEvents macOS implementation can't follow symlinks ( it will ignore followSymlinks() and allowOutOfScopeLinks() ).
+* Recursive watching uses one inotify watch per directory. `addWatch()` returns
+  `Errors::FileOverlapping` for a registration that overlaps an explicit one, when either of them
+  recursively covers the other's root. Applications that need several consumers of one subtree
+  should register it once and multiplex the events. Registrations can still come to overlap later,
+  for example when a directory holding a registration is moved into a recursively watched tree:
+  efsw then shares the native watch, delivers its events to every registration covering the
+  directory, and removing one of them keeps the others working.
 
-On macOS, all paths registered on the same `FileWatcher` share one active FSEvents stream. Paths
-added before `watch()` are started together. After watching has started, adding or removing a path
-starts the replacement stream before stopping the previous stream so the handover does not leave a
-gap. In steady state, each `FileWatcher` therefore consumes one client from the system-wide
-FSEvents client pool instead of one client per call to `addWatch`.
+### Windows
 
-Kqueue implementation is limited by the maximum number of file descriptors allowed per process by the OS. In the case of reaching the file descriptors limit ( in BSD around 18000 and in macOS around 10240 ), it will fallback to the generic file watcher.
+* The native backend needs Windows 10 version 1709 or newer and NTFS for the extended file
+  identifiers of `ReadDirectoryChangesExW`. Without them it falls back to `ReadDirectoryChangesW`:
+  watching works, but cross-directory moves are reported as `Delete` and `Add`. The generic watcher
+  does not need `ReadDirectoryChangesExW`, and correlates moves on older Windows versions when the
+  filesystem gives stable volume and file identifiers.
 
-macOS will use only Kqueue if the macOS version is below 10.5. This implementation needs to be compiled separately from the macOS >= 10.5 implementation, since there's no way to compile FSEvents backend in macOS below 10.5.
+### macOS
 
-FSEvents for macOS Lion and beyond in some cases will generate more actions than in reality ocurred, since fine-grained implementation of FSEvents doesn't give the order of the actions retrieved. In some cases I need to guess/approximate the order of them.
+* All the paths registered on one `FileWatcher` share one FSEvents stream, so each `FileWatcher`
+  takes one client from the system-wide FSEvents client pool, not one per `addWatch` call. Paths
+  added before `watch()` start together; adding or removing one afterwards starts the replacement
+  stream before stopping the previous one, leaving no gap.
+* FSEvents on macOS 10.7 and later may report more actions than occurred, since its fine-grained
+  events do not give their order: in some cases efsw guesses or approximates it.
+* Below macOS 10.5 only kqueue is available, and efsw has to be compiled separately for it, since
+  the FSEvents backend cannot be compiled there.
 
-The generic watcher relies on stable filesystem identity to detect file and directory renames/moves. On POSIX it uses device and inode information; on Windows it uses the volume serial number and file index. If identity is unavailable or ambiguous, the watcher reports Add/Delete events instead.
+### kqueue (FreeBSD/BSD and macOS)
 
-Cross-directory moves can optionally be reported as one `Moved` event by setting
-`Options::ReportCrossDirectoryMoves`. This works within a recursive watch and between separately
-registered watches on the same `FileWatcher` when both watches enable the option. In that case
-`oldFilename` contains the absolute source path. This behavior is best-effort and supported by the
-Linux inotify, Windows, macOS FSEvents, macOS and BSD kqueue, and generic backends.
+* kqueue is limited by the number of file descriptors a process may open, around 18000 on BSD and
+  10240 on macOS. When it runs out, efsw falls back to the generic watcher.
 
-The native Windows implementation requires Windows 10 version 1709 or newer and NTFS for
-`ReadDirectoryChangesExW` extended file identifiers. When that API or information class is
-unavailable, the backend transparently falls back to `ReadDirectoryChangesW`; watching continues
-to work, but cross-directory moves are reported as `Delete` + `Add`. The generic Windows watcher
-does not require `ReadDirectoryChangesExW` and can correlate moves on older supported Windows
-versions when the filesystem provides stable volume and file identifiers.
+### Cross-directory moves
 
-Moves between watches without the option on both ends, moves into or out of the watched tree, and
-moves whose native event pair is incomplete or whose filesystem identity is ambiguous continue to
-be reported as `Delete` and/or `Add` events. The polling backends (generic and kqueue) scan their
-watches one after another, and also pair a move between two watches that happens between their
-scans. Within one recursive watch, a move whose halves are seen in different polling passes is
-reported as `Delete` and `Add`. When registrations are nested, a watch
-that covers both paths reports the move itself, and a nested watch that covers only one path gets
-its half as `Delete` or `Add`.
+Setting `Options::ReportCrossDirectoryMoves` reports a move between directories as one `Moved`
+event, whose `oldFilename` is the absolute source path. It works within a recursive watch, and
+between separately registered watches of one `FileWatcher` when both enable the option. It is
+best-effort, and supported by the inotify, Windows, FSEvents, kqueue and generic backends. Below,
+the polling backends are the generic watcher and kqueue.
 
-A directory moved as a whole is reported by its own `Moved` event only: the entries inside it,
-whose paths relative to it are unchanged, are not reported. On the polling backends, what changed
-inside the moved tree before the next polling pass is reported after the directory's `Moved`
-event, by comparing the tree's snapshots at both ends: entries deleted inside it first, at the
-paths the directory's `Moved` event gave them, then entries renamed or relocated inside it as
-`Moved` events, and new entries as `Add` events, parents first. This only uses snapshots the
-watches already keep, for the duration of one polling pass.
+A move is still reported as `Delete` and/or `Add` when:
+
+* the option is not enabled on both watches;
+* it goes into or out of the watched directories;
+* its native event pair is incomplete, or its filesystem identity ambiguous;
+* on the polling backends, its halves are seen in different polling passes within one recursive
+  watch. Between two watches, a move that happens between their scans is still paired;
+* registrations are nested and a watch covers only one of its paths: that watch gets its half,
+  while the watch covering both paths reports the move.
+
+A directory moved as a whole is reported by its own `Moved` event only: the entries inside it, whose
+paths relative to it are unchanged, are not reported. On the polling backends, what changed inside
+the moved tree before the next polling pass is reported after that event, by comparing the tree's
+snapshots at both ends: entries deleted inside it first, at the paths the directory's `Moved` event
+gave them, then entries renamed or relocated inside it as `Moved` events, and new entries as `Add`
+events, parents first. This only uses snapshots the watches already keep, for one polling pass.
 
 kqueue only reports that a watched directory changed, not what changed, so efsw rescans each
 directory it is told about, and every directory of a tree has its own snapshot. When a directory
@@ -179,31 +201,19 @@ moved between watches is changed inside while it arrives, on a heavily loaded sy
 directories may be scanned far enough apart that the comparison of its tree misses some of those
 changes, or reports part of them again. The changes made after its arrival are reported normally.
 
-To find the other half of a move, the option can delay the delivery of `Add` and `Delete` events:
-until the end of the polling pass on the polling backends, and by up to 100 ms on Windows. On the
-polling backends, a `Delete` in a watch scanned after another watch with the option is delayed by
-one more polling pass, with the later events of its watch, including the moves into it, since that
-other watch may only see the destination on its next scan. The order of events within one watch is preserved, but events of
-watches with the option can be delivered after later events of other watches.
+To find the other half of a move, events can be delayed. The order of the events of one watch is
+kept, but events of watches with the option can be delivered after later events of other watches.
 
-On Linux, inotify queues the two halves of a rename one after the other, so efsw can read the
-source before its destination is queued. Whether or not the option is set, a batch of events that
-holds a move's source without its destination waits up to 20 ms for it, counted from the batch's
-first read, and is then delivered in order. A file moved out of the watched directories has no
-destination, so its `Delete`, and the events read with it, can be delayed by up to 20 ms.
-
-On Linux, efsw rejects overlapping explicit watches when at least one of the registrations
-recursively covers the other watch root. Recursive watching is implemented using one inotify
-watch per directory. `addWatch()` returns `Errors::FileOverlapping` for these overlapping
-registrations. Applications that need multiple consumers for the same subtree should register it
-once and multiplex the resulting events internally. Registrations can still come to overlap later,
-for example when a directory holding a registration is moved into a recursively watched tree.
-efsw then shares the native watch: events are delivered to every registration covering the
-directory, and removing one of them keeps the others working.
-
-Linux versions below 2.6.13 are not supported, since inotify wasn't implemented yet. I'm not interested in supporting older kernels, since I don't see the point. If someone needs this, open an issue in the issue tracker and I may consider implementing a dnotify backend.
-
-OS-independent watcher, Kqueue and FSEvents for macOS below 10.5 keep cache of the directories structures, to be able to detect changes in the directories. This means that there's a memory overhead for these backends.
+* Polling backends, with the option: `Add` and `Delete` events wait until the end of the polling
+  pass. A `Delete` in a watch scanned after another watch with the option waits one more pass, with
+  the later events of its watch, including the moves into it, since that other watch may only see
+  the destination on its next scan.
+* Windows, with the option: `Add` and `Delete` events wait up to 100 ms.
+* inotify, with or without the option: the kernel queues the two halves of a rename one after the
+  other, so efsw can read the source before its destination is queued. A batch of events holding a
+  move's source without its destination waits up to 20 ms for it, counted from the batch's first
+  read, and is then delivered in order. A file moved out of the watched directories has no
+  destination, so its `Delete`, and the events read with it, can wait up to 20 ms.
 
 **Useful information**
 --------------------
