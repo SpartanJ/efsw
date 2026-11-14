@@ -771,8 +771,22 @@ bool FileWatcherInotify::moveDirectoryBetweenRoots( WatcherInotify* src, const s
 
 		if ( dst->Recursive ) {
 			// Keep the native watches so no event inside the moved tree is lost, but make
-			// them report to, and be removed with, the destination registration.
+			// them report to, and be removed with, the destination registration. Where it
+			// already watches a directory, as when it installed coverage of a directory that
+			// arrived holding this one, the source's watch goes: two watches of one
+			// registration would report each event twice. Outermost first, since removing a
+			// watch removes the ones below it.
+			std::stable_sort( sourceOwned.begin(), sourceOwned.end(),
+							  []( const WatcherInotify* left, const WatcherInotify* right ) {
+								  return left->Directory.size() < right->Directory.size();
+							  } );
 			for ( WatcherInotify* watch : sourceOwned ) {
+				if ( watch->Removed )
+					continue;
+				if ( findWatchLocked( watch->Directory, dst->ID ) ) {
+					removeWatchLocked( watch );
+					continue;
+				}
 				watch->ID = dst->ID;
 				watch->Listener = dst->Listener;
 				watch->Recursive = true;

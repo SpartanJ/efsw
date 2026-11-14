@@ -220,6 +220,56 @@ UTEST( InotifyMovedDirectories, RenamedThenMovedAway ) {
 	removeDirectory( root );
 }
 
+// A directory that arrives from outside the watched directories holds one moved in from another
+// registration, which holds one moved in from a third, all in one batch. The coverage installed
+// for the first already watches the third: its watch is not handed over too, which would report
+// each of its events twice.
+UTEST( InotifyMovedDirectories, HandoverIntoCoveredDirectory ) {
+	const std::string root = getTemporaryDirectory() + "_covered_handover";
+	const std::string outside = root + "/out";
+	const std::string destination = root + "/w1";
+	const std::string middle = root + "/w2";
+	const std::string source = root + "/w0";
+	removeDirectory( root );
+	for ( const std::string& dir : { root, outside, destination, middle, source } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	ASSERT_TRUE( createDirectory( outside + "/carrier" ) );
+	ASSERT_TRUE( createDirectory( middle + "/m" ) );
+	ASSERT_TRUE( createDirectory( source + "/d" ) );
+	PathListener listener;
+	efsw::WatchID w1 = 0;
+	const std::string inner = destination + "/carrier/m/d";
+	{
+		LockableWatcher watcher;
+		w1 = watcher.addWatch( destination, &listener, true, crossMoves );
+		ASSERT_GT( w1, 0 );
+		ASSERT_GT( watcher.addWatch( middle, &listener, true, crossMoves ), 0 );
+		ASSERT_GT( watcher.addWatch( source, &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( source + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_EQ( 0, std::rename( ( outside + "/carrier" ).c_str(),
+									   ( destination + "/carrier" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( middle + "/m" ).c_str(),
+									   ( destination + "/carrier/m" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( source + "/d" ).c_str(), inner.c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( destination ) );
+		ASSERT_TRUE( createFile( inner + "/x.txt", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, inner + "/x.txt" ) );
+		ASSERT_TRUE( listener.settle( destination ) );
+	}
+	size_t adds = 0;
+	for ( const PathListener::Event& event : listener.events() )
+		if ( event.ID == w1 && event.Action == efsw::Actions::Add &&
+			 event.Path == inner + "/x.txt" )
+			adds++;
+	EXPECT_EQ( 1u, adds );
+	removeDirectory( root );
+}
+
 // A directory created, then its parent moved, before the creation was handled: the watch of the
 // new directory is installed where the move put it, within the registration or in the one the
 // parent moved to, so what happens inside it is reported.
