@@ -382,7 +382,12 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 			// Renamed in its directory, the old name relative to it.
 			tree.erase( key( event.Info.Filepath ) );
 			renamed.push_back( event.Info );
-			renamed.back().Filepath = event.Directory + event.OldFilename;
+			const std::string& path = event.Info.Filepath;
+			renamed.back().Filepath =
+				path.substr(
+					0, path.find_last_of( FileSystem::getOSSlash(), directoryLength( path ) - 1 ) +
+						   1 ) +
+				event.OldFilename;
 			tree[key( renamed.back().Filepath )] = &renamed.back();
 		}
 	}
