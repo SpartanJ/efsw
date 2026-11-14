@@ -36,6 +36,9 @@ class WatcherKqueue : public Watcher {
 	/// @return True when the file was tracked.
 	bool removeFile( const std::string& name, bool emitEvents = true );
 
+	/// Watches the directory at its path again, after it was replaced there.
+	void reopenDirectory();
+
 	// called when the directory is actually changed
 	// means a file has been added or removed
 	// rescans the watched directory adding/removing files and sending notices

@@ -81,3 +81,33 @@ UTEST( Modified, AppendToFile ) {
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );
 }
+
+// A file replaced at its path by another one, then written: the write is reported, though
+// kqueue watches each file through a descriptor opened on the replaced one.
+UTEST( Modified, FileReplacedAtItsPath ) {
+	std::string root = getTemporaryDirectory();
+	std::string testDir = root + "/watched";
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( testDir ) );
+	EXPECT_TRUE( createFile( testDir + "/test_file.txt", "old" ) );
+	EXPECT_TRUE( createFile( root + "/replacement.txt", "new" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+
+	efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
+
+	fileWatcher.watch();
+
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
+	EXPECT_TRUE( renameFile( root + "/replacement.txt", testDir + "/test_file.txt" ) );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
+	listener.clearEvents();
+
+	EXPECT_TRUE( writeFile( testDir + "/test_file.txt", " written" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "test_file.txt" ) );
+
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( root );
+}

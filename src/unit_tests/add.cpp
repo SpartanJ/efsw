@@ -184,3 +184,30 @@ UTEST( Add, EventsInSubdirectoriesHaveTheRegistrationId ) {
 	fileWatcher.removeWatch( second );
 	removeDirectory( root );
 }
+
+// A directory replaced at its path by another one, then a file created in it: the file is
+// reported. kqueue watches each directory through a descriptor, which watched the replaced one.
+UTEST( Add, IntoADirectoryReplacedAtItsPath ) {
+	const std::string root = getTemporaryDirectory();
+	const std::string testDir = root + "/watched";
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( testDir ) );
+	EXPECT_TRUE( createDirectory( testDir + "/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/replacement" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	EXPECT_TRUE( fileWatcher.addWatch( testDir, &listener, true ) > 0 );
+	fileWatcher.watch();
+
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
+	removeDirectory( testDir + "/sub" );
+	EXPECT_TRUE( renameFile( root + "/replacement", testDir + "/sub" ) );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
+
+	EXPECT_TRUE( createFile( testDir + "/sub/new_file.txt", "x" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "new_file.txt", 3000 ) );
+
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( root );
+}

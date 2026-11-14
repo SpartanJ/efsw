@@ -215,6 +215,17 @@ bool WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	return true;
 }
 
+void WatcherKqueue::reopenDirectory() {
+	int fd = open( Directory.c_str(), O_EVTONLY );
+	if ( -1 == fd )
+		return;
+	close( static_cast<int>( mChangeList[0].ident ) );
+	EV_SET( &mChangeList[0], fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
+			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, 0 );
+	struct timespec timeout = { 0, 0 };
+	kevent( mKqueue, mChangeList.data(), 1, NULL, 0, &timeout );
+}
+
 bool WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
 
@@ -254,11 +265,12 @@ bool WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 
 	mWatcher->removeFD();
 
-	memset( ke, 0, sizeof( KEvent ) );
-
-	// move end to current
-	memcpy( ke, &mChangeList[mChangeListCount], sizeof( KEvent ) );
-	memset( &mChangeList[mChangeListCount], 0, sizeof( KEvent ) );
+	// The entries after it move down one: the list stays sorted by name, which bsearch()
+	// needs. Moving the last one into its place left the list unsorted, and later removals
+	// could no longer find their file, whose Delete was then never reported.
+	KEvent* last = &mChangeList[mChangeListCount];
+	memmove( ke, ke + 1, ( last - ke ) * sizeof( KEvent ) );
+	memset( last, 0, sizeof( KEvent ) );
 	--mChangeListCount;
 	return true;
 }
@@ -270,7 +282,13 @@ void WatcherKqueue::rescan() {
 		return;
 	}
 
+	const FileIdentity watched = mDirSnap.DirectoryInfo.identity();
 	DirectorySnapshotDiff Diff = mDirSnap.scan();
+
+	// Replaced at its path by another directory: the descriptor watches the one that is gone,
+	// and would never report the new one's changes.
+	if ( mDirSnap.DirectoryInfo.Inode != 0 && mDirSnap.DirectoryInfo.identity() != watched )
+		reopenDirectory();
 
 	if ( Diff.DirChanged ) {
 		sendDirChanged();
@@ -451,7 +469,12 @@ void WatcherKqueue::watch() {
 
 					FileInfo fi( entry->Filepath );
 
-					if ( fi != *entry ) {
+					if ( fi.Inode == 0 && !FileInfo::exists( entry->Filepath ) ) {
+						// Gone from its path since: moved with its directory, or deleted. Its
+						// entry is kept, as the evidence of its directory's tree, and the
+						// directory's scan reports what happened.
+						needScan = true;
+					} else if ( fi != *entry ) {
 						*entry = fi;
 
 						mDirSnap.updateFile( entry->Filepath );

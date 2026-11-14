@@ -167,5 +167,4 @@ mind when reading results:
     says, such as an `Add` for a file that was only written, or a `Delete` for a file created
     and removed between two events. The replay reports those as errors.
   - **kqueue** scans like the generic backend, every `--ms`, and the fuzzer waits for it as
-    such on the BSDs. Seeds 1 to 12 still find failures in 6 of them, with events missing or
-    reported twice. They haven't been investigated yet.
+    such on the BSDs. On FreeBSD, seeds 1 to 200 pass.
