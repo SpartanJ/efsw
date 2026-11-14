@@ -1014,6 +1014,35 @@ UTEST( FileActionBatch, TreeEvidenceFromSnapshotsAndDeletes ) {
 	EXPECT_TRUE( std::get<1>( events[1] ) == "renamed" );
 }
 
+// A directory moved out of one that was then deleted, to a watch scanned before: the deleted
+// directory's Delete is held to the next pass, and its tree is still the evidence of the moved
+// one, so what was created inside the moved directory follows its Moved event.
+UTEST( FileActionBatch, TreeEvidenceOfAHeldDelete ) {
+	START_BATCH_TEST();
+	efsw::FileInfo parent = file.make( "p", true );
+	efsw::FileInfo moved = file.make( "p/m", true );
+	efsw::FileInfo created = file.make( "p/m/new.txt" );
+	std::vector<efsw::FileInfoList> before( 1 );
+	before[0].push_back( at( moved, "/src/p/m" ) );
+	third.report( "/src/", "p", efsw::Actions::Delete, parent );
+	third.report( "/src/p/", "m", efsw::Actions::Delete, moved );
+	third.GiveUp.emplace_back( at( parent, "/src/p" ), std::move( before ) );
+	first.report( "/dst/", "m", efsw::Actions::Add, moved );
+	first.Tree.push_back( at( created, "/dst/m/new.txt" ) );
+
+	runPass( batch, watches );
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "m" );
+	EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "new.txt" );
+
+	runPass( batch, watches );
+	EXPECT_EQ( 3u, listener.getEventCount() );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "p" ) );
+}
+
 // Hard links share an identity: the links whose paths match are kept, and a single remaining
 // one on each end is a move.
 UTEST( FileActionBatch, HardLinksInsideAMovedTree ) {

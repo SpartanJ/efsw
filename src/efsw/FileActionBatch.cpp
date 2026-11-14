@@ -211,11 +211,19 @@ std::unordered_map<std::string, FileIdentity> FileActionBatch::evidenceRoots() c
 	std::unordered_map<std::string, FileIdentity> roots;
 	if ( mSourceTrees.empty() )
 		return roots;
-	for ( const Event& event : mEvents )
+	auto add = [&]( const Event& event ) {
 		if ( Actions::Delete == event.ActionType && event.Info.Inode != 0 &&
 			 mSourceTrees.count( event.Info.identity() ) )
 			roots[event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) )] =
 				event.Info.identity();
+	};
+	for ( const Event& event : mEvents )
+		add( event );
+	// A deleted directory held to the next pass still left its tree in this one: a directory
+	// moved out of it before is compared with it.
+	for ( const Event& event : mHeld )
+		if ( !event.Canceled )
+			add( event );
 	return roots;
 }
 
