@@ -631,7 +631,7 @@ void FileWatcherInotify::run() {
 								}
 							} else {
 								emitCrossDirectoryMove( source, sourceFilename, owner,
-														event.filename );
+														event.filename, event.mask );
 							}
 						}
 
@@ -688,14 +688,15 @@ void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath )
 }
 
 void FileWatcherInotify::emitCrossDirectoryMove( Watcher* src, const std::string& srcFile,
-												 Watcher* dst, const std::string& dstFile ) {
+												 Watcher* dst, const std::string& dstFile,
+												 uint32_t mask ) {
 	if ( !src || !dst ) {
 		return;
 	}
 
 	std::string oldDstFilename = dst->OldFileName;
 	dst->OldFileName = src->Directory + srcFile;
-	handleAction( dst, dstFile, IN_MOVED_TO );
+	handleAction( dst, dstFile, IN_MOVED_TO | ( mask & IN_ISDIR ) );
 	dst->OldFileName = std::move( oldDstFilename );
 }
 
@@ -819,7 +820,9 @@ void FileWatcherInotify::handleAction( Watcher* watch, const std::string& filena
 			notify( watch, filename, Actions::Moved, watch->OldFileName );
 		}
 
-		if ( !watch->OldFileName.empty() && FileSystem::isDirectory( fpath ) ) {
+		// The event says whether a directory moved: by now it may have moved on, so the path
+		// may no longer be one, but the watches inside it still need its new path.
+		if ( !watch->OldFileName.empty() && ( action & IN_ISDIR ) ) {
 			/// Update the paths of the watches that moved with the directory. This is a
 			/// physical move, so it applies to every registration watching inside it.
 			std::string opath( watch->OldFileName );

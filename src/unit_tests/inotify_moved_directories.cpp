@@ -116,4 +116,56 @@ UTEST( InotifyMovedDirectories, NoHandoverToARemovedRegistration ) {
 	removeDirectory( root );
 }
 
+// A directory renamed, then moved to another registration before the rename was handled: its
+// watch must follow it to where the rename put it, so the move takes it away from the first
+// registration, which no longer reports what happens inside it.
+UTEST( InotifyMovedDirectories, RenamedThenMovedAway ) {
+	const std::string root = getTemporaryDirectory() + "_renamed_moved";
+	const std::string first = root + "/a";
+	const std::string second = root + "/b";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	ASSERT_TRUE( createDirectory( first ) );
+	ASSERT_TRUE( createDirectory( second ) );
+	PathListener listener;
+	efsw::WatchID a = 0;
+	{
+		LockableWatcher watcher;
+		a = watcher.addWatch( first, &listener, true, {} );
+		ASSERT_GT( a, 0 );
+		ASSERT_GT( watcher.addWatch( second, &listener, true, {} ), 0 );
+		watcher.watch();
+		ASSERT_TRUE( createDirectory( first + "/d" ) );
+		sleepMs( 200 );
+		{
+			// The event thread waits for the lock to report an Add, while both moves are queued
+			// behind it, to be read together.
+			efsw::Lock lock( watcher.actionLock() );
+			// One event, so the thread blocks with nothing left to read.
+			ASSERT_TRUE( createDirectory( first + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilRead() );
+			sleepMs( 50 );
+			ASSERT_EQ( 0, std::rename( ( first + "/d" ).c_str(), ( first + "/e" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( first + "/e" ).c_str(), ( second + "/e" ).c_str() ) );
+		}
+		sleepMs( 200 );
+		ASSERT_TRUE( createFile( second + "/e/x.txt", "x" ) );
+		sleepMs( 300 );
+	}
+	size_t inFirst = 0;
+	bool inSecond = false;
+	for ( const PathListener::Event& event : listener.events() ) {
+		if ( event.Path.find( "x.txt" ) == std::string::npos )
+			continue;
+		if ( event.ID == a )
+			inFirst++;
+		else if ( event.Path == second + "/e/x.txt" )
+			inSecond = true;
+	}
+	// The first registration reports nothing inside the directory that left it.
+	EXPECT_EQ( 0u, inFirst );
+	EXPECT_TRUE( inSecond );
+	removeDirectory( root );
+}
+
 #endif

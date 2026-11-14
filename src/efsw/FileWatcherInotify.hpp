@@ -5,6 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
+#include <cstdint>
 #include <efsw/WatcherInotify.hpp>
 #include <unordered_map>
 #include <vector>
@@ -95,8 +96,9 @@ class FileWatcherInotify : public FileWatcherImpl {
 
 	void run();
 
+	/// Reports a move between two watches as Moved; mask is the event's, for its IN_ISDIR bit.
 	void emitCrossDirectoryMove( Watcher* src, const std::string& srcFile, Watcher* dst,
-								 const std::string& dstFile );
+								 const std::string& dstFile, uint32_t mask );
 
 	/// Reports a directory moved between two registered roots as one Moved event. The source
 	/// registration's watches of the moved subtree are handed over to a recursive destination,
