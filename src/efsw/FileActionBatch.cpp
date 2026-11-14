@@ -626,7 +626,9 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 		moves.MoveOf[created] = created;
 		moves.SourceOf[created] = deleted;
 		hasMove = true;
-		if ( Moves::None != enclosingSource && enclosingSource == enclosingDestination )
+		// Its source is inside a moved directory: when that move is reported first, the
+		// listener knows the entry where it put it, wherever the entry went from there.
+		if ( Moves::None != enclosingSource )
 			moves.Within[created] = enclosingSource;
 
 		if ( source.Info.isDirectory() ) {
@@ -1835,10 +1837,19 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 			if ( enclosing != moves->Within.end() ) {
 				const size_t outer = enclosing->second;
 				if ( MoveState::Delivered == state[outer] && !converted[outer] ) {
-					const std::string& from = mEvents[moves->SourceOf[outer]].Info.Filepath;
-					oldPath =
-						mEvents[outer].Info.Filepath +
-						mEvents[moves->SourceOf[i]].Info.Filepath.substr( directoryLength( from ) );
+					const Event& moved = mEvents[outer];
+					// Where no watch reports what is inside it, the entry arrives from outside
+					// the watched directories: an Add, its Delete is the directory's move.
+					if ( NULL != moved.Owner &&
+						 !moved.Owner->collectTree( moved.Info.Filepath, NULL ) ) {
+						converted[i] = true;
+					} else {
+						const std::string& from = mEvents[moves->SourceOf[outer]].Info.Filepath;
+						oldPath = moved.Info.Filepath.substr(
+									  0, directoryLength( moved.Info.Filepath ) ) +
+								  mEvents[moves->SourceOf[i]].Info.Filepath.substr(
+									  directoryLength( from ) );
+					}
 				}
 			}
 			if ( target && converted[i] ) {

@@ -287,8 +287,8 @@ class FileActionBatch {
 		std::vector<size_t> Reconciled;
 		/// What changed inside the trees of directory moves, by the move's Add position.
 		std::unordered_map<size_t, TreeChanges> Followers;
-		/// The directory move whose Moved event a move inside it follows, both by Add position:
-		/// its old path is where that event put it.
+		/// The directory move whose source contains a move's source, both by Add position: when
+		/// its Moved event comes first, the move's old path is where that event put the entry.
 		std::unordered_map<size_t, size_t> Within;
 	};
 

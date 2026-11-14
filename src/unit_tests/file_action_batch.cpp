@@ -1123,6 +1123,36 @@ UTEST( FileActionBatch, HeldMoveIsComparedWithTheTreeItArrivedWith ) {
 	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Delete, "f" ) );
 }
 
+// A directory moved, then a file moved out of it to another watch: the file's Moved event comes
+// after the directory's, so it is moved from where that event put it. When the directory's new
+// watch does not watch inside it, the file arrives from outside the watched directories: an Add,
+// with no Delete, since the directory's move took it away.
+UTEST( FileActionBatch, MoveOutOfAMovedDirectoryIsFromItsNewPath ) {
+	for ( bool watchesTrees : { true, false } ) {
+		START_BATCH_TEST();
+		efsw::FileInfo directory = file.make( "d", true );
+		efsw::FileInfo inside = file.make( "d/f" );
+		second.WatchesTrees = watchesTrees;
+		first.report( "/a/", "d", efsw::Actions::Delete, directory );
+		first.report( "/a/d/", "f", efsw::Actions::Delete, inside );
+		second.report( "/", "d", efsw::Actions::Add, directory );
+		third.report( "/c/", "n7", efsw::Actions::Add, inside );
+		runPass( batch, watches );
+
+		auto events = listener.getEvents();
+		ASSERT_EQ( 2u, events.size() );
+		EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+		EXPECT_TRUE( std::get<1>( events[0] ) == "d" );
+		EXPECT_TRUE( std::get<1>( events[1] ) == "n7" );
+		if ( watchesTrees ) {
+			EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+			EXPECT_TRUE( std::get<2>( events[1] ) == slashes( "/d/f" ) );
+		} else {
+			EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[1] ) );
+		}
+	}
+}
+
 // The same, with the file renamed inside the directory: its watch's rename follows the held
 // move, from the name the move arrived with, which the comparison does not report again.
 UTEST( FileActionBatch, HeldMoveIsFollowedByARenameInsideIt ) {
