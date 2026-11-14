@@ -23,6 +23,8 @@ class FakeWatch : public efsw::Watcher {
 		efsw::FileInfo Info;
 		/// The old name of a Moved event, in its directory.
 		std::string Old;
+		/// The ID reported, when not the watch's: kqueue reports each directory with its own.
+		efsw::WatchID Id;
 	};
 
 	efsw::FileActionBatch& Batch;
@@ -53,8 +55,8 @@ class FakeWatch : public efsw::Watcher {
 	void watch() override {
 		Scans++;
 		for ( const Pending& event : Next )
-			Batch.add( ID, event.Directory, event.Filename, event.Action, event.Old, event.Info,
-					   Listener, this );
+			Batch.add( event.Id ? event.Id : ID, event.Directory, event.Filename, event.Action,
+					   event.Old, event.Info, Listener, this );
 		Next.clear();
 		for ( auto& tree : GiveUp )
 			Batch.addSourceTree( tree.first, std::move( tree.second ) );
@@ -1407,6 +1409,111 @@ UTEST( FileActionBatch, MoveBeforeTheRenameOfItsSourceDirectory ) {
 	EXPECT_TRUE( std::get<1>( events[1] ) == "n128" );
 }
 
+// Two renames hold the source: a directory inside another, then the outer one. Both are undone,
+// the latest first.
+UTEST( FileActionBatch, MoveBeforeTwoRenamesOfItsSourceDirectories ) {
+	START_BATCH_TEST();
+	efsw::FileInfo inner = file.make( "inner", true );
+	efsw::FileInfo outer = file.make( "outer", true );
+	efsw::FileInfo moved = file.make( "x" );
+	// In the platform's separators, as the backends report directories: the old paths are
+	// built from them.
+	first.report( slashes( "/c/" ), "x", efsw::Actions::Add, moved );
+	second.report( slashes( "/w/b/" ), "d", efsw::Actions::Moved, inner );
+	second.Next.back().Old = "c";
+	second.report( slashes( "/w/" ), "e", efsw::Actions::Moved, outer );
+	second.Next.back().Old = "b";
+	second.report( slashes( "/w/e/d/" ), "x", efsw::Actions::Delete, moved );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	const std::string known = slashes( "/w/b/c/x" );
+	const std::string& old = std::get<2>( events[0] );
+	EXPECT_TRUE( old.size() >= known.size() &&
+				 0 == old.compare( old.size() - known.size(), known.size(), known ) );
+}
+
+// As above, with the rename and the Delete reported under different IDs of one registration,
+// as kqueue reports each directory with its own.
+UTEST( FileActionBatch, MoveBeforeTheRenameOfItsSourceDirectoryInOneRegistration ) {
+	START_BATCH_TEST();
+	efsw::FileInfo renamedDirectory = file.make( "n113", true );
+	efsw::FileInfo moved = file.make( "n96", true );
+	first.report( "/c/", "n96", efsw::Actions::Add, moved );
+	second.report( "/b/", "n128", efsw::Actions::Moved, renamedDirectory );
+	second.Next.back().Old = "n113";
+	second.report( "/b/n128/n83/", "n96", efsw::Actions::Delete, moved );
+	second.Next.back().Id = 7;
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "n96" );
+	const std::string known = slashes( "/b/n113/n83/n96" );
+	const std::string& old = std::get<2>( events[0] );
+	EXPECT_TRUE( old.size() >= known.size() &&
+				 0 == old.compare( old.size() - known.size(), known.size(), known ) );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+}
+
+// The rename of the source's directory is held to the next pass with the events of its
+// registration after a held one: the move, delivered now, names its source as the listener
+// still knows it.
+UTEST( FileActionBatch, MoveBeforeAHeldRenameOfItsSourceDirectory ) {
+	START_BATCH_TEST();
+	efsw::FileInfo gone = file.make( "gone" );
+	efsw::FileInfo renamedDirectory = file.make( "old", true );
+	efsw::FileInfo moved = file.make( "child", true );
+	first.report( "/c/", "child", efsw::Actions::Add, moved );
+	second.report( "/b/", "gone", efsw::Actions::Delete, gone );
+	second.report( "/b/", "new", efsw::Actions::Moved, renamedDirectory );
+	second.Next.back().Old = "old";
+	second.report( "/b/new/sub/", "child", efsw::Actions::Delete, moved );
+	runPass( batch, watches );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "child" );
+	const std::string known = slashes( "/b/old/sub/child" );
+	const std::string& old = std::get<2>( events[0] );
+	EXPECT_TRUE( old.size() >= known.size() &&
+				 0 == old.compare( old.size() - known.size(), known.size(), known ) );
+	EXPECT_TRUE( std::get<1>( events[2] ) == "new" );
+}
+
+// A listener removes the source's registration before its directory rename is delivered: the
+// listener never learns the new name, so the move delivered after it names its source as before.
+UTEST( FileActionBatch, MoveAfterACanceledRenameOfItsSourceDirectory ) {
+	START_BATCH_TEST();
+	(void)watches;
+	RemovingListener removerListener;
+	FakeWatch remover( 4, batch, &removerListener );
+	removerListener.Batch = &batch;
+	removerListener.Removed = &second;
+	efsw::FileInfo renamedDirectory = file.make( "n113", true );
+	efsw::FileInfo moved = file.make( "n96", true );
+	remover.report( "/other/", "other.txt", efsw::Actions::Modified, efsw::FileInfo() );
+	second.report( "/b/", "n128", efsw::Actions::Moved, renamedDirectory );
+	second.Next.back().Old = "n113";
+	second.report( "/b/n128/n83/", "n96", efsw::Actions::Delete, moved );
+	first.report( "/c/", "n96", efsw::Actions::Add, moved );
+	runPass( batch, { &remover, &second, &first } );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "n96" );
+	const std::string known = slashes( "/b/n113/n83/n96" );
+	const std::string& old = std::get<2>( events[0] );
+	EXPECT_TRUE( old.size() >= known.size() &&
+				 0 == old.compare( old.size() - known.size(), known.size(), known ) );
+}
+
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.
@@ -2571,4 +2678,153 @@ UTEST( FileActionBatch, DeleteWaitsForTwoMovesInReverseOrder ) {
 					{ efsw::Actions::Delete, "gone" },
 					{ efsw::Actions::Modified, "second" } },
 				  utest_result );
+}
+
+// A directory moved in, held to the next pass, where its watch found a directory inside it
+// renamed: compared with the tree it arrived with, which had the renamed directory's entries
+// below its old name, only the rename follows the move.
+UTEST( FileActionBatch, HeldMoveIsFollowedByARenameOfADirectoryInsideIt ) {
+	efsw::FileActionBatch batch;
+	TestListener listener;
+	FakeWatch first( 1, batch, &listener );
+	FakeWatch second( 2, batch, &listener );
+	FakeWatch third( 3, batch, &listener );
+	std::vector<FakeWatch*> watches{ &first, &second, &third };
+	efsw::FileInfo outer = synthetic( slashes( "/src/outer" ), id( 1001 ), true );
+	efsw::FileInfo inner = synthetic( slashes( "/src/outer/inner" ), id( 1002 ), true );
+	efsw::FileInfo file = synthetic( slashes( "/src/outer/inner/f" ), id( 1003 ), false );
+	second.Tree = { at( inner, "/dst/outer/inner" ), at( file, "/dst/outer/inner/f" ) };
+	std::vector<efsw::FileInfoList> evidence( 1 );
+	evidence[0] = { inner, file };
+	first.GiveUp.emplace_back( outer, std::move( evidence ) );
+	first.report( "/src/", "outer", efsw::Actions::Delete, outer );
+	// Held: the destination's watch was scanned first, so the move waits for a rescan.
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete,
+				   synthetic( "", id( 1004 ), false ) );
+	second.report( "/dst/", "outer", efsw::Actions::Add, outer );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.Tree = { at( inner, "/dst/outer/renamed" ), at( file, "/dst/outer/renamed/f" ) };
+	second.report( "/dst/outer/", "renamed", efsw::Actions::Moved, inner );
+	second.Next.back().Old = "inner";
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[0] ) );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "outer" );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[2] ) );
+	EXPECT_TRUE( std::get<1>( events[2] ) == "renamed" );
+	EXPECT_TRUE( std::get<2>( events[2] ) == "inner" );
+}
+
+// A directory left the watches, its Deletes held to the next pass with a file inside it. There,
+// the file comes back, after a Delete that holds its watch again: the move would be held with
+// it, out of a directory the listener was told is gone. It falls apart: the file's Delete is
+// delivered with the directory, and the file arrives on the next pass, as an Add.
+UTEST( FileActionBatch, MoveOutOfADeliveredDirectoryIsNotHeld ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "n10", true );
+	efsw::FileInfo inner = file.make( "n10/d", true );
+	efsw::FileInfo moved = file.make( "n10/d/f" );
+	efsw::FileInfo gone = file.make( "n14" );
+	second.report( "/b/", "n10", efsw::Actions::Delete, directory );
+	second.report( "/b/n10/", "d", efsw::Actions::Delete, inner );
+	second.report( "/b/n10/d/", "f", efsw::Actions::Delete, moved );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.report( "/b/", "n14", efsw::Actions::Delete, gone );
+	second.report( "/b/n27/", "n44", efsw::Actions::Add, moved );
+	runPass( batch, watches );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 5u, events.size() );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "n10" );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[2] ) );
+	EXPECT_TRUE( std::get<1>( events[2] ) == "f" );
+	EXPECT_EQ( efsw::Actions::Delete, std::get<0>( events[3] ) );
+	EXPECT_TRUE( std::get<1>( events[3] ) == "n14" );
+	EXPECT_EQ( efsw::Actions::Add, std::get<0>( events[4] ) );
+	EXPECT_TRUE( std::get<1>( events[4] ) == "n44" );
+}
+
+// Two moves wait for each other: each registration's events wait behind a move into the other.
+// The moves are split into their halves; one of them left a directory renamed after it, whose
+// tree's changes then do not report it leaving a second time.
+UTEST( FileActionBatch, SplitMoveOutOfAMovedTreeIsReportedOnce ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "p", true );
+	efsw::FileInfo left = file.make( "p/m" );
+	efsw::FileInfo kept = file.make( "p/k" );
+	efsw::FileInfo crossing = file.make( "f" );
+	std::vector<efsw::FileInfoList> before( 1 );
+	before[0] = { at( left, "/a/p/m" ), at( kept, "/a/p/k" ) };
+	first.GiveUp.emplace_back( at( directory, "/a/p" ), std::move( before ) );
+	first.Tree = { at( kept, "/a/q/p/k" ) };
+	first.report( "/a/", "p", efsw::Actions::Delete, directory );
+	first.report( "/a/p/", "k", efsw::Actions::Delete, kept );
+	first.report( "/a/p/", "m", efsw::Actions::Delete, left );
+	first.report( "/a/q/", "p", efsw::Actions::Add, directory );
+	first.report( "/a/q/", "g", efsw::Actions::Add, crossing );
+	second.report( "/b/", "f", efsw::Actions::Delete, crossing );
+	second.report( "/b/", "m", efsw::Actions::Add, left );
+	runPass( batch, watches );
+
+	int leaving = 0;
+	for ( const auto& event : listener.getEvents() )
+		if ( efsw::Actions::Delete == std::get<0>( event ) && std::get<1>( event ) == "m" )
+			leaving++;
+	EXPECT_EQ( 1, leaving );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "m" ) );
+}
+
+// A file moved into a subdirectory, and another one added at its old path, all in one watch's
+// pass: delivered as a move at its destination, it would follow the new file's Add, and name
+// the new file's path as its source. Its halves are reported instead, in their order.
+UTEST( FileActionBatch, MoveWhoseSourcePathIsTakenFirstIsNotPaired ) {
+	START_BATCH_TEST();
+	efsw::FileInfo moved = file.make( "moved" );
+	efsw::FileInfo added = file.make( "added" );
+	second.report( "/w/", "g", efsw::Actions::Delete, moved );
+	second.report( "/w/", "g", efsw::Actions::Add, added );
+	second.report( "/w/d/", "g", efsw::Actions::Add, moved );
+	runPass( batch, watches );
+
+	expectEvents( listener,
+				  { { efsw::Actions::Delete, "g" },
+					{ efsw::Actions::Add, "g" },
+					{ efsw::Actions::Add, "g" } },
+				  utest_result );
+}
+
+// A directory arrived twice in one pass, in two watches, after it left a third one, so its
+// halves are not paired; a file inside it left for an unwatched directory. The third watch is
+// held from the file's Delete, which has no Add; its directory's Delete, before it, is held too:
+// on the next pass the file comes back to a watch, and its move from inside the directory comes
+// before the listener is told the directory is gone.
+UTEST( FileActionBatch, HoldInsideADeletedDirectoryHoldsTheDirectory ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "d", true );
+	efsw::FileInfo inner = file.make( "d/f" );
+	first.report( "/w1/", "n1", efsw::Actions::Add, directory );
+	second.report( "/w2/", "n8", efsw::Actions::Add, directory );
+	third.report( "/w3/", "d", efsw::Actions::Delete, directory );
+	third.report( "/w3/d/", "f", efsw::Actions::Delete, inner );
+	runPass( batch, watches );
+	EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Delete, "d" ) );
+
+	second.report( "/w2/", "n12", efsw::Actions::Add, inner );
+	runPass( batch, watches );
+	runPass( batch, watches );
+
+	const int moved = listener.indexOf( efsw::Actions::Moved, "n12" );
+	const int deleted = listener.indexOf( efsw::Actions::Delete, "d" );
+	EXPECT_NE( -1, moved );
+	EXPECT_NE( -1, deleted );
+	EXPECT_LT( moved, deleted );
 }

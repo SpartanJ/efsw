@@ -5,6 +5,7 @@
 #include <efsw/FileInfo.hpp>
 #include <efsw/Watcher.hpp>
 #include <efsw/efsw.hpp>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -91,6 +92,14 @@ class FileActionBatch {
 		Event( WatchID watchid, const std::string& directory, const std::string& filename,
 			   Action action, const std::string& oldFilename, const FileInfo& fileInfo,
 			   FileWatchListener* listener, Watcher* owner );
+	};
+
+	/// A held move's source inside a directory that left in the pass: holding the watch of the
+	/// move's destination from Move or before holds the directory's watch from Directory.
+	struct HoldLink {
+		Watcher* Owner;
+		size_t Move;
+		size_t Directory;
 	};
 
 	/// The events one watch collected during a pass, as positions in mEvents. Owner is NULL
@@ -315,12 +324,20 @@ class FileActionBatch {
 		std::vector<bool> Rescanned;
 		// holdMoveSources().
 		std::unordered_map<std::string, size_t> LeftDirectories;
+		std::vector<HoldLink> HoldLinks;
+		// matchMoves().
+		std::unordered_map<std::string, std::vector<size_t>> AddsAt;
+		std::unordered_set<std::string> StayingDirectories;
 		// rescanBeforeMovedTrees().
 		std::vector<const FileInfo*> Arrived;
 		// destinationTree().
-		std::unordered_map<std::string, const FileInfo*> TreeAtHold;
+		std::map<std::string, const FileInfo*> TreeAtHold;
 		/// Kept for the pass: tree changes point to them until it is delivered.
 		std::deque<FileInfo> RenamedAtHold;
+		std::vector<std::pair<std::string, const FileInfo*>> BelowAtHold;
+		// deliver().
+		std::vector<size_t> HeldRenames;
+		std::unordered_map<std::string, std::vector<size_t>> RenamesTo;
 		std::vector<FileIdentity> ArrivedIdentities;
 		/// Identities of unpaired Adds, sorted when looked up.
 		std::vector<FileIdentity> Later;

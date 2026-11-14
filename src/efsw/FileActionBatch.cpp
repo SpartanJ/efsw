@@ -4,6 +4,7 @@
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileSystem.hpp>
 #include <iterator>
+#include <map>
 #include <set>
 #include <sys/stat.h>
 #include <unordered_map>
@@ -308,6 +309,34 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	}
 	if ( holdFrom.empty() )
 		return false;
+	// A watch held from inside a directory it reported deleted earlier in the pass is held from
+	// that directory's Delete: delivered now, it would tell the listener the held entry is gone
+	// before a move out of it, on the next pass, names it. An identity added twice and deleted
+	// once is not a hold of its own: a directory that arrived twice has a Delete like that.
+	std::unordered_map<std::string, std::vector<size_t>> deletedDirectories;
+	for ( size_t i = mReleased; i < mEvents.size(); i++ )
+		if ( Actions::Delete == mEvents[i].ActionType && mEvents[i].Info.isDirectory() &&
+			 Moves::None == moves.MoveOf[i] )
+			deletedDirectories[mEvents[i].Info.Filepath.substr(
+								   0, directoryLength( mEvents[i].Info.Filepath ) )]
+				.push_back( i );
+	for ( auto& hold : holdFrom ) {
+		const std::string& path = mEvents[hold.second].Info.Filepath;
+		bool found = false;
+		for ( size_t slash = path.find( FileSystem::getOSSlash(), 1 );
+			  !found && slash != std::string::npos && slash + 1 < path.size();
+			  slash = path.find( FileSystem::getOSSlash(), slash + 1 ) ) {
+			auto directory = deletedDirectories.find( path.substr( 0, slash ) );
+			if ( directory == deletedDirectories.end() )
+				continue;
+			for ( size_t position : directory->second )
+				if ( position < hold.second && mEvents[position].Owner == hold.first ) {
+					hold.second = position;
+					found = true;
+					break;
+				}
+		}
+	}
 
 	// Later events of a held watch are held too, including those of its rescan.
 	auto inHeldRange = [&]( size_t i ) {
@@ -319,42 +348,89 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	// deleted one's Delete would come first, and the move would name a source the listener was
 	// told is gone; a moved one's tree would be compared without the move out of it, and report
 	// the entry deleted. A move is held from its destination. Holding their watches can hold more
-	// moves: repeated until nothing more is held, at most once per watch.
+	// moves. Those directories whose own event was released from the previous pass are not held
+	// again: a move out of one is not held either, it falls apart. Its source is delivered with
+	// the directory, and its destination, held, is an Add on the next pass.
 	std::unordered_map<std::string, size_t>& leftDirectories = mScratch.LeftDirectories;
 	leftDirectories.clear();
-	for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
+	std::unordered_set<std::string>& stayingDirectories = mScratch.StayingDirectories;
+	stayingDirectories.clear();
+	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		const Event& event = mEvents[i];
 		const size_t move = moves.MoveOf[i];
-		// An event released from the previous pass is not held again.
-		if ( Actions::Delete == event.ActionType && event.Info.isDirectory() &&
-			 NULL != event.Owner &&
-			 ( Moves::None == move || ( NULL != mEvents[move].Owner && move >= mReleased ) ) )
-			leftDirectories.emplace(
-				event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ),
-				Moves::None == move ? i : move );
+		if ( Actions::Delete != event.ActionType || !event.Info.isDirectory() )
+			continue;
+		// Where it can be held from: its Delete, or its destination.
+		const size_t from = Moves::None == move ? i : move;
+		const bool holdable =
+			NULL != event.Owner && NULL != mEvents[from].Owner && from >= mReleased;
+		std::string path( event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ) );
+		if ( !holdable )
+			stayingDirectories.insert( std::move( path ) );
+		else if ( i >= mReleased )
+			leftDirectories.emplace( std::move( path ), from );
 	}
-	for ( bool held = !leftDirectories.empty(); held; ) {
-		held = false;
-		for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
-			const size_t move = moves.MoveOf[i];
-			if ( Actions::Delete != mEvents[i].ActionType || Moves::None == move || move == i ||
-				 !inHeldRange( move ) )
+	auto inStayingDirectory = [&]( const std::string& source ) {
+		if ( stayingDirectories.empty() )
+			return false;
+		for ( size_t slash = source.find( FileSystem::getOSSlash(), 1 );
+			  slash != std::string::npos && slash + 1 < source.size();
+			  slash = source.find( FileSystem::getOSSlash(), slash + 1 ) )
+			if ( stayingDirectories.count( source.substr( 0, slash ) ) )
+				return true;
+		return false;
+	};
+	// The directories each move's source is in, by the watch of the move's destination, latest
+	// destination first: holding the watch from a position holds those of its moves from there,
+	// and with them their directories' watches. Each link is followed once.
+	std::vector<HoldLink>& links = mScratch.HoldLinks;
+	links.clear();
+	for ( size_t i = mReleased; i < mEvents.size() && !leftDirectories.empty(); i++ ) {
+		const size_t move = moves.MoveOf[i];
+		if ( Actions::Delete != mEvents[i].ActionType || Moves::None == move || move == i ||
+			 move < mReleased || NULL == mEvents[move].Owner )
+			continue;
+		const std::string& source = mEvents[i].Info.Filepath;
+		for ( size_t slash = source.find( FileSystem::getOSSlash(), 1 );
+			  slash != std::string::npos && slash + 1 < source.size();
+			  slash = source.find( FileSystem::getOSSlash(), slash + 1 ) ) {
+			auto directory = leftDirectories.find( source.substr( 0, slash ) );
+			if ( directory != leftDirectories.end() )
+				links.push_back( { mEvents[move].Owner, move, directory->second } );
+		}
+	}
+	std::sort( links.begin(), links.end(), []( const HoldLink& a, const HoldLink& b ) {
+		return a.Owner != b.Owner ? std::less<Watcher*>()( a.Owner, b.Owner ) : a.Move > b.Move;
+	} );
+	// By watch, its links not followed yet: from the first to the end of its own.
+	std::unordered_map<Watcher*, std::pair<size_t, size_t>> pending;
+	for ( size_t l = 0; l < links.size(); l++ ) {
+		auto range = pending.emplace( links[l].Owner, std::make_pair( l, l ) ).first;
+		range->second.second = l + 1;
+	}
+	std::vector<Watcher*> worklist;
+	if ( !pending.empty() )
+		for ( const auto& hold : holdFrom )
+			worklist.push_back( hold.first );
+	while ( !worklist.empty() ) {
+		Watcher* watcher = worklist.back();
+		worklist.pop_back();
+		auto range = pending.find( watcher );
+		if ( range == pending.end() )
+			continue;
+		const size_t from = holdFrom.find( watcher )->second;
+		for ( size_t& l = range->second.first; l < range->second.second && links[l].Move >= from;
+			  l++ ) {
+			const size_t directory = links[l].Directory;
+			if ( inHeldRange( directory ) )
 				continue;
-			const std::string& source = mEvents[i].Info.Filepath;
-			for ( size_t slash = source.find( FileSystem::getOSSlash(), 1 );
-				  slash != std::string::npos && slash + 1 < source.size();
-				  slash = source.find( FileSystem::getOSSlash(), slash + 1 ) ) {
-				auto directory = leftDirectories.find( source.substr( 0, slash ) );
-				if ( directory == leftDirectories.end() || inHeldRange( directory->second ) )
-					continue;
-				Watcher* owner = mEvents[directory->second].Owner;
-				auto hold = holdFrom.find( owner );
-				if ( hold == holdFrom.end() )
-					holdFrom.emplace( owner, directory->second );
-				else
-					hold->second = std::min( hold->second, directory->second );
-				held = true;
-			}
+			Watcher* owner = mEvents[directory].Owner;
+			auto hold = holdFrom.find( owner );
+			if ( hold == holdFrom.end() )
+				holdFrom.emplace( owner, directory );
+			else if ( directory < hold->second )
+				hold->second = directory;
+			worklist.push_back( owner );
 		}
 	}
 	// A complete move follows its destination, where its Moved event is delivered. Held, it
@@ -365,7 +441,9 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	kept.reserve( mEvents.size() );
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		size_t move = moves.MoveOf[i];
-		if ( inHeldRange( move == Moves::None ? i : move ) )
+		if ( inHeldRange( move == Moves::None ? i : move ) &&
+			 !( Moves::None != move && move != i && Actions::Delete == mEvents[i].ActionType &&
+				inStayingDirectory( mEvents[i].Info.Filepath ) ) )
 			mHeld.push_back( std::move( mEvents[i] ) );
 		else
 			kept.push_back( std::move( mEvents[i] ) );
@@ -401,32 +479,54 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 		return true;
 	// The paths without a final separator, as the snapshots list them.
 	auto key = []( const std::string& path ) { return path.substr( 0, directoryLength( path ) ); };
-	std::unordered_map<std::string, const FileInfo*>& tree = mScratch.TreeAtHold;
+	// Ordered: the entries below a directory are one range.
+	std::map<std::string, const FileInfo*>& tree = mScratch.TreeAtHold;
 	tree.clear();
 	// The entries renamed since, at their names before. The tree changes found point to them
 	// until the pass is delivered: kept for the pass, in a deque, where they do not move.
 	std::deque<FileInfo>& renamed = mScratch.RenamedAtHold;
 	for ( size_t i = begin; i < entries.size(); i++ )
 		tree[key( entries[i]->Filepath )] = entries[i];
+	// The entries below a directory, which go with it: those found after it was added were not
+	// there before, and those of a renamed one were below its old name.
+	std::vector<std::pair<std::string, const FileInfo*>>& below = mScratch.BelowAtHold;
+	auto takeBelow = [&]( const std::string& directory ) {
+		below.clear();
+		const std::string prefix( directory + FileSystem::getOSSlash() );
+		auto first = tree.lower_bound( prefix );
+		auto last = first;
+		for ( ; last != tree.end() && 0 == last->first.compare( 0, prefix.size(), prefix ); ++last )
+			below.emplace_back( last->first.substr( prefix.size() ), last->second );
+		tree.erase( first, last );
+	};
 	for ( size_t i = mEvents.size(); i-- > mPassReleased; ) {
 		const Event& event = mEvents[i];
 		if ( !inside( event ) )
 			continue;
+		const std::string path( key( event.Info.Filepath ) );
 		if ( Actions::Add == event.ActionType ) {
-			tree.erase( key( event.Info.Filepath ) );
+			tree.erase( path );
+			if ( event.Info.isDirectory() )
+				takeBelow( path );
 		} else if ( Actions::Delete == event.ActionType ) {
-			tree[key( event.Info.Filepath )] = &event.Info;
+			tree[path] = &event.Info;
 		} else {
 			// Renamed in its directory, the old name relative to it.
-			tree.erase( key( event.Info.Filepath ) );
+			tree.erase( path );
 			renamed.push_back( event.Info );
-			const std::string& path = event.Info.Filepath;
 			renamed.back().Filepath =
-				path.substr(
-					0, path.find_last_of( FileSystem::getOSSlash(), directoryLength( path ) - 1 ) +
-						   1 ) +
+				path.substr( 0, path.find_last_of( FileSystem::getOSSlash() ) + 1 ) +
 				event.OldFilename;
-			tree[key( renamed.back().Filepath )] = &renamed.back();
+			const std::string old( key( renamed.back().Filepath ) );
+			tree[old] = &renamed.back();
+			if ( !event.Info.isDirectory() )
+				continue;
+			takeBelow( path );
+			for ( const auto& entry : below ) {
+				renamed.push_back( *entry.second );
+				renamed.back().Filepath = old + FileSystem::getOSSlash() + entry.first;
+				tree[renamed.back().Filepath] = &renamed.back();
+			}
 		}
 	}
 	entries.resize( begin );
@@ -645,6 +745,34 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 	};
 	std::vector<bool> comparedTrees;
 
+	// The Adds by path, without a final separator: within one registration, a move's source path
+	// taken by another entry before the move's destination was reached. Its listener would get
+	// that entry first, then the move from where it is.
+	std::unordered_map<std::string, std::vector<size_t>>& addsAt = mScratch.AddsAt;
+	addsAt.clear();
+	bool addsIndexed = false;
+	auto sourceTaken = [&]( size_t deleted, size_t created ) {
+		const Event& source = mEvents[deleted];
+		if ( NULL == source.Owner || source.Owner != mEvents[created].Owner )
+			return false;
+		if ( !addsIndexed ) {
+			addsIndexed = true;
+			for ( size_t i = 0; i < mEvents.size(); i++ )
+				if ( Actions::Add == mEvents[i].ActionType && NULL != mEvents[i].Owner )
+					addsAt[mEvents[i].Info.Filepath.substr(
+							   0, directoryLength( mEvents[i].Info.Filepath ) )]
+						.push_back( i );
+		}
+		auto adds = addsAt.find(
+			source.Info.Filepath.substr( 0, directoryLength( source.Info.Filepath ) ) );
+		if ( adds == addsAt.end() )
+			return false;
+		for ( size_t add : adds->second )
+			if ( add < created && mEvents[add].Owner == source.Owner )
+				return true;
+		return false;
+	};
+
 	bool hasMove = false;
 	for ( const auto& pair : pairs ) {
 		const size_t created = pair.first;
@@ -669,7 +797,7 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			 !source.Info.sameInode( destination.Info ) ||
 			 ( source.Info.isRegularFile() &&
 			   ( source.Info.LinkCount != 1 || destination.Info.LinkCount != 1 ) ) ||
-			 !metadataMatches( source.Info, destination.Info ) )
+			 !metadataMatches( source.Info, destination.Info ) || sourceTaken( deleted, created ) )
 			continue;
 
 		moves.MoveOf[deleted] = created;
@@ -1245,7 +1373,7 @@ bool FileActionBatch::TreePlanner::plan() {
 	}
 	// Deletions first, each before its parent, then arrivals, parents first: the natural order,
 	// which the dependencies change where they must.
-	auto pathOrder = [this]( const TreeSide& side, const FileInfo* a, const FileInfo* b ) {
+	auto pathOrder = []( const TreeSide& side, const FileInfo* a, const FileInfo* b ) {
 		return a->Filepath.compare( side.RootLength, std::string::npos, b->Filepath,
 									side.RootLength, std::string::npos ) < 0;
 	};
@@ -1706,7 +1834,10 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	renamed.clear();
 	auto deliverOrdinary = [&]( size_t i ) {
 		const Event& event = mEvents[i];
-		if ( !renamed.empty() && Actions::Moved == event.ActionType )
+		// Known to the listener once delivered: not when canceled or superseded, decided before
+		// the callback, which may cancel what it has already received.
+		if ( !renamed.empty() && Actions::Moved == event.ActionType && !event.Canceled &&
+			 !event.Superseded )
 			renamed[i] = true;
 		if ( Actions::Add == event.ActionType && inside( addedTrees, event.Info.Filepath ) )
 			return;
@@ -1744,22 +1875,65 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 			 mEvents[i].Info.isDirectory() )
 			renames.push_back( i );
 	renamed.assign( renames.empty() ? 0 : mEvents.size(), false );
+	// The renames not delivered yet are undone, latest first: those held to the next pass come
+	// after this delivery's. Not delivered, whether it will be or was canceled, a rename is
+	// unknown to the listener. By position in that order: this delivery's, then the held ones.
+	std::vector<size_t>& heldRenames = mScratch.HeldRenames;
+	heldRenames.clear();
+	for ( size_t h = 0; h < mHeld.size(); h++ )
+		if ( Actions::Moved == mHeld[h].ActionType && mHeld[h].Info.isDirectory() )
+			heldRenames.push_back( h );
+	auto renameAt = [&]( size_t position ) -> const Event& {
+		return position < renames.size() ? mEvents[renames[position]]
+										 : mHeld[heldRenames[position - renames.size()]];
+	};
+	// The positions of the renames by the path they renamed to, in order: a source's parent
+	// directories are looked up, as many as its depth.
+	std::unordered_map<std::string, std::vector<size_t>>& renamesTo = mScratch.RenamesTo;
+	renamesTo.clear();
+	const size_t renameCount = renames.size() + heldRenames.size();
+	for ( size_t position = 0; position < renameCount; position++ ) {
+		const std::string& to = renameAt( position ).Info.Filepath;
+		renamesTo[to.substr( 0, directoryLength( to ) )].push_back( position );
+	}
 	auto knownSource = [&]( const Event& source ) {
 		std::string path( source.Info.Filepath );
-		for ( size_t r = renames.size(); r-- > 0; ) {
-			const Event& rename = mEvents[renames[r]];
-			if ( renamed[renames[r]] || rename.Watch != source.Watch )
-				continue;
-			const std::string& to = rename.Info.Filepath;
-			const size_t length = directoryLength( to );
-			if ( path.size() <= length || path[length] != FileSystem::getOSSlash() ||
-				 path.compare( 0, length, to, 0, length ) != 0 )
-				continue;
+		// Each rename undone is earlier than the one before it.
+		for ( size_t before = renameCount; !renamesTo.empty(); ) {
+			size_t latest = Moves::None;
+			size_t length = 0;
+			for ( size_t slash = path.find( FileSystem::getOSSlash(), 1 );
+				  slash != std::string::npos;
+				  slash = path.find( FileSystem::getOSSlash(), slash + 1 ) ) {
+				auto found = renamesTo.find( path.substr( 0, slash ) );
+				if ( found == renamesTo.end() )
+					continue;
+				for ( size_t k = found->second.size(); k-- > 0; ) {
+					const size_t position = found->second[k];
+					const Event& rename = renameAt( position );
+					// In the source's registration: kqueue reports each directory of one with its
+					// own ID.
+					if ( position >= before ||
+						 ( position < renames.size() && renamed[renames[position]] ) ||
+						 ( rename.Owner || source.Owner ? rename.Owner != source.Owner
+														: rename.Watch != source.Watch ) )
+						continue;
+					if ( Moves::None == latest || position > latest ) {
+						latest = position;
+						length = slash;
+					}
+					break;
+				}
+			}
+			if ( Moves::None == latest )
+				break;
+			const Event& rename = renameAt( latest );
 			const std::string from( !rename.OldFilename.empty() &&
 											rename.OldFilename[0] == FileSystem::getOSSlash()
 										? rename.OldFilename
 										: rename.Directory + rename.OldFilename );
 			path = from.substr( 0, directoryLength( from ) ) + path.substr( length );
+			before = latest;
 		}
 		return path;
 	};
@@ -2094,11 +2268,16 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 				process( i );
 				continue;
 			}
+			// Split into its halves: a moved tree's changes delivered meanwhile do not report its
+			// source leaving again.
 			if ( move != i ) {
-				if ( !converted[move] )
+				if ( !converted[move] ) {
 					deliverEvent( listener, i );
+					state[move] = MoveState::Broken;
+				}
 				continue;
 			}
+			state[i] = MoveState::Broken;
 			deliverEvent( listener, i );
 			skipped.forEach( i, [&]( size_t j ) { deliverEvent( listener, j ); } );
 		}

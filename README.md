@@ -207,7 +207,10 @@ kept, but events of watches with the option can be delivered after later events 
 * Polling backends, with the option: `Add` and `Delete` events wait until the end of the polling
   pass. A `Delete` in a watch scanned after another watch with the option waits one more pass, with
   the later events of its watch, including the moves into it, since that other watch may only see
-  the destination on its next scan.
+  the destination on its next scan. A move that waits keeps the directories its source was in, if
+  they were deleted or moved in the same pass, waiting with it, with the later events of their
+  watches, which may be watches scanned earlier. A move's source can wait once more with its
+  destination; no event waits more than two extra passes.
 * Windows, with the option: `Add` and `Delete` events wait up to 100 ms.
 * inotify, with or without the option: the kernel queues the two halves of a rename one after the
   other, so efsw can read the source before its destination is queued. A batch of events holding a
