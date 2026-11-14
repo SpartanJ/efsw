@@ -341,6 +341,8 @@ class FileActionBatch {
 		std::vector<const FileInfo*> Contents;
 		std::vector<MoveState> State;
 		std::vector<bool> Converted;
+		std::vector<size_t> Renames;
+		std::vector<bool> Renamed;
 		std::unordered_map<Watcher*, WaitingEvents> Waiting;
 		size_t WaitingOwners{ 0 };
 		std::vector<std::pair<const std::string*, size_t>> Sources;

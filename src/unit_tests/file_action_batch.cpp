@@ -1306,6 +1306,32 @@ UTEST( FileActionBatch, DeletedDirectoryWaitsForAHeldMoveOutOfIt ) {
 	EXPECT_EQ( 3u, listener.getEventCount() );
 }
 
+// A directory moved to a watch scanned first, out of a directory its own watch found renamed:
+// the move comes before that rename, so its source is named as the listener knows it, under the
+// directory's old name.
+UTEST( FileActionBatch, MoveBeforeTheRenameOfItsSourceDirectory ) {
+	START_BATCH_TEST();
+	efsw::FileInfo renamedDirectory = file.make( "n113", true );
+	efsw::FileInfo moved = file.make( "n96", true );
+	first.report( "/c/", "n96", efsw::Actions::Add, moved );
+	second.report( "/b/", "n128", efsw::Actions::Moved, renamedDirectory );
+	second.Next.back().Old = "n113";
+	second.report( "/b/n128/n83/", "n96", efsw::Actions::Delete, moved );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "n96" );
+	const std::string known = slashes( "/b/n113/n83/n96" );
+	const std::string& old = std::get<2>( events[0] );
+	// Absolute, with a drive on Windows.
+	EXPECT_TRUE( old.size() >= known.size() &&
+				 0 == old.compare( old.size() - known.size(), known.size(), known ) );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[1] ) );
+	EXPECT_TRUE( std::get<1>( events[1] ) == "n128" );
+}
+
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.

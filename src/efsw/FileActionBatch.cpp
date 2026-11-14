@@ -1684,8 +1684,15 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	};
 
 	// An event that is not a half of a move.
+	// Filled when there are moves: the native directory renames, and whether each was delivered.
+	std::vector<size_t>& renames = mScratch.Renames;
+	renames.clear();
+	std::vector<bool>& renamed = mScratch.Renamed;
+	renamed.clear();
 	auto deliverOrdinary = [&]( size_t i ) {
 		const Event& event = mEvents[i];
+		if ( !renamed.empty() && Actions::Moved == event.ActionType )
+			renamed[i] = true;
 		if ( Actions::Add == event.ActionType && inside( addedTrees, event.Info.Filepath ) )
 			return;
 		deliverEvent( listener, i );
@@ -1715,6 +1722,32 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	// reported the entry deleted, so they are reported as Adds, and their sources not at all.
 	std::vector<bool>& converted = mScratch.Converted;
 	converted.assign( mEvents.size(), false );
+	// The directory renames a watch found itself, in delivery order. A move delivered before one
+	// that renamed a directory holding its source gives the source at the name the listener knows.
+	for ( size_t i = 0; i < mEvents.size(); i++ )
+		if ( Actions::Moved == mEvents[i].ActionType && Moves::None == moves->MoveOf[i] &&
+			 mEvents[i].Info.isDirectory() )
+			renames.push_back( i );
+	renamed.assign( renames.empty() ? 0 : mEvents.size(), false );
+	auto knownSource = [&]( const Event& source ) {
+		std::string path( source.Info.Filepath );
+		for ( size_t r = renames.size(); r-- > 0; ) {
+			const Event& rename = mEvents[renames[r]];
+			if ( renamed[renames[r]] || rename.Watch != source.Watch )
+				continue;
+			const std::string& to = rename.Info.Filepath;
+			const size_t length = directoryLength( to );
+			if ( path.size() <= length || path[length] != FileSystem::getOSSlash() ||
+				 path.compare( 0, length, to, 0, length ) != 0 )
+				continue;
+			const std::string from( !rename.OldFilename.empty() &&
+											rename.OldFilename[0] == FileSystem::getOSSlash()
+										? rename.OldFilename
+										: rename.Directory + rename.OldFilename );
+			path = from.substr( 0, directoryLength( from ) ) + path.substr( length );
+		}
+		return path;
+	};
 	for ( size_t i = 0; i < mEvents.size(); i++ )
 		if ( moves->MoveOf[i] == i && mEvents[moves->SourceOf[i]].Superseded )
 			converted[i] = true;
@@ -1911,7 +1944,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 				const Event& source = mEvents[moves->SourceOf[i]];
 				target->handleFileAction(
 					destination.Watch, destination.Directory, destination.Filename, Actions::Moved,
-					oldPath.empty() ? canonicalSource( source.Info.Filepath ) : oldPath );
+					oldPath.empty() ? canonicalSource( knownSource( source ) ) : oldPath );
 				// What changed inside a moved directory, unless a listener removed its
 				// registration meanwhile.
 				auto followers = moves->Followers.find( i );
