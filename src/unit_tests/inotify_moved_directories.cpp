@@ -5,17 +5,36 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
+#include <dirent.h>
 #include <efsw/FileWatcherInotify.hpp>
 #include <efsw/Lock.hpp>
+#include <fstream>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <vector>
 
 using namespace efsw_test;
 
 namespace {
+
+/// Polls a condition until it holds or two seconds pass.
+bool pollUntil( const std::function<bool()>& condition ) {
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( 2 );
+	while ( !condition() ) {
+		if ( std::chrono::steady_clock::now() > deadline )
+			return false;
+		std::this_thread::yield();
+	}
+	return true;
+}
 
 /// An inotify watcher whose action lock the test can hold, to keep the event thread waiting.
 class LockableWatcher : public efsw::FileWatcherInotify {
@@ -30,16 +49,40 @@ class LockableWatcher : public efsw::FileWatcherInotify {
 
 	efsw::Mutex& actionLock() { return mInitLock; }
 
-	/// Waits until the event thread has read every queued event: it then only parses them before
-	/// taking the action lock.
-	bool waitUntilRead() {
-		for ( int i = 0; i < 2000; i++ ) {
-			int pending = 0;
-			if ( ioctl( mFD, FIONREAD, &pending ) == 0 && pending == 0 )
-				return true;
-			sleepMs( 1 );
+	/// Waits until the event thread has read every queued event, then until it waits for the
+	/// action lock, which the caller holds.
+	bool waitUntilBlocked() {
+		if ( !pollUntil( [this] {
+				 int pending = 0;
+				 return ioctl( mFD, FIONREAD, &pending ) == 0 && pending == 0;
+			 } ) )
+			return false;
+		return pollUntil( [] { return anotherThreadWaitsOnALock(); } );
+	}
+
+  private:
+	/// Whether a thread of the process, other than the caller, sleeps on a futex: the event
+	/// thread, the only other one, waiting for the lock. Where the kernel does not tell, assumed.
+	static bool anotherThreadWaitsOnALock() {
+		const long self = syscall( SYS_gettid );
+		DIR* tasks = opendir( "/proc/self/task" );
+		if ( !tasks )
+			return true;
+		bool waits = false;
+		bool known = false;
+		while ( dirent* task = readdir( tasks ) ) {
+			if ( task->d_name[0] == '.' || atol( task->d_name ) == self )
+				continue;
+			std::ifstream file( std::string( "/proc/self/task/" ) + task->d_name + "/wchan" );
+			std::string channel;
+			std::getline( file, channel );
+			if ( !channel.empty() && channel != "0" )
+				known = true;
+			if ( channel.find( "futex" ) != std::string::npos )
+				waits = true;
 		}
-		return false;
+		closedir( tasks );
+		return waits || !known;
 	}
 };
 
@@ -52,19 +95,41 @@ class PathListener : public efsw::FileWatchListener {
 		std::string Path;
 	};
 
-	std::mutex Lock;
-	std::vector<Event> Events;
-
 	void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& filename,
 						   efsw::Action action, const std::string& ) override {
-		std::lock_guard<std::mutex> lock( Lock );
-		Events.push_back( { id, action, dir + filename } );
+		std::lock_guard<std::mutex> lock( mLock );
+		mEvents.push_back( { id, action, dir + filename } );
+		mChanged.notify_all();
 	}
 
 	std::vector<Event> events() {
-		std::lock_guard<std::mutex> lock( Lock );
-		return Events;
+		std::lock_guard<std::mutex> lock( mLock );
+		return mEvents;
 	}
+
+	/// Waits for an event of the action on the path.
+	bool waitFor( efsw::Action action, const std::string& path ) {
+		std::unique_lock<std::mutex> lock( mLock );
+		return mChanged.wait_for( lock, std::chrono::seconds( 2 ), [&] {
+			for ( const Event& event : mEvents )
+				if ( event.Action == action && event.Path == path )
+					return true;
+			return false;
+		} );
+	}
+
+	/// Creates a file in a watched directory and waits for its Add: the events queued before it
+	/// were handled, since inotify reports them in order.
+	bool settle( const std::string& directory ) {
+		const std::string marker = directory + "/marker" + std::to_string( mMarkers++ );
+		return createFile( marker, "" ) && waitFor( efsw::Actions::Add, marker );
+	}
+
+  private:
+	std::mutex mLock;
+	std::condition_variable mChanged;
+	std::vector<Event> mEvents;
+	int mMarkers{ 0 };
 };
 
 const std::vector<efsw::WatcherOption> crossMoves = {
@@ -89,9 +154,8 @@ UTEST( InotifyMovedDirectories, NoHandoverToARemovedRegistration ) {
 	PathListener listener;
 	{
 		LockableWatcher watcher;
-		const efsw::WatchID a = watcher.addWatch( source, &listener, true, crossMoves );
+		ASSERT_GT( watcher.addWatch( source, &listener, true, crossMoves ), 0 );
 		const efsw::WatchID c = watcher.addWatch( destination, &listener, true, crossMoves );
-		ASSERT_GT( a, 0 );
 		ASSERT_GT( c, 0 );
 		watcher.watch();
 		{
@@ -99,26 +163,17 @@ UTEST( InotifyMovedDirectories, NoHandoverToARemovedRegistration ) {
 			ASSERT_EQ( 0,
 					   std::rename( ( source + "/d" ).c_str(), ( destination + "/d" ).c_str() ) );
 			// The event thread reads the move, finds both registrations, and waits for the lock.
-			ASSERT_TRUE( watcher.waitUntilRead() );
-			sleepMs( 50 );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
 			watcher.removeWatch( c );
 		}
-		sleepMs( 200 );
+		// The source registration lost the directory.
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Delete, source + "/d" ) );
 		ASSERT_TRUE( createFile( destination + "/d/s/late.txt", "x" ) );
-		sleepMs( 300 );
+		ASSERT_TRUE( listener.settle( source ) );
 	}
-	bool sourceDelete = false;
-	size_t late = 0;
-	for ( const PathListener::Event& event : listener.events() ) {
-		// Neither registration watches the directory any more.
-		if ( event.Path.find( "late.txt" ) != std::string::npos )
-			late++;
-		if ( event.Action == efsw::Actions::Delete && event.Path == source + "/d" )
-			sourceDelete = true;
-	}
-	EXPECT_EQ( 0u, late );
-	// The source registration lost the directory.
-	EXPECT_TRUE( sourceDelete );
+	// Neither registration watches the directory any more.
+	for ( const PathListener::Event& event : listener.events() )
+		EXPECT_EQ( std::string::npos, event.Path.find( "late.txt" ) );
 	removeDirectory( root );
 }
 
@@ -141,36 +196,27 @@ UTEST( InotifyMovedDirectories, RenamedThenMovedAway ) {
 		ASSERT_GT( a, 0 );
 		ASSERT_GT( watcher.addWatch( second, &listener, true, {} ), 0 );
 		watcher.watch();
+		// Reported once its watch is installed.
 		ASSERT_TRUE( createDirectory( first + "/d" ) );
-		sleepMs( 200 );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, first + "/d" ) );
 		{
 			// The event thread waits for the lock to report an Add, while both moves are queued
-			// behind it, to be read together.
+			// behind it, to be read together. One event, so it has nothing left to read.
 			efsw::Lock lock( watcher.actionLock() );
-			// One event, so the thread blocks with nothing left to read.
 			ASSERT_TRUE( createDirectory( first + "/wake" ) );
-			ASSERT_TRUE( watcher.waitUntilRead() );
-			sleepMs( 50 );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
 			ASSERT_EQ( 0, std::rename( ( first + "/d" ).c_str(), ( first + "/e" ).c_str() ) );
 			ASSERT_EQ( 0, std::rename( ( first + "/e" ).c_str(), ( second + "/e" ).c_str() ) );
 		}
-		sleepMs( 200 );
+		ASSERT_TRUE( listener.settle( second ) );
 		ASSERT_TRUE( createFile( second + "/e/x.txt", "x" ) );
-		sleepMs( 300 );
-	}
-	size_t inFirst = 0;
-	bool inSecond = false;
-	for ( const PathListener::Event& event : listener.events() ) {
-		if ( event.Path.find( "x.txt" ) == std::string::npos )
-			continue;
-		if ( event.ID == a )
-			inFirst++;
-		else if ( event.Path == second + "/e/x.txt" )
-			inSecond = true;
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, second + "/e/x.txt" ) );
+		ASSERT_TRUE( listener.settle( first ) );
 	}
 	// The first registration reports nothing inside the directory that left it.
-	EXPECT_EQ( 0u, inFirst );
-	EXPECT_TRUE( inSecond );
+	for ( const PathListener::Event& event : listener.events() )
+		if ( event.ID == a )
+			EXPECT_EQ( std::string::npos, event.Path.find( "x.txt" ) );
 	removeDirectory( root );
 }
 
