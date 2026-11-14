@@ -1,6 +1,8 @@
 ﻿#include "test_util.hpp"
 #include "utest.h"
 
+#include <map>
+
 using namespace efsw_test;
 
 UTEST( Add, SingleFile ) {
@@ -119,4 +121,66 @@ UTEST( Add, NonRecursiveIgnoresNewSubdirectoryContents ) {
 		fileWatcher.removeWatch( subId );
 	fileWatcher.removeWatch( watchId );
 	removeDirectory( testDir );
+}
+
+namespace {
+
+/// Records the watch ID of each Add, by file name.
+class IdListener : public efsw::FileWatchListener {
+  public:
+	void handleFileAction( efsw::WatchID id, const std::string&, const std::string& filename,
+						   efsw::Action action, const std::string& ) override {
+		if ( action != efsw::Actions::Add )
+			return;
+		std::lock_guard<std::mutex> lock( mLock );
+		mIds[filename] = id;
+		mChanged.notify_all();
+	}
+
+	/// The ID the Add of the file came with, or 0 if none came within three seconds.
+	efsw::WatchID idOf( const std::string& filename ) {
+		std::unique_lock<std::mutex> lock( mLock );
+		mChanged.wait_for( lock, std::chrono::seconds( 3 ),
+						   [&] { return mIds.count( filename ) > 0; } );
+		auto found = mIds.find( filename );
+		return found != mIds.end() ? found->second : 0;
+	}
+
+  private:
+	std::mutex mLock;
+	std::condition_variable mChanged;
+	std::map<std::string, efsw::WatchID> mIds;
+};
+
+} // namespace
+
+// An event deep inside a recursive registration comes with the ID addWatch() returned for it,
+// whichever directory of it reported the event: a listener tells its registrations apart by it.
+UTEST( Add, EventsInSubdirectoriesHaveTheRegistrationId ) {
+	const std::string root = getTemporaryDirectory();
+	const std::string first = root + "/first";
+	const std::string second = root + "/second";
+	EXPECT_TRUE( createDirectory( root ) );
+	for ( const std::string& directory :
+		  { first, first + "/a", first + "/a/b", second, second + "/c", second + "/c/d" } )
+		EXPECT_TRUE( createDirectory( directory ) );
+
+	IdListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	const efsw::WatchID firstId = fileWatcher.addWatch( first, &listener, true );
+	const efsw::WatchID secondId = fileWatcher.addWatch( second, &listener, true );
+	EXPECT_TRUE( firstId > 0 );
+	EXPECT_TRUE( secondId > 0 );
+	fileWatcher.watch();
+
+	EXPECT_TRUE( createFile( first + "/a/b/in_first.txt", "x" ) );
+	EXPECT_TRUE( createFile( second + "/c/d/in_second.txt", "x" ) );
+	EXPECT_TRUE( createFile( second + "/c/in_second_top.txt", "x" ) );
+	EXPECT_EQ( firstId, listener.idOf( "in_first.txt" ) );
+	EXPECT_EQ( secondId, listener.idOf( "in_second.txt" ) );
+	EXPECT_EQ( secondId, listener.idOf( "in_second_top.txt" ) );
+
+	fileWatcher.removeWatch( first );
+	fileWatcher.removeWatch( second );
+	removeDirectory( root );
 }

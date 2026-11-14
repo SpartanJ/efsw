@@ -93,13 +93,15 @@ void WatcherGeneric::handleAction( const std::string& directory, const std::stri
 								   const FileInfo& fileInfo ) {
 	if ( Retired )
 		return;
+	// A kqueue fallback watch reports with its registration's ID, which addWatch() returned.
+	const WatchID id = SharedActionOwner ? SharedActionOwner->ID : ID;
 	if ( mCollectActions ) {
 		FileActionBatch* batch = SharedActionBatch ? SharedActionBatch : &mActionBatch;
-		batch->add( ID, directory, filename, action, oldFilename, fileInfo,
+		batch->add( id, directory, filename, action, oldFilename, fileInfo,
 					SharedActionBatch ? Listener : NULL,
 					SharedActionBatch ? ( SharedActionOwner ? SharedActionOwner : this ) : NULL );
 	} else {
-		Listener->handleFileAction( ID, directory, filename, action, oldFilename );
+		Listener->handleFileAction( id, directory, filename, action, oldFilename );
 	}
 }
 

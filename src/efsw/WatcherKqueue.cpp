@@ -372,11 +372,14 @@ void WatcherKqueue::handleAction( const std::string& filename, efsw::Action acti
 	if ( rootWatch->mCollectActions ) {
 		FileActionBatch* shared = rootWatch->SharedActionBatch;
 		FileActionBatch* batch = shared ? shared : &rootWatch->mActionBatch;
-		batch->add( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
+		// With the registration's ID, which addWatch() returned: each directory of it has its
+		// own ID, numbered within the registration, which means nothing to the listener.
+		batch->add( rootWatch->ID, Directory, FileSystem::fileNameFromPath( filename ), action,
 					FileSystem::fileNameFromPath( oldFilename ), fileInfo,
 					shared ? Listener : NULL, shared ? rootWatch : NULL );
 	} else {
-		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
+		Listener->handleFileAction( rootWatch->ID, Directory,
+									FileSystem::fileNameFromPath( filename ), action,
 									FileSystem::fileNameFromPath( oldFilename ) );
 	}
 }
