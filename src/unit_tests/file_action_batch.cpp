@@ -1208,6 +1208,30 @@ UTEST( FileActionBatch, HeldMoveIsFollowedByAnAddInsideIt ) {
 	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Add, "new" ) );
 }
 
+// A Delete inside a directory, held to the next pass, where the directory moves to another
+// watch: it happened before the move, and is delivered before it, at the path it had.
+UTEST( FileActionBatch, HeldDeleteInsideADirectoryMovedLater ) {
+	START_BATCH_TEST();
+	efsw::FileInfo directory = file.make( "d", true );
+	efsw::FileInfo gone = file.make( "d/gone" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	second.report( "/s/", "unrelated", efsw::Actions::Delete, unrelated );
+	second.report( "/s/d/", "gone", efsw::Actions::Delete, gone );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.report( "/s/", "d", efsw::Actions::Delete, directory );
+	third.report( "/t/", "d", efsw::Actions::Add, directory );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Delete, "gone" ) );
+	EXPECT_TRUE( std::get<0>( events[1] ) == efsw::Actions::Delete );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "d" ) );
+}
+
 // Two held moves compared in one pass, each with renames inside it since it arrived, the first
 // with an entry renamed before the move too: the renamed entries of both comparisons stay valid
 // until the pass is delivered.

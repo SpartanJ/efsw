@@ -698,7 +698,12 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			if ( Moves::None != moves.MoveOf[i] )
 				continue;
 			if ( Actions::Delete == mEvents[i].ActionType ) {
-				moves.MoveOf[i] = sourceOwners.of( mEvents[i].Info.Filepath );
+				// Not a Delete held from the previous pass inside a directory whose own Delete
+				// came in this one: it happened before the directory left, and comes before it.
+				const size_t move = sourceOwners.of( mEvents[i].Info.Filepath );
+				if ( Moves::None == move || i >= mPassReleased ||
+					 moves.SourceOf[move] < mPassReleased )
+					moves.MoveOf[i] = move;
 			} else if ( Actions::Add == mEvents[i].ActionType ) {
 				// Not for a move held from the previous pass, compared with the tree it arrived
 				// with: what its watch added inside it since follows it.
