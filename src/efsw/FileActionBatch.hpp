@@ -6,6 +6,8 @@
 #include <efsw/efsw.hpp>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace efsw {
@@ -105,7 +107,141 @@ class FileActionBatch {
 		bool paired() const { return Added && Deleted; }
 	};
 
-	typedef std::unordered_map<FileIdentity, Halves, FileIdentityHash> HalvesMap;
+	/// The Adds and Deletes of an identity, candidate halves of a move: how many of each, and
+	/// the position of the last one.
+	struct Candidates {
+		size_t Added{ 0 };
+		size_t Deleted{ 0 };
+		size_t Created{ 0 };
+		size_t Removed{ 0 };
+	};
+
+	/// Values by identity, in a hash table kept from pass to pass: clearing it keeps its memory,
+	/// so that inserting allocates nothing until it holds more identities than before. Visited
+	/// in insertion order.
+	template <typename Value> class IdentityTable {
+	  public:
+		void clear() {
+			for ( size_t slot : mUsed )
+				mSlots[slot].Used = false;
+			mUsed.clear();
+		}
+
+		bool empty() const { return mUsed.empty(); }
+
+		Value& operator[]( const FileIdentity& identity ) {
+			if ( 2 * ( mUsed.size() + 1 ) > mSlots.size() )
+				grow();
+			size_t slot = slotOf( identity );
+			while ( mSlots[slot].Used ) {
+				if ( mSlots[slot].Key == identity )
+					return mSlots[slot].Item;
+				slot = ( slot + 1 ) & ( mSlots.size() - 1 );
+			}
+			mSlots[slot].Used = true;
+			mSlots[slot].Key = identity;
+			mSlots[slot].Item = Value();
+			mUsed.push_back( slot );
+			return mSlots[slot].Item;
+		}
+
+		/// @return The identity's value, or NULL.
+		const Value* find( const FileIdentity& identity ) const {
+			if ( mSlots.empty() )
+				return NULL;
+			for ( size_t slot = slotOf( identity ); mSlots[slot].Used;
+				  slot = ( slot + 1 ) & ( mSlots.size() - 1 ) )
+				if ( mSlots[slot].Key == identity )
+					return &mSlots[slot].Item;
+			return NULL;
+		}
+
+		/// Calls visit with each value, in insertion order.
+		template <typename Visit> void forEach( Visit visit ) const {
+			for ( size_t slot : mUsed )
+				visit( mSlots[slot].Item );
+		}
+
+	  private:
+		struct Slot {
+			FileIdentity Key;
+			Value Item;
+			bool Used{ false };
+		};
+
+		/// A power of two of slots, at most half used.
+		std::vector<Slot> mSlots;
+		/// The slots in use, in insertion order.
+		std::vector<size_t> mUsed;
+
+		/// Fibonacci hashing: spreads identities whose hashes share their low bits.
+		size_t slotOf( const FileIdentity& identity ) const {
+			const unsigned long long mixed =
+				static_cast<unsigned long long>( FileIdentityHash()( identity ) ) *
+				0x9E3779B97F4A7C15ull;
+			return static_cast<size_t>( mixed >> 32 ) & ( mSlots.size() - 1 );
+		}
+
+		void grow() {
+			std::vector<Slot> old;
+			old.swap( mSlots );
+			mSlots.resize( old.empty() ? 64 : old.size() * 2 );
+			std::vector<size_t> used;
+			used.swap( mUsed );
+			for ( size_t slot : used ) {
+				( *this )[old[slot].Key] = old[slot].Item;
+			}
+		}
+	};
+
+	/// Values in lists, one list for each position that has one: the lists of every position
+	/// share two arrays instead of a container each, and keep the order of append().
+	template <typename Value> class ListsByPosition {
+	  public:
+		static constexpr size_t None = static_cast<size_t>( -1 );
+
+		void reset( size_t positions ) {
+			const size_t none = None;
+			mHead.assign( positions, none );
+			mTail.assign( positions, none );
+			mLinks.clear();
+		}
+
+		void append( size_t position, const Value& value ) {
+			const size_t link = mLinks.size();
+			const size_t none = None;
+			mLinks.push_back( std::make_pair( value, none ) );
+			if ( None == mTail[position] )
+				mHead[position] = link;
+			else
+				mLinks[mTail[position]].second = link;
+			mTail[position] = link;
+		}
+
+		/// Calls visit with the values of a position's list, in order.
+		template <typename Visit> void forEach( size_t position, Visit visit ) const {
+			for ( size_t link = mHead[position]; None != link; link = mLinks[link].second )
+				visit( mLinks[link].first );
+		}
+
+		/// Empties a position's list.
+		void drop( size_t position ) { mHead[position] = mTail[position] = None; }
+
+	  private:
+		std::vector<size_t> mHead;
+		std::vector<size_t> mTail;
+		std::vector<std::pair<Value, size_t>> mLinks;
+	};
+
+	/// A registration's events waiting for a move, in order, from Front on.
+	struct WaitingEvents {
+		std::vector<size_t> Events;
+		size_t Front{ 0 };
+
+		bool empty() const { return Front == Events.size(); }
+	};
+
+	enum class MoveState : unsigned char { Unresolved, Delivered, Broken };
 
 	/// A change found by comparing the trees of a directory move, delivered after its Moved
 	/// event. Points into the snapshots or the source evidence, which outlive the delivery: a
@@ -165,10 +301,65 @@ class FileActionBatch {
 	/// Events before this position were held by the previous pass, and are not held again.
 	size_t mReleased{ 0 };
 
-	void addHalves( HalvesMap& halves, size_t begin ) const;
+	/// Containers reused from one pass to the next, cleared before each use, so that a pass only
+	/// allocates when it holds more than the ones before. They keep the memory of the largest
+	/// pass since they were last released: see releaseScratch().
+	static constexpr size_t RetainedEvents = 1024;
+	struct Scratch {
+		/// The halves seen for each identity of the pass.
+		IdentityTable<Halves> HalvesSeen;
+		std::vector<bool> Rescanned;
+		/// Identities of unpaired Adds, sorted when looked up.
+		std::vector<FileIdentity> Later;
+		IdentityTable<Candidates> MoveCandidates;
+		std::vector<std::pair<size_t, size_t>> Pairs;
+		// followEnclosingMoves().
+		std::vector<size_t> After;
+		std::vector<size_t> FollowerStart;
+		std::vector<size_t> Followers;
+		std::vector<size_t> Order;
+		std::vector<size_t> Stack;
+		std::vector<size_t> Position;
+		std::vector<size_t> Remapped;
+		std::vector<Event> Events;
+		// deliver().
+		std::unordered_set<std::string> AddedTrees;
+		std::unordered_set<std::string> DeletedTrees;
+		std::vector<const FileInfo*> Contents;
+		std::vector<MoveState> State;
+		std::vector<bool> Converted;
+		std::unordered_map<Watcher*, WaitingEvents> Waiting;
+		size_t WaitingOwners{ 0 };
+		std::vector<std::pair<const std::string*, size_t>> Sources;
+		std::vector<size_t> SortedMoves;
+		std::vector<size_t> ResolvedUntil;
+		std::vector<std::pair<size_t, size_t>> MovesOut;
+		std::unordered_map<std::string, std::string> CanonicalDirectories;
+		ListsByPosition<Watcher*> BlockedBy;
+		std::vector<Watcher*> Unblocked;
+		std::vector<size_t> Rest;
+		std::vector<bool> InRest;
+		std::vector<bool> Unresolved;
+		ListsByPosition<size_t> Skipped;
+	};
+	Scratch mScratch;
+	Moves mMoves;
+
+	/// The most events of a pass since the reused containers were last released.
+	size_t mLargestPass{ 0 };
+
+	/// Releases the reused containers, and the events' spare capacity, once a pass is much
+	/// smaller than the largest one since, and that one held more than RetainedEvents: a burst
+	/// does not keep its memory, and passes of a steady size reuse it.
+	void releaseScratch( size_t events );
+
+	void addHalves( size_t begin );
+
+	/// @return The halves seen for an identity of the pass.
+	const Halves& halvesOf( const FileIdentity& identity ) const;
 
 	/// @return False when the batch has no move.
-	bool matchMoves( Moves& moves ) const;
+	bool matchMoves( Moves& moves );
 
 	/// Places the events that refer to the tree under a moved directory's destination, collected
 	/// before its move, right after that move: a backend that scans deeper directories first
@@ -200,12 +391,11 @@ class FileActionBatch {
 	void addSegment( Watcher* owner, size_t begin );
 
 	/// Scans again the earlier watches whose snapshot still lists the source of a later Add.
-	/// @return For each segment, whether its watch was scanned again.
-	std::vector<bool> rescanMoveSources( HalvesMap& halves );
+	/// Sets, for each segment, whether its watch was scanned again, in mScratch.Rescanned.
+	void rescanMoveSources();
 
 	/// @return True when events were held.
-	bool holdMoveSources( const HalvesMap& halves, const std::vector<bool>& rescanned,
-						  const Moves& moves );
+	bool holdMoveSources( const Moves& moves );
 };
 
 } // namespace efsw

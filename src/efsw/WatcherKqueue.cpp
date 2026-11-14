@@ -521,7 +521,7 @@ bool WatcherKqueue::collectTree( const std::string& directory,
 	return true;
 }
 
-bool WatcherKqueue::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
+bool WatcherKqueue::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
 	if ( mDirSnap.hasAny( identities ) )
 		return true;
 	for ( const auto& child : mWatches ) {

@@ -41,9 +41,9 @@ class FakeWatch : public efsw::Watcher {
 
 	bool collectsSharedActions() const override { return true; }
 
-	bool snapshotHasAny( const std::set<efsw::FileIdentity>& identities ) const override {
+	bool snapshotHasAny( const std::vector<efsw::FileIdentity>& identities ) const override {
 		for ( const efsw::FileIdentity& identity : Snapshot )
-			if ( identities.count( identity ) )
+			if ( std::binary_search( identities.begin(), identities.end(), identity ) )
 				return true;
 		return false;
 	}

@@ -3,7 +3,6 @@
 
 #include <efsw/FileInfo.hpp>
 #include <efsw/efsw.hpp>
-#include <set>
 #include <vector>
 
 namespace efsw {
@@ -24,9 +23,9 @@ class Watcher {
 	virtual bool collectsSharedActions() const { return false; }
 
 	/// Polling backends: whether the watch's last snapshot lists a file with one of these
-	/// identities, meaning that the watch has not yet seen that the file moved away. This is a
-	/// lookup in memory, without file system access.
-	virtual bool snapshotHasAny( const std::set<FileIdentity>& ) const { return false; }
+	/// identities, given sorted, meaning that the watch has not yet seen that the file moved
+	/// away. This is a lookup in memory, without file system access.
+	virtual bool snapshotHasAny( const std::vector<FileIdentity>& ) const { return false; }
 
 	/// Polling backends: the entries of the tree below directory, as the watch's snapshots list
 	/// them, at every depth. Pointers into the snapshots, valid until the watch scans again or is

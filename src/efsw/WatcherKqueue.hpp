@@ -75,7 +75,7 @@ class WatcherKqueue : public Watcher {
 
 	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
 
-	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const override;
+	bool snapshotHasAny( const std::vector<FileIdentity>& identities ) const override;
 
 	bool collectTree( const std::string& directory,
 					  std::vector<const FileInfo*>* entries ) override;

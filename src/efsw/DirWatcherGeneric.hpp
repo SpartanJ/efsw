@@ -33,7 +33,7 @@ class DirWatcherGeneric {
 
 	/// @return True when the snapshot of this directory or a watched subdirectory lists a file
 	/// with one of the identities.
-	bool snapshotHasAny( const std::set<FileIdentity>& identities ) const;
+	bool snapshotHasAny( const std::vector<FileIdentity>& identities ) const;
 
 	void addChildren( bool reportNewFiles = true );
 

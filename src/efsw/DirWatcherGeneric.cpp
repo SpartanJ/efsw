@@ -418,7 +418,7 @@ void DirWatcherGeneric::takeSnapshots( std::vector<FileInfoList>& lists ) {
 		child.second->takeSnapshots( lists );
 }
 
-bool DirWatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
+bool DirWatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
 	if ( DirSnap.hasAny( identities ) )
 		return true;
 	for ( const auto& directory : Directories ) {

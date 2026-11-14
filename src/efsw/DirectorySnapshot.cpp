@@ -42,9 +42,10 @@ void removeUnsupportedFiles( FileInfoList& files ) {
 
 DirectorySnapshot::DirectorySnapshot() {}
 
-bool DirectorySnapshot::hasAny( const std::set<FileIdentity>& identities ) const {
+bool DirectorySnapshot::hasAny( const std::vector<FileIdentity>& identities ) const {
 	for ( const FileInfo& file : Files ) {
-		if ( file.Inode != 0 && identities.count( file.identity() ) )
+		if ( file.Inode != 0 &&
+			 std::binary_search( identities.begin(), identities.end(), file.identity() ) )
 			return true;
 	}
 	return false;

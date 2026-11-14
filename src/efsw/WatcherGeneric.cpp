@@ -50,7 +50,7 @@ void WatcherGeneric::watchDir( std::string dir ) {
 		DirWatch->watchDir( dir );
 }
 
-bool WatcherGeneric::snapshotHasAny( const std::set<FileIdentity>& identities ) const {
+bool WatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
 	return DirWatch->snapshotHasAny( identities );
 }
 
