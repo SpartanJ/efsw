@@ -37,7 +37,7 @@ class WatcherKqueue : public Watcher {
 	bool removeFile( const std::string& name, bool emitEvents = true );
 
 	/// Watches the directory at its path again, after it was replaced there.
-	void reopenDirectory();
+	bool reopenDirectory();
 
 	// called when the directory is actually changed
 	// means a file has been added or removed
@@ -102,12 +102,16 @@ class WatcherKqueue : public Watcher {
 	FileWatcherKqueue* mWatcher;
 
 	WatcherKqueue* mParent;
+	/// Identity of the directory descriptor, not of the latest path lookup. A failed reopen
+	/// leaves it unchanged, so a later poll retries even if the snapshot already advanced.
+	FileIdentity mDirectoryIdentity{ 0, 0 };
 
 	bool mInitOK;
 	int mErrno;
 	bool mReportCrossDirectoryMoves;
 	bool mCollectActions;
 	bool mNeedsRecursiveRescan;
+	bool mFilesNeedReopen{ false };
 	FileActionBatch mActionBatch;
 
 	bool pathInWatches( const std::string& path );
@@ -131,6 +135,13 @@ class WatcherKqueue : public Watcher {
 	WatcherKqueue* root();
 
 	void rescanTree();
+
+	KEvent* findFile( const std::string& name );
+
+	/// Registers a replacement before closing the old descriptor. Failure leaves it intact.
+	bool reopen( KEvent& change, const FileInfo& info );
+
+	bool refreshFile( const FileInfo& info );
 };
 
 } // namespace efsw

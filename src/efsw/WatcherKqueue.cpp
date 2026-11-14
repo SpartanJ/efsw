@@ -115,6 +115,9 @@ void WatcherKqueue::addAll() {
 
 	mDirSnap.setDirectoryInfo( Directory );
 	mDirSnap.scan();
+	struct stat directoryInfo;
+	if ( fstat( fd, &directoryInfo ) == 0 )
+		mDirectoryIdentity = FileIdentity( directoryInfo.st_dev, directoryInfo.st_ino );
 
 	mChangeList.resize( KEVENT_RESERVE_VALUE );
 
@@ -215,31 +218,63 @@ bool WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	return true;
 }
 
-void WatcherKqueue::reopenDirectory() {
-	int fd = open( Directory.c_str(), O_EVTONLY );
+bool WatcherKqueue::reopen( KEvent& change, const FileInfo& info ) {
+	int fd = open( info.Filepath.c_str(), O_EVTONLY );
 	if ( -1 == fd )
-		return;
-	close( static_cast<int>( mChangeList[0].ident ) );
-	EV_SET( &mChangeList[0], fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
-			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, 0 );
+		return false;
+	// The path may have changed again since the snapshot. Only commit coverage of the entry
+	// that snapshot describes; otherwise the next poll scans and retries it.
+	struct stat opened;
+	if ( fstat( fd, &opened ) != 0 ||
+		 FileIdentity( opened.st_dev, opened.st_ino ) != info.identity() ) {
+		close( fd );
+		return false;
+	}
+	KEvent replacement;
+	EV_SET( &replacement, fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
+			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, change.udata );
 	struct timespec timeout = { 0, 0 };
-	kevent( mKqueue, mChangeList.data(), 1, NULL, 0, &timeout );
+	if ( kevent( mKqueue, &replacement, 1, NULL, 0, &timeout ) == -1 ) {
+		close( fd );
+		return false;
+	}
+	close( static_cast<int>( change.ident ) );
+	change = replacement;
+	return true;
+}
+
+bool WatcherKqueue::reopenDirectory() {
+	if ( mChangeList.empty() || !reopen( mChangeList[0], mDirSnap.DirectoryInfo ) )
+		return false;
+	mDirectoryIdentity = mDirSnap.DirectoryInfo.identity();
+	return true;
+}
+
+KEvent* WatcherKqueue::findFile( const std::string& name ) {
+	if ( mChangeList.empty() )
+		return NULL;
+	KEvent target;
+	FileInfo tempEntry;
+	tempEntry.Filepath = name;
+	target.udata = &tempEntry;
+	return static_cast<KEvent*>( bsearch( &target, &mChangeList[1], mChangeListCount,
+										 sizeof( KEvent ), comparator ) );
+}
+
+bool WatcherKqueue::refreshFile( const FileInfo& info ) {
+	KEvent* tracked = findFile( info.Filepath );
+	if ( NULL == tracked )
+		return true;
+	FileInfo* entry = static_cast<FileInfo*>( tracked->udata );
+	if ( !entry->sameInode( info ) && !reopen( *tracked, info ) )
+		return false;
+	*entry = info;
+	return true;
 }
 
 bool WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
-
-	// bsearch
-	KEvent target;
-
-	// Create a temporary file info to search the kevent ( searching the directory )
-	FileInfo tempEntry( name );
-
-	target.udata = &tempEntry;
-
-	// Search the kevent
-	KEvent* ke = (KEvent*)bsearch( &target, &mChangeList[1], mChangeListCount, sizeof( KEvent ),
-								   comparator );
+	KEvent* ke = findFile( name );
 
 	// Trying to remove a non-existing file?
 	if ( !ke ) {
@@ -282,13 +317,24 @@ void WatcherKqueue::rescan() {
 		return;
 	}
 
-	const FileIdentity watched = mDirSnap.DirectoryInfo.identity();
 	DirectorySnapshotDiff Diff = mDirSnap.scan();
 
 	// Replaced at its path by another directory: the descriptor watches the one that is gone,
 	// and would never report the new one's changes.
-	if ( mDirSnap.DirectoryInfo.Inode != 0 && mDirSnap.DirectoryInfo.identity() != watched )
+	const bool replaced = mDirSnap.DirectoryInfo.Inode != 0 &&
+						  mDirSnap.DirectoryInfo.identity() != mDirectoryIdentity;
+	if ( replaced )
 		reopenDirectory();
+	// Files at the same names may also belong to the replaced tree. Their descriptors must
+	// follow them before callbacks run, not only the directory's descriptor. Retry failures
+	// on later polls even when no further native notification arrives.
+	if ( replaced || mFilesNeedReopen ) {
+		mFilesNeedReopen = false;
+		for ( const FileInfo& info : mDirSnap.Files ) {
+			if ( info.isRegularFile() && !refreshFile( info ) )
+				mFilesNeedReopen = true;
+		}
+	}
 
 	if ( Diff.DirChanged ) {
 		sendDirChanged();
@@ -427,6 +473,8 @@ void WatcherKqueue::watch() {
 		mCollectActions = true;
 		mNeedsRecursiveRescan = false;
 	}
+	if ( mFilesNeedReopen || mDirSnap.DirectoryInfo.identity() != mDirectoryIdentity )
+		rescan();
 
 	int nev = 0;
 	KEvent event;
@@ -475,7 +523,10 @@ void WatcherKqueue::watch() {
 						// directory's scan reports what happened.
 						needScan = true;
 					} else if ( fi != *entry ) {
-						*entry = fi;
+						if ( entry->sameInode( fi ) )
+							*entry = fi;
+						else if ( !refreshFile( fi ) )
+							mFilesNeedReopen = true;
 
 						mDirSnap.updateFile( entry->Filepath );
 
