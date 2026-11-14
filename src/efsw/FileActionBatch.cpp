@@ -1474,13 +1474,14 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 
 	// The moves out of a deleted directory, by its Delete: it waits for them, or a listener
 	// would no longer find their sources. A directory's Delete comes before the Deletes inside it.
-	// Moves are resolved once, so each Delete keeps the first of its moves that may not be: one
-	// that waits for many is woken as many times, and looks at each of them once.
-	struct MovesOut {
-		std::vector<size_t> Moves;
-		size_t Next{ 0 };
-	};
-	std::unordered_map<size_t, MovesOut> movesOut;
+	// The moves are sorted by source path, so those out of a directory are a range of them, which
+	// the directories around it share: nested deleted directories add a range each, not a copy of
+	// the moves. Moves are resolved once, so the search for the first that may not be skips the
+	// resolved ones, and records how far they go for the searches after it.
+	std::vector<size_t> sortedMoves;
+	// For each position, one at or after it such that every move in between is resolved.
+	std::vector<size_t> resolvedUntil;
+	std::unordered_map<size_t, std::pair<size_t, size_t>> movesOut;
 	bool deletesDirectories = false;
 	for ( size_t i = 0; i < mEvents.size() && !deletesDirectories; i++ )
 		deletesDirectories = Actions::Delete == mEvents[i].ActionType &&
@@ -1496,25 +1497,71 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 						   const std::pair<const std::string*, size_t>& b ) {
 						   return *a.first < *b.first;
 					   } );
+			sortedMoves.reserve( sources.size() );
+			for ( const auto& source : sources )
+				sortedMoves.push_back( source.second );
+			resolvedUntil.resize( sortedMoves.size() );
+			for ( size_t position = 0; position < resolvedUntil.size(); position++ )
+				resolvedUntil[position] = position;
+			auto firstFrom = [&sources]( const std::string& path ) {
+				return static_cast<size_t>(
+					std::lower_bound(
+						sources.begin(), sources.end(), path,
+						[]( const std::pair<const std::string*, size_t>& entry,
+							const std::string& value ) { return *entry.first < value; } ) -
+					sources.begin() );
+			};
 			for ( size_t i = 0; i < mEvents.size(); i++ ) {
 				const Event& event = mEvents[i];
 				if ( Actions::Delete != event.ActionType || Moves::None != moves->MoveOf[i] ||
 					 !event.Info.isDirectory() )
 					continue;
-				const std::string below =
+				// The paths below the directory start with it and a separator: they sort from
+				// there up to the same path with the separator's successor.
+				std::string below =
 					event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ) +
 					FileSystem::getOSSlash();
-				for ( auto source = std::lower_bound(
-						  sources.begin(), sources.end(), below,
-						  []( const std::pair<const std::string*, size_t>& entry,
-							  const std::string& path ) { return *entry.first < path; } );
-					  source != sources.end() &&
-					  0 == source->first->compare( 0, below.size(), below );
-					  ++source )
-					movesOut[i].Moves.push_back( source->second );
+				const size_t first = firstFrom( below );
+				below.back()++;
+				const size_t last = firstFrom( below );
+				if ( first < last )
+					movesOut[i] = std::make_pair( first, last );
 			}
 		}
 	}
+	// @return The position of the first move from the position on that may be unresolved.
+	auto firstUnresolved = [&]( size_t position ) {
+		size_t found = position;
+		while ( found < sortedMoves.size() && MoveState::Unresolved != state[sortedMoves[found]] )
+			found = std::max( resolvedUntil[found], found + 1 );
+		for ( size_t at = position; at < found; ) {
+			const size_t after = std::max( resolvedUntil[at], at + 1 );
+			resolvedUntil[at] = found;
+			at = after;
+		}
+		return found;
+	};
+
+	// The absolute source of a Moved event. Resolving it climbs the source's directory until a
+	// directory that still exists, as deep as a deleted tree goes: each directory is resolved once,
+	// and the moves out of it share the result.
+	std::unordered_map<std::string, std::string> canonicalDirectories;
+	auto canonicalSource = [&canonicalDirectories]( const std::string& path ) {
+		const std::string name( FileSystem::fileNameFromPath( path ) );
+		// A path with a final separator does not end with its name: resolved on its own.
+		if ( name.empty() || path.size() < name.size() ||
+			 0 != path.compare( path.size() - name.size(), name.size(), name ) )
+			return FileSystem::canonicalSourcePath( path );
+		const std::string directory( path.substr( 0, path.size() - name.size() ) );
+		auto known = canonicalDirectories.find( directory );
+		if ( known != canonicalDirectories.end() )
+			return known->second + name;
+		const std::string canonical( FileSystem::canonicalSourcePath( path ) );
+		// The name is kept at the end: what comes before it is the directory's.
+		canonicalDirectories.emplace( directory,
+									  canonical.substr( 0, canonical.size() - name.size() ) );
+		return canonical;
+	};
 
 	// Whether a source event of a move waits for its destination. Not when both belong to one
 	// registration, which is removed with both, or when the move is resolved. A deleted
@@ -1526,11 +1573,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 			auto out = movesOut.find( i );
 			if ( out == movesOut.end() )
 				return Moves::None;
-			MovesOut& pending = out->second;
-			while ( pending.Next < pending.Moves.size() &&
-					MoveState::Unresolved != state[pending.Moves[pending.Next]] )
-				pending.Next++;
-			return pending.Next < pending.Moves.size() ? pending.Moves[pending.Next] : Moves::None;
+			const size_t position = firstUnresolved( out->second.first );
+			return position < out->second.second ? sortedMoves[position] : Moves::None;
 		}
 		return move != i && mEvents[move].Owner != mEvents[i].Owner &&
 					   MoveState::Unresolved == state[move]
@@ -1585,8 +1629,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 				const Event& source = mEvents[moves->SourceOf[i]];
 				target->handleFileAction(
 					destination.Watch, destination.Directory, destination.Filename, Actions::Moved,
-					oldPath.empty() ? FileSystem::canonicalSourcePath( source.Info.Filepath )
-									: oldPath );
+					oldPath.empty() ? canonicalSource( source.Info.Filepath ) : oldPath );
 				// What changed inside a moved directory, unless a listener removed its
 				// registration meanwhile.
 				auto followers = moves->Followers.find( i );
