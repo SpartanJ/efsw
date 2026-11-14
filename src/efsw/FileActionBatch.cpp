@@ -745,6 +745,20 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			   destination.Owner->collectTree( destination.Info.Filepath, NULL );
 	};
 	std::vector<bool> comparedTrees;
+	// A destination can install an arriving directory, then rescan it again in this pass.
+	// Its later Deletes (and pairs made from them) describe changes in the arriving tree,
+	// already covered by its comparison, not entries that occupied the destination before it.
+	auto arrivedInComparedTree = [&]( size_t position ) {
+		if ( comparedTrees.empty() )
+			return Moves::None;
+		const size_t move = enclosingMove( movedDestinations, mEvents[position].Info.Filepath );
+		return Moves::None != move && comparedTrees[move] &&
+					   ( move >= mPassReleased ||
+						 ( mEvents[position].ArrivalChange && position < mPassReleased ) ) &&
+					   move < position && mEvents[position].Owner == mEvents[move].Owner
+				   ? move
+				   : Moves::None;
+	};
 
 	// The Adds by path, without a final separator: within one registration, a move's source path
 	// taken by another entry before the move's destination was reached. Its listener would get
@@ -778,6 +792,8 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 	for ( const auto& pair : pairs ) {
 		const size_t created = pair.first;
 		const size_t deleted = pair.second;
+		if ( Moves::None != arrivedInComparedTree( deleted ) )
+			continue;
 		const size_t enclosingSource =
 			enclosingMove( movedSources, mEvents[deleted].Info.Filepath );
 		const size_t enclosingDestination =
@@ -835,7 +851,12 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			if ( Actions::Delete == mEvents[i].ActionType ) {
 				// Not a Delete held from the previous pass inside a directory whose own Delete
 				// came in this one: it happened before the directory left, and comes before it.
-				const size_t move = sourceOwners.of( mEvents[i].Info.Filepath );
+				size_t move = sourceOwners.of( mEvents[i].Info.Filepath );
+				if ( Moves::None == move ) {
+					move = arrivedInComparedTree( i );
+					if ( Moves::None != move )
+						mEvents[i].ArrivalChange = true;
+				}
 				if ( Moves::None == move || i >= mPassReleased ||
 					 moves.SourceOf[move] < mPassReleased )
 					moves.MoveOf[i] = move;
@@ -851,8 +872,12 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 				// previous pass, compared with the tree it arrived with: its renames since
 				// follow it.
 				const size_t move = destinationOwners.of( mEvents[i].Info.Filepath );
-				if ( Moves::None != move && comparedTrees[move] && move >= mPassReleased )
+				if ( Moves::None != move && comparedTrees[move] &&
+					 ( move >= mPassReleased ||
+					   ( mEvents[i].ArrivalChange && i < mPassReleased ) ) ) {
 					moves.MoveOf[i] = move;
+					mEvents[i].ArrivalChange = true;
+				}
 			}
 		}
 	}

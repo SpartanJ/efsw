@@ -1639,4 +1639,69 @@ UTEST( CrossWatchMoves, KqueueRetireReachesGenericFallbackWatches ) {
 	}
 	removeDirectory( root );
 }
+
+// Reproduce arrival in the middle of a polling pass without sleeps: kqueue installs the
+// old layout at the destination, then rescans the changed layout before the batch is
+// delivered. The comparison and the rescan must not both report those changes.
+UTEST( CrossWatchMoves, KqueueArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	const std::string base = getTemporaryDirectory() + "_kq_arrival_rescan";
+	const std::string source = base + "/source";
+	const std::string destination = base + "/destination";
+	ASSERT_TRUE( createDirectory( base ) );
+	ASSERT_TRUE( createDirectory( source ) );
+	ASSERT_TRUE( createDirectory( source + "/outer" ) );
+	ASSERT_TRUE( createDirectory( source + "/outer/inner" ) );
+	ASSERT_TRUE( createDirectory( source + "/outer/other" ) );
+	ASSERT_TRUE( createDirectory( destination ) );
+	ASSERT_TRUE( createFile( source + "/outer/inner/file", "x" ) );
+	ASSERT_TRUE( createFile( source + "/outer/other/g", "x" ) );
+	ASSERT_TRUE( createFile( source + "/outer/a", "a" ) );
+	ASSERT_TRUE( createFile( source + "/outer/b", "b" ) );
+	ReplayListener listener;
+	const ReportedPaths reported( base );
+	std::set<std::string> paths = reported.list( { source, destination } );
+	{
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue first( 1, source, &listener, true, &kqueue, NULL, true );
+		efsw::WatcherKqueue second( 2, destination, &listener, true, &kqueue, NULL, true );
+		first.SharedActionBatch = &batch;
+		second.SharedActionBatch = &batch;
+		first.addAll();
+		second.addAll();
+		ASSERT_TRUE( first.initOK() && second.initOK() );
+		const std::string outer = destination + "/outer";
+		ASSERT_TRUE( renameFile( source + "/outer", outer ) );
+		batch.beginPass();
+		first.watch();
+		batch.scanned( &first );
+		second.watch();
+		ASSERT_TRUE( renameFile( outer + "/other/g", outer + "/g" ) );
+		ASSERT_TRUE( removeDirectory( outer + "/other" ) );
+		ASSERT_TRUE( renameFile( outer + "/inner", outer + "/renamed" ) );
+		ASSERT_TRUE( createDirectory( outer + "/renamed/deeper" ) );
+		ASSERT_TRUE( renameFile( outer + "/a", outer + "/renamed/deeper/a" ) );
+		second.watch();
+		batch.scanned( &second );
+		batch.finishPass();
+		batch.beginPass();
+		first.watch();
+		batch.scanned( &first );
+		second.watch();
+		batch.scanned( &second );
+		batch.finishPass();
+		for ( auto& event : listener.Events ) {
+			event.Path = reported( event.Path );
+			if ( !event.OldPath.empty() )
+				event.OldPath = reported( event.OldPath );
+		}
+		const std::string problem = replay( paths, listener.Events );
+		EXPECT_TRUE( problem.empty() );
+		EXPECT_TRUE( paths == reported.list( { source, destination } ) );
+		if ( !problem.empty() )
+			printf( "%s\n", problem.c_str() );
+	}
+	removeDirectory( base );
+}
 #endif

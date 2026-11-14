@@ -2869,3 +2869,107 @@ UTEST( FileActionBatch, DirectoryMovedIntoAMovedTreeIsReportedOnce ) {
 	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "n4" ) );
 	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Moved, "d" ) );
 }
+
+// kqueue may install a newly arrived tree, then scan it again in the same pass after an
+// entry disappeared. The comparison already reports that Delete; the destination's scan
+// must not deliver it again after the compared move.
+UTEST( FileActionBatch, DestinationDeletesAfterArrivalBelongToTheComparedTree ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo gone = file.make( "outer/gone" );
+	tree.was( gone, "gone" );
+	tree.move( first, second );
+	second.report( "/dst/outer/", "gone", efsw::Actions::Delete, gone );
+	runPass( batch, watches );
+	runPass( batch, watches );
+	auto events = listener.getEvents();
+	ASSERT_EQ( 2u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Delete, "gone" ) );
+}
+
+UTEST( FileActionBatch, ArrivalRescanChangesReplayOnlyOnce ) {
+	MovedFile file;
+	ASSERT_TRUE( file.create() );
+	efsw::FileActionBatch batch;
+	PathListener listener;
+	FakeWatch source( 1, batch, &listener ), destination( 2, batch, &listener );
+	MovedTree tree( file );
+	const efsw::FileInfo inner = file.make( "outer/inner", true );
+	const efsw::FileInfo other = file.make( "outer/other", true );
+	const efsw::FileInfo leaf = file.make( "outer/inner/file" );
+	const efsw::FileInfo g = file.make( "outer/other/g" );
+	const efsw::FileInfo a = file.make( "outer/a" );
+	const efsw::FileInfo b = file.make( "outer/b" );
+	const efsw::FileInfo deeper = file.make( "outer/deeper", true );
+	const std::vector<std::pair<std::string, efsw::FileInfo>> before{
+		{ "inner", inner }, { "inner/file", leaf }, { "other", other },
+		{ "other/g", g }, { "a", a }, { "b", b } };
+	const std::vector<std::pair<std::string, efsw::FileInfo>> after{
+		{ "renamed", inner }, { "renamed/file", leaf }, { "renamed/deeper", deeper },
+		{ "renamed/deeper/a", a }, { "g", g }, { "b", b } };
+	ReplayTree model;
+	model.Entries[slashes( "/src" )] = id( 10001 );
+	model.Entries[slashes( "/dst" )] = id( 10002 );
+	model.Entries[slashes( "/src/outer" )] = tree.Outer.identity();
+	for ( const auto& entry : before ) {
+		tree.was( entry.second, entry.first );
+		model.Entries[slashes( "/src/outer/" + entry.first )] = entry.second.identity();
+	}
+	for ( const auto& entry : after )
+		tree.is( destination, entry.second, entry.first );
+	tree.move( source, destination );
+	// The destination first installed the arriving tree's old layout, then rescan() found
+	// the changes. These records are not deletions of a previous destination occupant.
+	destination.report( "/dst/outer/", "inner", efsw::Actions::Add, inner );
+	destination.report( "/dst/outer/", "other", efsw::Actions::Add, other );
+	destination.report( "/dst/outer/", "g", efsw::Actions::Add, g );
+	destination.report( "/dst/outer/", "a", efsw::Actions::Delete, a );
+	destination.report( "/dst/outer/", "renamed", efsw::Actions::Add, inner );
+	destination.report( "/dst/outer/renamed/", "deeper", efsw::Actions::Add, deeper );
+	destination.report( "/dst/outer/", "inner", efsw::Actions::Delete, inner );
+	destination.report( "/dst/outer/", "other", efsw::Actions::Delete, other );
+	runPass( batch, { &source, &destination } );
+	runPass( batch, { &source, &destination } );
+	for ( const auto& event : listener.Events ) {
+		PathListener::Recorded normalized = event;
+		normalized.Path = slashes( normalized.Path );
+		normalized.OldPath = slashes( normalized.OldPath );
+		const std::string problem = model.apply( normalized );
+		EXPECT_TRUE( problem.empty() );
+		if ( !problem.empty() )
+			printf( "%s\n", problem.c_str() );
+	}
+	ASSERT_EQ( 6u, listener.Events.size() );
+	std::set<std::string> expected{ slashes( "/src" ), slashes( "/dst" ),
+								  slashes( "/dst/outer" ) };
+	for ( const auto& entry : after )
+		expected.insert( slashes( "/dst/outer/" + entry.first ) );
+	std::set<std::string> actual;
+	for ( const auto& entry : model.Entries )
+		actual.insert( entry.first );
+	EXPECT_TRUE( expected == actual );
+}
+
+// A rename collected with the arrival, not on a later scan: holding the whole move must
+// retain that distinction, so releasing it does not deliver both its comparison and rename.
+UTEST( FileActionBatch, ArrivalRenameStaysWithItsHeldTree ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo renamed = file.make( "outer/a" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( renamed, "a" );
+	tree.is( second, renamed, "b" );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	second.report( "/dst/outer/", "b", efsw::Actions::Moved, renamed );
+	second.Next.back().Old = "a";
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+	runPass( batch, watches );
+	const auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "b" ) );
+}

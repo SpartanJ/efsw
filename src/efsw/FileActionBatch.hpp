@@ -82,6 +82,9 @@ class FileActionBatch {
 		/// Set for the Add of a directory that left a compared tree without a Delete to pair
 		/// it, as kqueue reports one: delivered with what it holds.
 		bool WithContents{ false };
+		/// A destination rescan collected this change with its arriving tree. If held with
+		/// that move, it still belongs to the comparison when both are released next pass.
+		bool ArrivalChange{ false };
 		std::string OldFilename;
 		FileInfo Info;
 		FileWatchListener* Listener;
