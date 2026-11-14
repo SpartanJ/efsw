@@ -300,6 +300,9 @@ class FileActionBatch {
 	std::vector<Segment> mSegments;
 	/// Events before this position were held by the previous pass, and are not held again.
 	size_t mReleased{ 0 };
+	/// The events of the pass before this position were held by the previous one. Unlike
+	/// mReleased, kept until the next pass.
+	size_t mPassReleased{ 0 };
 
 	/// Containers reused from one pass to the next, cleared before each use, so that a pass only
 	/// allocates when it holds more than the ones before. They keep the memory of the largest
@@ -309,6 +312,9 @@ class FileActionBatch {
 		/// The halves seen for each identity of the pass.
 		IdentityTable<Halves> HalvesSeen;
 		std::vector<bool> Rescanned;
+		// destinationTree().
+		std::unordered_map<std::string, const FileInfo*> TreeAtHold;
+		std::vector<FileInfo> RenamedAtHold;
 		/// Identities of unpaired Adds, sorted when looked up.
 		std::vector<FileIdentity> Later;
 		IdentityTable<Candidates> MoveCandidates;
@@ -396,6 +402,12 @@ class FileActionBatch {
 
 	/// @return True when events were held.
 	bool holdMoveSources( const Moves& moves );
+
+	/// Appends the entries of a compared directory move's destination tree. A move held from the
+	/// previous pass is compared with the tree as it was then: the Adds, Deletes and renames its
+	/// watch collected inside it since are undone, since they are reported after its Moved event.
+	/// @return False when the destination does not watch inside the directory.
+	bool destinationTree( size_t move, std::vector<const FileInfo*>& entries );
 };
 
 } // namespace efsw

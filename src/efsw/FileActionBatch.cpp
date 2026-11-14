@@ -151,6 +151,7 @@ void FileActionBatch::beginPass() {
 					std::make_move_iterator( mHeld.end() ) );
 	mHeld.clear();
 	mReleased = mEvents.size();
+	mPassReleased = mReleased;
 }
 
 void FileActionBatch::addSegment( Watcher* owner, size_t begin ) {
@@ -328,6 +329,66 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	}
 	mEvents.swap( kept );
 	kept.clear();
+	return true;
+}
+
+bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>& entries ) {
+	const Event& destination = mEvents[move];
+	if ( NULL == destination.Owner )
+		return false;
+	const size_t begin = entries.size();
+	if ( !destination.Owner->collectTree( destination.Info.Filepath, &entries ) )
+		return false;
+	if ( move >= mPassReleased )
+		return true;
+	const std::string& root = destination.Info.Filepath;
+	const size_t length = directoryLength( root );
+	auto inside = [&]( const Event& event ) {
+		return event.Owner == destination.Owner &&
+			   ( Actions::Add == event.ActionType || Actions::Delete == event.ActionType ||
+				 Actions::Moved == event.ActionType ) &&
+			   event.Info.Filepath.size() > length + 1 &&
+			   event.Info.Filepath[length] == FileSystem::getOSSlash() &&
+			   event.Info.Filepath.compare( 0, length, root, 0, length ) == 0;
+	};
+	bool changed = false;
+	for ( size_t i = mPassReleased; i < mEvents.size() && !changed; i++ )
+		changed = inside( mEvents[i] );
+	if ( !changed )
+		return true;
+	// The paths without a final separator, as the snapshots list them.
+	auto key = []( const std::string& path ) { return path.substr( 0, directoryLength( path ) ); };
+	std::unordered_map<std::string, const FileInfo*>& tree = mScratch.TreeAtHold;
+	tree.clear();
+	// The entries renamed since, at their names before: reserved, so that they do not move.
+	std::vector<FileInfo>& renamed = mScratch.RenamedAtHold;
+	renamed.clear();
+	size_t renames = 0;
+	for ( size_t i = mPassReleased; i < mEvents.size(); i++ )
+		if ( Actions::Moved == mEvents[i].ActionType && inside( mEvents[i] ) )
+			renames++;
+	renamed.reserve( renames );
+	for ( size_t i = begin; i < entries.size(); i++ )
+		tree[key( entries[i]->Filepath )] = entries[i];
+	for ( size_t i = mEvents.size(); i-- > mPassReleased; ) {
+		const Event& event = mEvents[i];
+		if ( !inside( event ) )
+			continue;
+		if ( Actions::Add == event.ActionType ) {
+			tree.erase( key( event.Info.Filepath ) );
+		} else if ( Actions::Delete == event.ActionType ) {
+			tree[key( event.Info.Filepath )] = &event.Info;
+		} else {
+			// Renamed in its directory, the old name relative to it.
+			tree.erase( key( event.Info.Filepath ) );
+			renamed.push_back( event.Info );
+			renamed.back().Filepath = event.Directory + event.OldFilename;
+			tree[key( renamed.back().Filepath )] = &renamed.back();
+		}
+	}
+	entries.resize( begin );
+	for ( const auto& entry : tree )
+		entries.push_back( entry.second );
 	return true;
 }
 
@@ -510,10 +571,11 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 		for ( size_t i = 0; i < mEvents.size(); i++ ) {
 			if ( Moves::None != moves.MoveOf[i] )
 				continue;
-			if ( Actions::Delete == mEvents[i].ActionType )
+			if ( Actions::Delete == mEvents[i].ActionType ) {
 				moves.MoveOf[i] = sourceOwners.of( mEvents[i].Info.Filepath );
-			else if ( Actions::Add == mEvents[i].ActionType )
+			} else if ( Actions::Add == mEvents[i].ActionType ) {
 				moves.MoveOf[i] = destinationOwners.of( mEvents[i].Info.Filepath );
+			}
 		}
 	}
 	return hasMove;
@@ -1192,8 +1254,7 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 			tree = mSourceTrees.find( enclosing );
 		}
 		std::vector<const FileInfo*> destinationTree;
-		if ( tree == mSourceTrees.end() || NULL == destination.Owner ||
-			 !destination.Owner->collectTree( destination.Info.Filepath, &destinationTree ) )
+		if ( tree == mSourceTrees.end() || !this->destinationTree( move, destinationTree ) )
 			continue;
 
 		const std::string& sourceRoot = source.Info.Filepath;

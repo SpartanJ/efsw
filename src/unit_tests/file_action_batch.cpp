@@ -21,6 +21,8 @@ class FakeWatch : public efsw::Watcher {
 		std::string Filename;
 		efsw::Action Action;
 		efsw::FileInfo Info;
+		/// The old name of a Moved event, in its directory.
+		std::string Old;
 	};
 
 	efsw::FileActionBatch& Batch;
@@ -51,8 +53,8 @@ class FakeWatch : public efsw::Watcher {
 	void watch() override {
 		Scans++;
 		for ( const Pending& event : Next )
-			Batch.add( ID, event.Directory, event.Filename, event.Action, "", event.Info, Listener,
-					   this );
+			Batch.add( ID, event.Directory, event.Filename, event.Action, event.Old, event.Info,
+					   Listener, this );
 		Next.clear();
 		for ( auto& tree : GiveUp )
 			Batch.addSourceTree( tree.first, std::move( tree.second ) );
@@ -985,6 +987,71 @@ UTEST( FileActionBatch, ChangesInsideAMovedTreeFollowItsMovedEvent ) {
 		if ( i > 0 )
 			EXPECT_TRUE( expected[i].Old == std::get<2>( events[i] ) );
 	}
+}
+
+// A directory moved to a watch whose earlier Delete holds it to the next pass, where its scan
+// finds a file of the directory renamed out of it: the held move is compared with the tree it
+// arrived with, and the rename follows it, reported once.
+UTEST( FileActionBatch, HeldMoveIsComparedWithTheTreeItArrivedWith ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo leaf = file.make( "outer/f" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	tree.is( second, leaf, "f" );
+	first.report( "/src/outer/", "f", efsw::Actions::Delete, leaf );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	// The file renamed out of the directory before the next scan.
+	second.Tree.clear();
+	second.report( "/dst/", "n5", efsw::Actions::Add, leaf );
+	second.report( "/dst/outer/", "f", efsw::Actions::Delete, leaf );
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	size_t deletes = 0;
+	for ( const auto& event : events )
+		if ( efsw::Actions::Delete == std::get<0>( event ) && std::get<1>( event ) == "f" )
+			deletes++;
+	EXPECT_EQ( 1u, deletes );
+	ASSERT_EQ( 4u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	// The watch's own events, as it collected them.
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Add, "n5" ) );
+	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Delete, "f" ) );
+}
+
+// The same, with the file renamed inside the directory: its watch's rename follows the held
+// move, from the name the move arrived with, which the comparison does not report again.
+UTEST( FileActionBatch, HeldMoveIsFollowedByARenameInsideIt ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	efsw::FileInfo leaf = file.make( "outer/f" );
+	efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	tree.is( second, leaf, "f" );
+	first.report( "/src/outer/", "f", efsw::Actions::Delete, leaf );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.Tree.clear();
+	tree.is( second, leaf, "g" );
+	second.report( "/dst/outer/", "g", efsw::Actions::Moved, leaf );
+	second.Next.back().Old = "f";
+	runPass( batch, watches );
+
+	auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "g" ) );
+	EXPECT_TRUE( std::get<2>( events[2] ) == "f" );
 }
 
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
