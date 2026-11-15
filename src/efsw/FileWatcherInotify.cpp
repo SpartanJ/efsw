@@ -208,8 +208,15 @@ WatchID FileWatcherInotify::addWatch( const std::string& directory, FileWatchLis
 				break;
 
 			if ( cfi.isDirectory() && cfi.isReadable() ) {
-				addWatch( cfi.Filepath, watcher, recursive, syntheticEvents,
-						  reportCrossDirectoryMoves, pWatch, fromInternalEvent );
+				const WatchID child =
+					addWatch( cfi.Filepath, watcher, recursive, syntheticEvents,
+							  reportCrossDirectoryMoves, pWatch, fromInternalEvent );
+				// A parent's native watch can follow a move while discovery still holds the
+				// old child paths. Retry these children when that parent is relocated too.
+				if ( fromInternalEvent && child == Errors::FileNotFound && !pWatch->Removed ) {
+					mPendingCoverage.emplace( pWatch,
+											  FileSystem::fileNameFromPath( cfi.Filepath ) );
+				}
 			}
 		}
 	}
@@ -687,55 +694,52 @@ void FileWatcherInotify::coverRelocated() {
 		return;
 	std::vector<WatcherInotify*> relocated;
 	relocated.swap( mRelocated );
+	std::vector<std::string> paths;
 	for ( WatcherInotify* parent : relocated ) {
+		paths.clear();
 		auto range = mPendingCoverage.equal_range( parent );
 		for ( auto it = range.first; it != range.second; ) {
-			const std::string path( parent->Directory + it->second );
+			std::string path( parent->Directory + it->second );
 			if ( parent->Removed || !FileSystem::isDirectory( path ) ) {
 				++it;
 				continue;
 			}
-			checkForNewWatcher( parent, path );
+			paths.push_back( std::move( path ) );
 			it = mPendingCoverage.erase( it );
 		}
+		// Discovery can defer children of its own and rehash mPendingCoverage. No iterator
+		// into that map may survive it; move the resolved paths out before installing them.
+		for ( std::string& path : paths )
+			checkForNewWatcher( parent, std::move( path ) );
 	}
 }
 
 void FileWatcherInotify::checkForNewWatcher( Watcher* watch, std::string fpath,
 											 const std::string* arrived ) {
-	FileSystem::dirAddSlashAtEnd( fpath );
-
-	// A directory that arrived, but moved on with its parent before this: covered once an event
-	// relocates the parent's watch.
-	if ( arrived && watch->Recursive && !FileSystem::isDirectory( fpath ) ) {
-		bool covered = false;
-		{
-			Lock lock( mWatchesLock );
-			covered = NULL != findWatchLocked( fpath, watch->ID );
-		}
-		if ( !covered )
-			mPendingCoverage.emplace( static_cast<WatcherInotify*>( watch ), *arrived );
+	WatcherInotify* parent = static_cast<WatcherInotify*>( watch );
+	if ( !watch->Recursive || parent->Removed )
 		return;
+	FileSystem::dirAddSlashAtEnd( fpath );
+	const bool directory = FileSystem::isDirectory( fpath );
+	if ( !directory && NULL == arrived )
+		return;
+	{
+		// Only this registration's coverage matters: another registration watching the
+		// directory does not deliver events to this one.
+		Lock lock( mWatchesLock );
+		if ( findWatchLocked( fpath, watch->ID ) )
+			return;
 	}
-
-	/// If the watcher is recursive, checks if the new file is a folder, and creates a watcher
-	if ( watch->Recursive && FileSystem::isDirectory( fpath ) ) {
-		bool found = false;
-
-		{
-			// Only this registration's coverage matters: another registration watching the
-			// directory does not deliver events to this one.
-			Lock lock( mWatchesLock );
-			found = NULL != findWatchLocked( fpath, watch->ID );
-		}
-
-		if ( !found ) {
-			WatcherInotify* iWatch = static_cast<WatcherInotify*>( watch );
-			addWatch( fpath, watch->Listener, watch->Recursive, iWatch->syntheticEvents,
-					  iWatch->reportCrossDirectoryMoves, static_cast<WatcherInotify*>( watch ),
-					  true );
-		}
+	if ( directory ) {
+		const WatchID added = addWatch( fpath, watch->Listener, true, parent->syntheticEvents,
+										parent->reportCrossDirectoryMoves, parent, true );
+		if ( added != Errors::FileNotFound || parent->Removed )
+			return;
 	}
+	// The directory can move with its parent either before the check or before registration.
+	// Do not check existence a second time and silently lose the arrival between the checks;
+	// a failed registration waits for the parent's relocation too.
+	mPendingCoverage.emplace( parent, arrived ? *arrived : FileSystem::fileNameFromPath( fpath ) );
 }
 
 void FileWatcherInotify::emitCrossDirectoryMove( Watcher* src, const std::string& srcFile,

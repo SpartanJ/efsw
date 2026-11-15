@@ -39,10 +39,12 @@ bool pollUntil( const std::function<bool()>& condition ) {
 /// An inotify watcher whose action lock the test can hold, to keep the event thread waiting.
 class LockableWatcher : public efsw::FileWatcherInotify {
   public:
-	LockableWatcher() : FileWatcherInotify( nullptr ) {}
+	LockableWatcher( efsw::FileWatcher* parent = nullptr ) : FileWatcherInotify( parent ) {}
 
 	// The event thread makes virtual calls: it stops before this class is destroyed.
-	~LockableWatcher() override {
+	~LockableWatcher() override { stop(); }
+
+	void stop() {
 		mInitOK = false;
 		efSAFE_DELETE( mThread );
 	}
@@ -84,6 +86,13 @@ class LockableWatcher : public efsw::FileWatcherInotify {
 		closedir( tasks );
 		return waits || !known;
 	}
+};
+
+// Join before a derived test watcher's destructor changes its vtable or destroys its members.
+// Kept outside the watcher itself so this also runs when an assertion returns from the test.
+struct StopBeforeDestruction {
+	LockableWatcher& Watch;
+	~StopBeforeDestruction() { Watch.stop(); }
 };
 
 /// Records each event with its registration and full path.
@@ -368,6 +377,89 @@ UTEST( InotifyMovedDirectories, NewDirectoryMovedThenItsParentRenamed ) {
 		ASSERT_TRUE( listener.settle( root ) );
 		ASSERT_TRUE( createFile( root + "/q/y/f", "x" ) );
 		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/q/y/f" ) );
+	}
+	removeDirectory( root );
+}
+
+// The arrival's native watch exists before discovery descends into its children. Moving its
+// parent during a synthetic callback makes those child paths stale, but the native watches
+// already installed still follow the parent and must recover the rest of their coverage.
+UTEST( InotifyMovedDirectories, ParentMovesDuringArrivalDiscovery ) {
+	const std::string root = getTemporaryDirectory() + "_parent_moves_during_discovery";
+	removeDirectory( root );
+	for ( const std::string& dir : { root, root + "/a", root + "/b", root + "/b/p",
+									 root + "/outside", root + "/outside/child" } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	ASSERT_TRUE( createFile( root + "/outside/trigger" ) );
+	class MovingListener : public PathListener {
+	  public:
+		std::string Root;
+		bool Moved{ false };
+		void handleFileAction( efsw::WatchID id, const std::string& dir,
+							   const std::string& filename, efsw::Action action,
+							   const std::string& oldFilename ) override {
+			if ( !Moved && action == efsw::Actions::Add &&
+				 dir + filename == Root + "/b/p/tree/trigger" ) {
+				Moved = renameFile( Root + "/b/p", Root + "/a/p" );
+			}
+			PathListener::handleFileAction( id, dir, filename, action, oldFilename );
+		}
+	} listener;
+	listener.Root = root;
+	{
+		LockableWatcher watcher;
+		auto options = crossMoves;
+		options.emplace_back( efsw::Options::LinuxProduceSyntheticEvents, 1 );
+		ASSERT_GT( watcher.addWatch( root + "/a", &listener, true, options ), 0 );
+		ASSERT_GT( watcher.addWatch( root + "/b", &listener, true, options ), 0 );
+		watcher.watch();
+		ASSERT_TRUE( renameFile( root + "/outside", root + "/b/p/tree" ) );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Moved, root + "/a/p" ) );
+		ASSERT_TRUE( listener.settle( root + "/a" ) );
+		ASSERT_TRUE( createFile( root + "/a/p/tree/child/late" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/a/p/tree/child/late" ) );
+	}
+	removeDirectory( root );
+}
+
+// linkAllowed() runs after the arrival was found to be a directory, before its native watch
+// is created. Move its parent there, so registration fails on the stale path deterministically.
+UTEST( InotifyMovedDirectories, ParentMovesBetweenArrivalCheckAndRegistration ) {
+	const std::string root = getTemporaryDirectory() + "_parent_moves_before_registration";
+	removeDirectory( root );
+	for ( const std::string& dir :
+		  { root, root + "/a", root + "/b", root + "/b/p", root + "/b/p/target" } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	PathListener listener;
+	{
+		efsw::FileWatcher owner( true );
+		owner.followSymlinks( true );
+		class MovingWatcher : public LockableWatcher {
+		  public:
+			std::string Root;
+			bool Moved{ false };
+			MovingWatcher( efsw::FileWatcher* owner ) : LockableWatcher( owner ) {}
+
+			bool linkAllowed( const std::string&, const std::string& ) override {
+				if ( !Moved ) {
+					// Leave the target's coverage to the arriving link, so an existing native
+					// watch does not mask the failed registration that this test exercises.
+					removeWatch( Root + "/b/p/target" );
+					Moved = renameFile( Root + "/b/p", Root + "/a/p" );
+				}
+				return true;
+			}
+		} watcher( &owner );
+		StopBeforeDestruction stop{ watcher };
+		watcher.Root = root;
+		ASSERT_GT( watcher.addWatch( root + "/a", &listener, true, crossMoves ), 0 );
+		ASSERT_GT( watcher.addWatch( root + "/b", &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		ASSERT_EQ( 0, symlink( "target", ( root + "/b/p/link" ).c_str() ) );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Moved, root + "/a/p" ) );
+		ASSERT_TRUE( listener.settle( root + "/a" ) );
+		ASSERT_TRUE( createFile( root + "/a/p/target/late" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/a/p/target/late" ) );
 	}
 	removeDirectory( root );
 }
