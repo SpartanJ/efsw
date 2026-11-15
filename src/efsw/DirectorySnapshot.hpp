@@ -26,6 +26,10 @@ class DirectorySnapshot {
 
 	DirectorySnapshotDiff scan();
 
+	/// A kqueue fallback's native parent resolves its directory moving or disappearing.
+	/// Keep its entries while that path is missing, for relocation or source-tree evidence.
+	DirectorySnapshotDiff scan( bool keepMissingDirectory );
+
 	FileInfoList::iterator nodeInFiles( const FileInfo& fi, const FileInfoList& currentFiles );
 
 	void addFile( std::string path );

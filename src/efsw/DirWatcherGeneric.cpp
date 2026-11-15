@@ -139,7 +139,13 @@ void DirWatcherGeneric::addChildren( bool reportNewFiles ) {
 }
 
 void DirWatcherGeneric::watch( bool reportOwnChange ) {
-	DirectorySnapshotDiff Diff = DirSnap.scan();
+	const bool fallbackRoot = NULL == Parent && NULL != Watch->SharedActionOwner;
+	DirectorySnapshotDiff Diff = DirSnap.scan( fallbackRoot );
+	// A native kqueue parent may not have processed its rename yet. Like a native child,
+	// keep this entire tree until the parent relocates it or takes its snapshots on removal.
+	// The scan reports its path checks, so no extra lookup is needed here.
+	if ( fallbackRoot && Diff.DirMissing )
+		return;
 
 	if ( reportOwnChange && Diff.DirChanged && NULL != Parent ) {
 		Watch->handleAction( FileSystem::pathRemoveFileName( DirSnap.DirectoryInfo.Filepath ),

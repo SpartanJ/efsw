@@ -1488,6 +1488,44 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 	removeDirectory( outer );
 }
 
+// Only a fallback's native parent resolves the disappearance of its root. Standalone
+// generic registrations still report Deletes when their root disappears.
+UTEST( CrossWatchMoves, GenericFallbackKeepsItsTreeUntilItsParentRelocatesIt ) {
+	for ( bool fallback : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		TestListener listener;
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherGeneric backend( &owner, 100 );
+		efsw::Watcher parent( 1, tree.path( "src/" ), &listener, true );
+		efsw::WatcherGeneric watch( 2, tree.path( "src/outer/" ), &listener, &backend, true, true );
+		if ( fallback )
+			watch.SharedActionOwner = &parent;
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/moved" ) ) );
+		for ( int pass = 0; pass < 2; ++pass )
+			watch.watch();
+		std::vector<const efsw::FileInfo*> entries;
+		ASSERT_TRUE( watch.collectTree( tree.path( "src/outer" ), &entries ) );
+		if ( !fallback ) {
+			EXPECT_TRUE( entries.empty() );
+			EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "file" ) );
+			continue;
+		}
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		EXPECT_EQ( 2u, entries.size() );
+		entries.clear();
+		watch.moveDirectory( tree.path( "src/moved" ) );
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		ASSERT_TRUE( watch.collectTree( tree.path( "src/moved" ), &entries ) );
+		EXPECT_EQ( 2u, entries.size() );
+		entries.clear();
+		ASSERT_TRUE( createFile( tree.path( "src/moved/inner/after" ), "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after" ) );
+	}
+}
+
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileInfo.hpp>
@@ -1530,6 +1568,10 @@ struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
 /// Assert the backend under test, not just event behavior that native children also satisfy.
 struct FallbackKqueueWatch : efsw::WatcherKqueue {
 	using efsw::WatcherKqueue::WatcherKqueue;
+
+	efsw::WatcherKqueue* nativeChild( const std::string& directory ) {
+		return dynamic_cast<efsw::WatcherKqueue*>( findWatcher( directory ) );
+	}
 
 	bool hasOnlyGenericChildren() const {
 		for ( const auto& child : mWatches ) {
@@ -1825,6 +1867,105 @@ UTEST( CrossWatchMoves, KqueueGenericFallbackMovesToAnotherRegistration ) {
 		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Delete, "in.txt" ) );
 	}
 	removeDirectory( base );
+}
+
+namespace {
+
+void checkFallbackRename( bool nested, bool reportMoves, bool changeContents, int* utest_result ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/gone" ), "x" ) );
+	ReportedPaths paths( tree.Root );
+	std::set<std::string> model = paths.list( { tree.path( "src" ) } );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch watch( 1, tree.path( "src/" ), &listener, true, &backend, NULL,
+							   reportMoves );
+	if ( reportMoves )
+		watch.SharedActionBatch = &batch;
+	watch.addAll();
+	ASSERT_TRUE( watch.initOK() );
+	// Use the actual fallback factory, without faking descriptor pressure. Also put the
+	// fallback below a native child: its grandparent's rename must be processed first too.
+	efsw::WatcherKqueue* parent = nested ? watch.nativeChild( tree.path( "src/outer" ) ) : &watch;
+	ASSERT_NE( nullptr, parent );
+	const std::string fallback = tree.path( nested ? "src/outer/inner/" : "src/outer/" );
+	const efsw::WatchID child = parent->watchingDirectory( fallback );
+	ASSERT_GT( child, 0 );
+	const long before = backend.descriptors();
+	parent->removeWatch( child );
+	const long removed = backend.descriptors();
+	ASSERT_LT( removed, before );
+	parent->addGenericWatch( fallback, &listener, true );
+	ASSERT_GT( parent->watchingDirectory( fallback ), 0 );
+	ASSERT_EQ( removed, backend.descriptors() );
+	ASSERT_TRUE( nested ? watch.hasOnlyNativeChildren() : watch.hasOnlyGenericChildren() );
+
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/moved" ) ) );
+	if ( changeContents ) {
+		ASSERT_TRUE(
+			renameFile( tree.path( "src/moved/inner" ), tree.path( "src/moved/renamed" ) ) );
+		ASSERT_TRUE( renameFile( tree.path( "src/moved/renamed/file" ),
+								 tree.path( "src/moved/renamed/renamed_file" ) ) );
+		ASSERT_TRUE( removeFile( tree.path( "src/moved/gone" ) ) );
+		ASSERT_TRUE( createFile( tree.path( "src/moved/renamed/new_file" ), "x" ) );
+	}
+	auto pass = [&]() {
+		batch.beginPass();
+		watch.watch();
+		batch.scanned( &watch );
+		batch.finishPass();
+	};
+	for ( int i = 0; i < 3; ++i )
+		pass();
+	std::vector<ReplayListener::Recorded> structural;
+	for ( const auto& event : listener.Events ) {
+		if ( event.Action != efsw::Actions::Modified )
+			structural.push_back( event );
+	}
+	std::string failure = replay( model, listener.Events );
+	if ( structural.size() != ( changeContents ? 5u : 1u ) ||
+		 model != paths.list( { tree.path( "src" ) } ) || !failure.empty() ) {
+		fprintf( stderr, "fallback rename: nested=%d option=%d changes=%d\n", nested, reportMoves,
+				 changeContents );
+		for ( const auto& event : structural ) {
+			fprintf( stderr, "  %d %s <- %s\n", static_cast<int>( event.Action ),
+					 event.Path.c_str(), event.OldPath.c_str() );
+		}
+	}
+	EXPECT_STREQ( "", failure.c_str() );
+	EXPECT_TRUE( model == paths.list( { tree.path( "src" ) } ) );
+	ASSERT_EQ( changeContents ? 5u : 1u, structural.size() );
+	if ( !changeContents ) {
+		EXPECT_EQ( efsw::Actions::Moved, structural[0].Action );
+		EXPECT_TRUE( tree.path( "src/moved" ) == structural[0].Path );
+		EXPECT_TRUE( tree.path( "src/outer" ) == structural[0].OldPath );
+	}
+	// The same fallback watches must keep monitoring the relocated tree afterwards.
+	listener.Events.clear();
+	const std::string after =
+		tree.path( changeContents ? "src/moved/renamed/after" : "src/moved/inner/after" );
+	ASSERT_TRUE( createFile( after, "x" ) );
+	for ( int i = 0; i < 3; ++i )
+		pass();
+	failure = replay( model, listener.Events );
+	EXPECT_STREQ( "", failure.c_str() );
+	EXPECT_TRUE( model == paths.list( { tree.path( "src" ) } ) );
+}
+
+} // namespace
+
+UTEST( CrossWatchMoves, KqueueFallbackRenameReportsOnlyTheDirectoryMove ) {
+	for ( bool nested : { false, true } )
+		for ( bool reportMoves : { false, true } )
+			checkFallbackRename( nested, reportMoves, false, utest_result );
+}
+
+UTEST( CrossWatchMoves, KqueueFallbackRenamePreservesChangesInsideTheTree ) {
+	for ( bool nested : { false, true } )
+		checkFallbackRename( nested, true, true, utest_result );
 }
 
 // A directory watched by generic watches, because file descriptors ran out, is renamed inside

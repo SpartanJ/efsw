@@ -93,11 +93,19 @@ void DirectorySnapshot::initFiles() {
 }
 
 DirectorySnapshotDiff DirectorySnapshot::scan() {
+	return scan( false );
+}
+
+DirectorySnapshotDiff DirectorySnapshot::scan( bool keepMissingDirectory ) {
 	DirectorySnapshotDiff Diff;
 
 	Diff.clear();
 
 	FileInfo curFI( DirectoryInfo.Filepath );
+
+	Diff.DirMissing = !curFI.isDirectory();
+	if ( keepMissingDirectory && Diff.DirMissing )
+		return Diff;
 
 	Diff.DirChanged = DirectoryInfo != curFI;
 
@@ -106,7 +114,7 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 	}
 
 	/// If the directory was erased, create the events for files and directories deletion
-	if ( !curFI.exists() ) {
+	if ( !keepMissingDirectory && !curFI.exists() ) {
 		deleteAll( Diff );
 
 		return Diff;
@@ -114,6 +122,13 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 
 	FileInfoList files = FileSystem::filesInfoFromPath( DirectoryInfo.Filepath );
 	removeUnsupportedFiles( files );
+
+	// For a fallback, move the existing second path check after listing: a parent may
+	// have moved during the listing too. No part of its old tree is discarded in that case.
+	if ( keepMissingDirectory && !curFI.exists() ) {
+		Diff.DirMissing = true;
+		return Diff;
+	}
 
 	if ( files.empty() && Files.empty() ) {
 		return Diff;
