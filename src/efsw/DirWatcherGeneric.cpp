@@ -171,7 +171,7 @@ void DirWatcherGeneric::watch( bool reportOwnChange ) {
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
-			createDirectory( ( *it ).Filepath );
+			createDirectory( *it );
 		}
 
 		DiffIterator( DirsModified ) {
@@ -267,7 +267,8 @@ DirWatcherGeneric* DirWatcherGeneric::findDirWatcher( std::string dir ) {
 	return NULL;
 }
 
-DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
+DirWatcherGeneric* DirWatcherGeneric::createDirectory( const FileInfo& arrival ) {
+	std::string newdir( arrival.Filepath );
 	FileSystem::dirRemoveSlashAtEnd( newdir );
 	newdir = FileSystem::fileNameFromPath( newdir );
 
@@ -282,7 +283,14 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 
 	FileInfo fi( dir );
 
-	if ( !fi.isDirectory() || !fi.isReadable() || FileSystem::isRemoteFS( dir ) ) {
+	if ( !fi.isDirectory() ) {
+		// The scan already saved this arrival. Even if it disappeared before discovery,
+		// report its Add: the next scan will report its Delete from that saved snapshot.
+		handleAction( newdir, Actions::Add, "", arrival );
+		return NULL;
+	}
+
+	if ( !fi.isReadable() || FileSystem::isRemoteFS( dir ) ) {
 		return NULL;
 	}
 

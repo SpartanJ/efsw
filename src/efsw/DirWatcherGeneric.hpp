@@ -56,7 +56,7 @@ class DirWatcherGeneric {
   protected:
 	bool Deleted;
 
-	DirWatcherGeneric* createDirectory( std::string newdir );
+	DirWatcherGeneric* createDirectory( const FileInfo& arrival );
 
 	void removeDirectory( std::string dir );
 
