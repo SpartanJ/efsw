@@ -2,6 +2,8 @@
 #include "utest.h"
 #include <atomic>
 #include <efsw/FileSystem.hpp>
+#include <efsw/FileWatcherGeneric.hpp>
+#include <efsw/WatcherGeneric.hpp>
 #include <efsw/agent_protocol.hpp>
 #include <efsw/base.hpp>
 #include <set>
@@ -89,6 +91,88 @@ void expectSingleMove( TwoWatches& watches, const std::string& name, int* utest_
 }
 
 } // namespace
+
+namespace {
+
+struct HeldChildTree {
+	std::string Root{ getTemporaryDirectory() + "_held_child" };
+
+	~HeldChildTree() { removeDirectory( Root ); }
+
+	std::string path( const char* relative ) const {
+		std::string result( relative );
+		for ( char& c : result )
+			if ( c == '/' )
+				c = efsw::FileSystem::getOSSlash();
+		return Root + efsw::FileSystem::getOSSlash() + result;
+	}
+
+	bool create() {
+		if ( !createDirectory( Root ) )
+			return false;
+		std::string canonical = efsw::FileSystem::getRealPath( Root );
+		if ( canonical.empty() )
+			return false;
+		Root = std::move( canonical );
+		for ( const char* dir : { "src", "dst", "other", "out", "src/outer", "src/outer/inner" } ) {
+			if ( !createDirectory( path( dir ) ) )
+				return false;
+		}
+		return createFile( path( "src/outer/inner/file" ), "x" );
+	}
+};
+
+// A real filesystem version of seed 370, with scan boundaries fixed instead of timed:
+// inner leaves in one pass, then its parent moves and its file returns in the next.
+void checkHeldChildMove( const HeldChildTree& tree, efsw::FileActionBatch& batch,
+						 TestListener& listener, const std::vector<efsw::Watcher*>& watches,
+						 int* utest_result ) {
+	auto pass = [&]() {
+		batch.beginPass();
+		for ( auto* watch : watches ) {
+			watch->watch();
+			batch.scanned( watch );
+		}
+		batch.finishPass();
+	};
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/inner" ), tree.path( "out/inner" ) ) );
+	pass();
+	for ( const auto& event : listener.getEvents() )
+		ASSERT_EQ( efsw::Actions::Modified, std::get<0>( event ) );
+	listener.clearEvents();
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+	ASSERT_TRUE( renameFile( tree.path( "out/inner/file" ), tree.path( "other/file" ) ) );
+	pass();
+	pass();
+	const int returned = listener.indexOf( efsw::Actions::Moved, "file" );
+	const int deleted = listener.indexOf( efsw::Actions::Delete, "inner" );
+	const int parent = listener.indexOf( efsw::Actions::Moved, "outer" );
+	ASSERT_GE( returned, 0 );
+	ASSERT_GT( deleted, returned );
+	ASSERT_GT( parent, deleted );
+	const auto events = listener.getEvents();
+	const std::string oldFile = tree.path( "src/outer/inner/file" );
+	const std::string oldParent = tree.path( "src/outer" );
+	EXPECT_STREQ( oldFile.c_str(), std::get<2>( events[returned] ).c_str() );
+	EXPECT_STREQ( oldParent.c_str(), std::get<2>( events[parent] ).c_str() );
+}
+
+} // namespace
+
+UTEST( CrossWatchMoves, HeldChildDeleteBeforeMovingItsParentGeneric ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	efsw::WatcherGeneric destination( 1, tree.path( "dst/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric source( 2, tree.path( "src/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric other( 3, tree.path( "other/" ), &listener, &backend, true, true );
+	for ( auto* watch : { &destination, &source, &other } )
+		watch->SharedActionBatch = &batch;
+	checkHeldChildMove( tree, batch, listener, { &destination, &source, &other }, utest_result );
+}
 
 // A directory moved between two registrations must be owned by the destination afterwards:
 // events inside it reach the destination listener and survive removing the source watch.
@@ -1161,12 +1245,12 @@ bool followsMovedRegistrations() {
 #endif
 }
 
-#define START_NESTED_REGISTRATION_MOVE( watches )                                               \
-	do {                                                                                         \
-		const NestedRegistrationMove::Setup setup = ( watches ).startAndMove();                  \
-		if ( setup == NestedRegistrationMove::MoveRefused )                                      \
-			UTEST_SKIP( "the platform refuses to move a directory containing a watched one" );   \
-		ASSERT_EQ( NestedRegistrationMove::Ready, setup );                                       \
+#define START_NESTED_REGISTRATION_MOVE( watches )                                              \
+	do {                                                                                       \
+		const NestedRegistrationMove::Setup setup = ( watches ).startAndMove();                \
+		if ( setup == NestedRegistrationMove::MoveRefused )                                    \
+			UTEST_SKIP( "the platform refuses to move a directory containing a watched one" ); \
+		ASSERT_EQ( NestedRegistrationMove::Ready, setup );                                     \
 	} while ( 0 )
 
 } // namespace
@@ -1221,8 +1305,7 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 	TestListener outerListener;
 	TestListener innerListener;
 	efsw::FileWatcher watcher( useGeneric, 100 );
-	const efsw::WatchID outerId =
-		watcher.addWatch( outer, &outerListener, true, crossMoveOptions );
+	const efsw::WatchID outerId = watcher.addWatch( outer, &outerListener, true, crossMoveOptions );
 	ASSERT_GT( outerId, 0 );
 	const efsw::WatchID innerId =
 		watcher.addWatch( outer + "/inner", &innerListener, true, crossMoveOptions );
@@ -1251,11 +1334,11 @@ UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
 }
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#include <efsw/FileActionBatch.hpp>
+#include <efsw/FileInfo.hpp>
 #include <efsw/FileWatcherKqueue.hpp>
 #include <efsw/System.hpp>
 #include <efsw/WatcherKqueue.hpp>
-#include <efsw/FileActionBatch.hpp>
-#include <efsw/FileInfo.hpp>
 #include <mutex>
 #include <sys/time.h>
 
@@ -1268,21 +1351,62 @@ struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
 
 	void exhaust() {
 		mAvailable = mFileDescriptorCount.load();
-		mFileDescriptorCount = static_cast<long>( efsw::System::getMaxFD() );
+		mFileDescriptorCount = exhaustedCount();
 	}
 
 	/// Undoes exhaust(), with the descriptors opened meanwhile.
 	void restore() {
-		mFileDescriptorCount = mAvailable + ( mFileDescriptorCount.load() -
-											  static_cast<long>( efsw::System::getMaxFD() ) );
+		mFileDescriptorCount = mAvailable + ( mFileDescriptorCount.load() - exhaustedCount() );
 	}
 
 	long mAvailable{ 0 };
 
 	long descriptors() const { return mFileDescriptorCount.load(); }
+
+  private:
+	static long exhaustedCount() {
+		// In the middle of availablesFD()'s 500-descriptor reserve, leaving room for
+		// the native descriptors these tests open or close while exhausted. The limit
+		// itself is LONG_MAX on macOS: addAll() would wrap it and permit native children.
+		return static_cast<long>( efsw::System::getMaxFD() ) - 250;
+	}
+};
+
+/// Assert the backend under test, not just event behavior that native children also satisfy.
+struct FallbackKqueueWatch : efsw::WatcherKqueue {
+	using efsw::WatcherKqueue::WatcherKqueue;
+
+	bool hasOnlyGenericChildren() const {
+		for ( const auto& child : mWatches ) {
+			if ( NULL == dynamic_cast<efsw::WatcherGeneric*>( child.second ) )
+				return false;
+		}
+		return !mWatches.empty();
+	}
 };
 
 } // namespace
+
+UTEST( CrossWatchMoves, KqueueHeldChildDeleteBeforeMovingItsParent ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch destination( 1, tree.path( "dst/" ), &listener, true, &backend, NULL,
+									 true );
+	FallbackKqueueWatch source( 2, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+	FallbackKqueueWatch other( 3, tree.path( "other/" ), &listener, true, &backend, NULL, true );
+	for ( auto* watch : { &destination, &source, &other } )
+		watch->SharedActionBatch = &batch;
+	destination.addAll();
+	other.addAll();
+	backend.exhaust();
+	source.addAll();
+	ASSERT_TRUE( source.hasOnlyGenericChildren() );
+	checkHeldChildMove( tree, batch, listener, { &destination, &source, &other }, utest_result );
+}
 
 // Registrations added and removed from two threads at once, with the file descriptors used up
 // so that every watch falls back to the generic watcher. Meant for ThreadSanitizer.
@@ -1363,10 +1487,11 @@ UTEST( CrossWatchMoves, KqueueGenericFallbackReportsIntoTheSharedBatch ) {
 	{
 		ExhaustibleKqueue kqueue( &owner, 100 );
 		efsw::FileActionBatch batch;
-		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue, NULL, true );
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue, NULL, true );
 		watch.SharedActionBatch = &batch;
 		kqueue.exhaust();
 		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
 
 		EXPECT_TRUE( createFile( root + "/sub/shared.txt", "x" ) );
 		batch.beginPass();
@@ -1461,13 +1586,14 @@ UTEST( CrossWatchMoves, KqueueGenericFallbackMovesToAnotherRegistration ) {
 	{
 		ExhaustibleKqueue kqueue( &owner, 100 );
 		efsw::FileActionBatch batch;
-		efsw::WatcherKqueue firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
+		FallbackKqueueWatch firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
 		efsw::WatcherKqueue secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
 		firstWatch.SharedActionBatch = &batch;
 		secondWatch.SharedActionBatch = &batch;
 		secondWatch.addAll();
 		kqueue.exhaust();
 		firstWatch.addAll();
+		ASSERT_TRUE( firstWatch.hasOnlyGenericChildren() );
 
 		auto pass = [&]() {
 			batch.beginPass();
@@ -1520,9 +1646,10 @@ UTEST( CrossWatchMoves, KqueueMoveDirectoryWithGenericFallbackWatches ) {
 	efsw::FileWatcher owner( true );
 	{
 		ExhaustibleKqueue kqueue( &owner, 100 );
-		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue );
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue );
 		kqueue.exhaust();
 		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
 
 		EXPECT_TRUE( renameFile( root + "/sub", root + "/moved" ) );
 		watch.watch();
@@ -1567,14 +1694,16 @@ void runMixedTreeMove( bool genericSource, int* utest_result ) {
 	{
 		ExhaustibleKqueue kqueue( &owner, 100 );
 		efsw::FileActionBatch batch;
-		efsw::WatcherKqueue firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
-		efsw::WatcherKqueue secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
+		FallbackKqueueWatch firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
+		FallbackKqueueWatch secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
 		firstWatch.SharedActionBatch = &batch;
 		secondWatch.SharedActionBatch = &batch;
 		secondWatch.addAll();
 		if ( genericSource )
 			kqueue.exhaust();
 		firstWatch.addAll();
+		if ( genericSource )
+			ASSERT_TRUE( firstWatch.hasOnlyGenericChildren() );
 		if ( genericSource )
 			kqueue.restore();
 		else
@@ -1589,6 +1718,8 @@ void runMixedTreeMove( bool genericSource, int* utest_result ) {
 		secondWatch.watch();
 		batch.scanned( &secondWatch );
 		batch.finishPass();
+		if ( !genericSource )
+			ASSERT_TRUE( secondWatch.hasOnlyGenericChildren() );
 		if ( !genericSource )
 			kqueue.restore();
 
@@ -1622,9 +1753,10 @@ UTEST( CrossWatchMoves, KqueueRetireReachesGenericFallbackWatches ) {
 	efsw::FileWatcher owner( true );
 	{
 		ExhaustibleKqueue kqueue( &owner, 100 );
-		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue );
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue );
 		kqueue.exhaust();
 		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
 
 		// The fallback watch reports on its own while the root is active.
 		EXPECT_TRUE( createFile( root + "/sub/before.txt", "x" ) );

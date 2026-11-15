@@ -1931,7 +1931,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	// source's registration wait behind them, so that every registration keeps its order: a
 	// Delete must not follow the Add of a new file at the same path. A move whose source is
 	// removed is still delivered: it happened while both were registered.
-	// By the Add position of each move.
+	// By event position: moves are resolved at their Add; ordinary events are resolved
+	// when processed, so a directory move can wait for earlier events of its source watch.
 	std::vector<MoveState>& state = mScratch.State;
 	state.assign( mEvents.size(), MoveState::Unresolved );
 	// The moves of their own that left a moved tree after its Moved event: the tree's changes
@@ -2023,20 +2024,20 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	size_t& waitingOwners = mScratch.WaitingOwners;
 	waitingOwners = 0;
 
-	// The moves out of a deleted directory, by its Delete: it waits for them, or a listener
-	// would no longer find their sources. A directory's Delete comes before the Deletes inside it.
-	// The moves are sorted by source path, so those out of a directory are a range of them, which
-	// the directories around it share: nested deleted directories add a range each, not a copy of
-	// the moves. Moves are resolved once, so the search for the first that may not be skips the
-	// resolved ones, and records how far they go for the searches after it.
-	std::vector<size_t>& sortedMoves = mScratch.SortedMoves;
-	sortedMoves.clear();
-	// For each position, one at or after it such that every move in between is resolved.
+	// A directory's Delete waits for the moves out of it, or a listener would no longer find
+	// their sources. A directory move waits for independent Deletes inside its source tree:
+	// a released child Delete may itself wait for a file move, and must precede its parent's
+	// Moved event even when another queued event hides that Delete at the source watch.
+	// Two path-sorted ranges share the same arrays: independent directory Deletes, then moves
+	// by source path. Nested directories share ranges instead of copying dependencies per depth.
+	std::vector<size_t>& dependencies = mScratch.SortedDependencies;
+	dependencies.clear();
+	// For each position, one at or after it such that every prerequisite in between is resolved.
 	std::vector<size_t>& resolvedUntil = mScratch.ResolvedUntil;
 	resolvedUntil.clear();
-	// By event, the range of the moves out of a deleted directory, or None.
-	std::vector<std::pair<size_t, size_t>>& movesOut = mScratch.MovesOut;
-	movesOut.clear();
+	// By event, its prerequisite range in dependencies, or None.
+	std::vector<std::pair<size_t, size_t>>& prerequisites = mScratch.Prerequisites;
+	prerequisites.clear();
 	bool deletesDirectories = false;
 	for ( size_t i = 0; i < mEvents.size() && !deletesDirectories; i++ )
 		deletesDirectories = Actions::Delete == mEvents[i].ActionType &&
@@ -2045,51 +2046,68 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		std::vector<std::pair<const std::string*, size_t>>& sources = mScratch.Sources;
 		sources.clear();
 		for ( size_t i = 0; i < mEvents.size(); i++ )
+			if ( Actions::Delete == mEvents[i].ActionType && Moves::None == moves->MoveOf[i] &&
+				 mEvents[i].Info.isDirectory() )
+				sources.emplace_back( &mEvents[i].Info.Filepath, i );
+		const size_t deletes = sources.size();
+		for ( size_t i = 0; i < mEvents.size(); i++ )
 			if ( moves->MoveOf[i] == i )
 				sources.emplace_back( &mEvents[moves->SourceOf[i]].Info.Filepath, i );
-		if ( !sources.empty() ) {
-			movesOut.assign( mEvents.size(), std::make_pair( Moves::None, Moves::None ) );
-			std::sort( sources.begin(), sources.end(),
-					   []( const std::pair<const std::string*, size_t>& a,
-						   const std::pair<const std::string*, size_t>& b ) {
-						   return *a.first < *b.first;
-					   } );
-			sortedMoves.reserve( sources.size() );
-			for ( const auto& source : sources )
-				sortedMoves.push_back( source.second );
-			resolvedUntil.resize( sortedMoves.size() );
-			for ( size_t position = 0; position < resolvedUntil.size(); position++ )
-				resolvedUntil[position] = position;
-			auto firstFrom = [&sources]( const std::string& path ) {
-				return static_cast<size_t>(
-					std::lower_bound(
-						sources.begin(), sources.end(), path,
-						[]( const std::pair<const std::string*, size_t>& entry,
-							const std::string& value ) { return *entry.first < value; } ) -
-					sources.begin() );
-			};
-			for ( size_t i = 0; i < mEvents.size(); i++ ) {
-				const Event& event = mEvents[i];
-				if ( Actions::Delete != event.ActionType || Moves::None != moves->MoveOf[i] ||
-					 !event.Info.isDirectory() )
-					continue;
-				// The paths below the directory start with it and a separator: they sort from
-				// there up to the same path with the separator's successor.
-				std::string below =
-					event.Info.Filepath.substr( 0, directoryLength( event.Info.Filepath ) ) +
-					FileSystem::getOSSlash();
-				const size_t first = firstFrom( below );
-				below.back()++;
-				const size_t last = firstFrom( below );
-				if ( first < last )
-					movesOut[i] = std::make_pair( first, last );
-			}
+		prerequisites.assign( mEvents.size(), std::make_pair( Moves::None, Moves::None ) );
+		auto byPath = []( const std::pair<const std::string*, size_t>& a,
+						  const std::pair<const std::string*, size_t>& b ) {
+			return *a.first < *b.first;
+		};
+		std::sort( sources.begin(), sources.begin() + deletes, byPath );
+		std::sort( sources.begin() + deletes, sources.end(), byPath );
+		dependencies.reserve( sources.size() );
+		for ( const auto& source : sources )
+			dependencies.push_back( source.second );
+		resolvedUntil.resize( dependencies.size() );
+		for ( size_t position = 0; position < resolvedUntil.size(); position++ )
+			resolvedUntil[position] = position;
+		// Search for the virtual key "directory + separator" without allocating it. The
+		// separator's successor is the upper bound, excluding prefix siblings such as dir-x.
+		auto firstFrom = [&sources]( const std::string& directory, unsigned char separator,
+									 size_t begin, size_t end ) {
+			const size_t length = directoryLength( directory );
+			return static_cast<size_t>(
+				std::lower_bound(
+					sources.begin() + begin, sources.begin() + end, directory,
+					[length, separator]( const std::pair<const std::string*, size_t>& entry,
+										 const std::string& value ) {
+						const int compared = entry.first->compare( 0, length, value, 0, length );
+						return compared < 0 ||
+							   ( compared == 0 && ( entry.first->size() == length ||
+													static_cast<unsigned char>(
+														( *entry.first )[length] ) < separator ) );
+					} ) -
+				sources.begin() );
+		};
+		for ( size_t i = 0; i < mEvents.size(); i++ ) {
+			const Event& event = mEvents[i];
+			const bool deleted =
+				Actions::Delete == event.ActionType && Moves::None == moves->MoveOf[i];
+			if ( !event.Info.isDirectory() || ( !deleted && moves->MoveOf[i] != i ) )
+				continue;
+			// The paths below the directory start with it and a separator: they sort from
+			// there up to the same path with the separator's successor.
+			const std::string& path =
+				deleted ? event.Info.Filepath : mEvents[moves->SourceOf[i]].Info.Filepath;
+			const size_t begin = deleted ? deletes : 0;
+			const size_t end = deleted ? sources.size() : deletes;
+			const unsigned char separator = FileSystem::getOSSlash();
+			const size_t first = firstFrom( path, separator, begin, end );
+			const size_t last = firstFrom( path, separator + 1, begin, end );
+			if ( first < last )
+				prerequisites[i] = std::make_pair( first, last );
 		}
 	}
-	// @return The position of the first move from the position on that may be unresolved.
+	// Resolved entries are skipped and path-compressed for later lookups of shared ranges.
+	// @return The position of the first prerequisite that may be unresolved.
 	auto firstUnresolved = [&]( size_t position ) {
 		size_t found = position;
-		while ( found < sortedMoves.size() && MoveState::Unresolved != state[sortedMoves[found]] )
+		while ( found < dependencies.size() && MoveState::Unresolved != state[dependencies[found]] )
 			found = std::max( resolvedUntil[found], found + 1 );
 		for ( size_t at = position; at < found; ) {
 			const size_t after = std::max( resolvedUntil[at], at + 1 );
@@ -2124,16 +2142,18 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 
 	// Whether a source event of a move waits for its destination. Not when both belong to one
 	// registration, which is removed with both, or when the move is resolved. A deleted
-	// directory waits for the moves out of it.
-	// @return The move it waits for, or None.
+	// directory waits for the moves out of it. A directory's destination also waits for earlier
+	// queued source events: a released child Delete must keep naming a path that still exists.
+	// @return The event it waits for, or None.
 	auto blocker = [&]( size_t i ) {
 		const size_t move = moves->MoveOf[i];
-		if ( Moves::None == move ) {
-			if ( movesOut.empty() || Moves::None == movesOut[i].first )
-				return Moves::None;
-			const size_t position = firstUnresolved( movesOut[i].first );
-			return position < movesOut[i].second ? sortedMoves[position] : Moves::None;
+		if ( !prerequisites.empty() && Moves::None != prerequisites[i].first ) {
+			const size_t position = firstUnresolved( prerequisites[i].first );
+			if ( position < prerequisites[i].second )
+				return dependencies[position];
 		}
+		if ( Moves::None == move )
+			return Moves::None;
 		return move != i && mEvents[move].Owner != mEvents[i].Owner &&
 					   MoveState::Unresolved == state[move]
 				   ? move
@@ -2144,6 +2164,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		const size_t move = moves->MoveOf[i];
 		if ( Moves::None == move ) {
 			deliverOrdinary( i );
+			state[i] = MoveState::Delivered;
 		} else if ( move != i ) {
 			if ( MoveState::Broken == state[move] && !converted[move] )
 				deliverEvent( listener, i );
@@ -2245,12 +2266,12 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 		}
 	};
 
-	// The registrations whose waiting events start with one that waits for a move, by that move.
+	// The registrations whose waiting events start with one that waits for an event, by it.
 	ListsByPosition<Watcher*>& blockedBy = mScratch.BlockedBy;
 	blockedBy.reset( mEvents.size() );
 
-	// A move was resolved: delivers the waiting events that no longer wait, those of the
-	// registrations it blocked, and of those the moves resolved meanwhile blocked.
+	// An event was resolved: delivers the waiting events that no longer wait, those of the
+	// registrations it blocked, and of those the events resolved meanwhile blocked.
 	auto release = [&]( size_t resolved ) {
 		std::vector<Watcher*>& unblocked = mScratch.Unblocked;
 		unblocked.clear();
@@ -2272,7 +2293,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 					Moves::None == ( move = blocker( queue.Events[queue.Front] ) ) ) {
 				const size_t i = queue.Events[queue.Front++];
 				process( i );
-				if ( moves->MoveOf[i] == i )
+				if ( MoveState::Unresolved != state[i] )
 					wake( i );
 			}
 			if ( queue.empty() ) {
@@ -2302,7 +2323,7 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 			continue;
 		}
 		process( i );
-		if ( moves->MoveOf[i] == i && waitingOwners > 0 )
+		if ( waitingOwners > 0 && MoveState::Unresolved != state[i] )
 			release( i );
 	}
 

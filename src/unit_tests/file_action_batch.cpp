@@ -2012,7 +2012,165 @@ efsw::FileIdentity id( unsigned long inode ) {
 	return efsw::FileIdentity( 1, inode );
 }
 
+enum class RemovalBeforeChildDelete { None, Source, Destination };
+
+// Seed 370: a directory leaves all watches in one pass; its parent moves in the next while
+// a file returns from the departed directory. Its released Delete waits for the file, but
+// must still name a path the consumer knows when the parent is moved to another registration.
+void checkReleasedChildDelete( bool queuedMove, RemovalBeforeChildDelete removal, int* utest_result,
+							   const std::array<int, 3>& order = { { 0, 1, 2 } },
+							   bool returnInside = false ) {
+	efsw::FileActionBatch batch;
+	struct Listener : PathListener {
+		efsw::FileActionBatch* Batch;
+		efsw::Watcher* Removed{ NULL };
+
+		void handleFileAction( efsw::WatchID watch, const std::string& directory,
+							   const std::string& filename, efsw::Action action,
+							   const std::string& old ) override {
+			PathListener::handleFileAction( watch, directory, filename, action, old );
+			if ( Removed ) {
+				Batch->forget( Removed );
+				Removed = NULL;
+			}
+		}
+	} listener;
+	listener.Batch = &batch;
+	FakeWatch destination( 1, batch, &listener );
+	FakeWatch source( 2, batch, &listener );
+	FakeWatch other( 3, batch, &listener );
+	const std::vector<FakeWatch*> watches{ &destination, &source, &other };
+	const std::string from = at( { "src", "outer" } );
+	const std::string child = from + at( { "inner" } );
+	const std::string to = at( { "dst", "outer" } );
+	const std::string returned = returnInside ? to + at( { "file" } ) : at( { "other", "file" } );
+	const std::string unrelated = at( { "src", "unrelated" } );
+	const std::string relocated = at( { "other", "unrelated" } );
+	const std::pair<efsw::FileIdentity, bool> outer{ id( 10 ), true };
+	const std::pair<efsw::FileIdentity, bool> inner{ id( 11 ), true };
+	const std::pair<efsw::FileIdentity, bool> leaf{ id( 12 ), false };
+	const std::pair<efsw::FileIdentity, bool> crossing{ id( 13 ), false };
+	ReplayTree replay;
+	for ( const std::string& root : { at( { "src" } ), at( { "dst" } ), at( { "other" } ) } )
+		replay.Entries[root] = Unknown;
+	replay.Entries[from] = replayed( outer );
+	replay.Entries[child] = replayed( inner );
+	replay.Entries[child + at( { "file" } )] = replayed( leaf );
+	if ( queuedMove ) {
+		replay.Entries[unrelated] = replayed( crossing );
+		reportAt( source, unrelated, efsw::Actions::Delete, crossing );
+	}
+	reportAt( source, child, efsw::Actions::Delete, inner );
+	reportAt( source, child + at( { "file" } ), efsw::Actions::Delete, leaf );
+	runPass( batch, watches );
+	ASSERT_EQ( 0u, listener.Events.size() );
+
+	listener.Removed = removal == RemovalBeforeChildDelete::Source		  ? &source
+					   : removal == RemovalBeforeChildDelete::Destination ? &destination
+																		  : NULL;
+	reportAt( destination, to, efsw::Actions::Add, outer );
+	reportAt( source, from, efsw::Actions::Delete, outer );
+	reportAt( returnInside ? destination : other, returned, efsw::Actions::Add, leaf );
+	if ( queuedMove )
+		reportAt( other, relocated, efsw::Actions::Add, crossing );
+	const std::vector<FakeWatch*> scans{ watches[order[0]], watches[order[1]], watches[order[2]] };
+	runPass( batch, scans );
+	runPass( batch, scans );
+	if ( removal == RemovalBeforeChildDelete::Source ) {
+		// Removing the source cancels its pending Deletes, but not moves into other watches.
+		ASSERT_EQ( 2u, listener.Events.size() );
+		EXPECT_EQ( efsw::Actions::Moved, listener.Events[0].Action );
+		EXPECT_EQ( efsw::Actions::Moved, listener.Events[1].Action );
+		EXPECT_STREQ( returned.c_str(), listener.Events[0].Path.c_str() );
+		EXPECT_STREQ( to.c_str(), listener.Events[1].Path.c_str() );
+		return;
+	}
+	std::string problem;
+	for ( const auto& event : listener.Events ) {
+		problem = replay.apply( event );
+		if ( !problem.empty() )
+			break;
+	}
+	if ( !problem.empty() ) {
+		for ( const auto& event : listener.Events )
+			printf( "  %d %s <- %s\n", (int)event.Action, event.Path.c_str(),
+					event.OldPath.c_str() );
+	}
+	EXPECT_STREQ( "", problem.c_str() );
+	const bool destinationRemoved = removal == RemovalBeforeChildDelete::Destination;
+	EXPECT_EQ( 5u + queuedMove - destinationRemoved, replay.Entries.size() );
+	for ( const std::string& path :
+		  { at( { "src" } ), at( { "dst" } ), at( { "other" } ), returned } )
+		EXPECT_EQ( 1u, replay.Entries.count( path ) );
+	EXPECT_EQ( destinationRemoved ? 0u : 1u, replay.Entries.count( to ) );
+	if ( queuedMove )
+		EXPECT_EQ( 1u, replay.Entries.count( relocated ) );
+}
+
 } // namespace
+
+UTEST( FileActionBatch, ReleasedChildDeleteRemainsValidWhenItsParentMoves ) {
+	checkReleasedChildDelete( false, RemovalBeforeChildDelete::None, utest_result );
+}
+
+UTEST( FileActionBatch, ReleasedChildDeleteBehindAnotherMoveRemainsValid ) {
+	checkReleasedChildDelete( true, RemovalBeforeChildDelete::None, utest_result );
+}
+
+UTEST( FileActionBatch, RemovingSourceWhileItsChildDeleteBlocksItsMove ) {
+	checkReleasedChildDelete( false, RemovalBeforeChildDelete::Source, utest_result );
+}
+
+UTEST( FileActionBatch, RemovingDestinationWhileAChildDeleteBlocksItsMove ) {
+	checkReleasedChildDelete( false, RemovalBeforeChildDelete::Destination, utest_result );
+}
+
+UTEST( FileActionBatch, ReleasedChildDeleteDependenciesInEveryScanOrder ) {
+	std::array<int, 3> order{ { 0, 1, 2 } };
+	do {
+		checkReleasedChildDelete( false, RemovalBeforeChildDelete::None, utest_result, order );
+		checkReleasedChildDelete( true, RemovalBeforeChildDelete::None, utest_result, order );
+		checkReleasedChildDelete( false, RemovalBeforeChildDelete::Source, utest_result, order );
+		checkReleasedChildDelete( false, RemovalBeforeChildDelete::Destination, utest_result,
+								  order );
+		// Returning into the parent's destination creates a dependency cycle. A conservative
+		// Delete/Add fallback must still replay correctly, rather than delivering stale paths.
+		checkReleasedChildDelete( false, RemovalBeforeChildDelete::None, utest_result, order,
+								  true );
+	} while ( std::next_permutation( order.begin(), order.end() ) );
+}
+
+// The dependency index searches virtual "path + separator" bounds in place. A neighboring
+// name must not become a child of the moved directory, including bytes above ASCII: doing so
+// makes its Delete block the move while its file's arrival waits behind that move, a cycle.
+UTEST( FileActionBatch, PrefixSiblingDeletesDoNotBlockADirectoryMove ) {
+	for ( const char* suffix : { "-x", "2", ".txt", "\xc3\xa9" } ) {
+		efsw::FileActionBatch batch;
+		TestListener listener;
+		FakeWatch destination( 1, batch, &listener );
+		FakeWatch source( 2, batch, &listener );
+		FakeWatch other( 3, batch, &listener );
+		const std::vector<FakeWatch*> watches{ &destination, &source, &other };
+		const std::string from = at( { "src", "outer" } );
+		const std::string sibling = from + suffix + at( { "inner" } );
+		const std::string to = at( { "dst", "outer" } );
+		const std::pair<efsw::FileIdentity, bool> outer{ id( 10 ), true };
+		const std::pair<efsw::FileIdentity, bool> inner{ id( 11 ), true };
+		const std::pair<efsw::FileIdentity, bool> leaf{ id( 12 ), false };
+		reportAt( source, sibling, efsw::Actions::Delete, inner );
+		reportAt( source, sibling + at( { "file" } ), efsw::Actions::Delete, leaf );
+		runPass( batch, watches );
+		ASSERT_EQ( 0u, listener.getEventCount() );
+		reportAt( destination, to, efsw::Actions::Add, outer );
+		reportAt( destination, to + at( { "file" } ), efsw::Actions::Add, leaf );
+		reportAt( source, from, efsw::Actions::Delete, outer );
+		runPass( batch, watches );
+		runPass( batch, watches );
+		EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+		EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "file" ) );
+		EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "inner" ) );
+	}
+}
 
 // Changes that depend on one another inside a moved tree are delivered in an order a listener
 // can apply: a directory replaced by a new one at its path, with its file moved into the new

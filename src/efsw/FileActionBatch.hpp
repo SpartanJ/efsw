@@ -246,7 +246,7 @@ class FileActionBatch {
 		std::vector<std::pair<Value, size_t>> mLinks;
 	};
 
-	/// A registration's events waiting for a move, in order, from Front on.
+	/// A registration's events waiting for a prerequisite, in order, from Front on.
 	struct WaitingEvents {
 		std::vector<size_t> Events;
 		size_t Front{ 0 };
@@ -366,9 +366,9 @@ class FileActionBatch {
 		std::unordered_map<Watcher*, WaitingEvents> Waiting;
 		size_t WaitingOwners{ 0 };
 		std::vector<std::pair<const std::string*, size_t>> Sources;
-		std::vector<size_t> SortedMoves;
+		std::vector<size_t> SortedDependencies;
 		std::vector<size_t> ResolvedUntil;
-		std::vector<std::pair<size_t, size_t>> MovesOut;
+		std::vector<std::pair<size_t, size_t>> Prerequisites;
 		std::unordered_map<std::string, std::string> CanonicalDirectories;
 		ListsByPosition<Watcher*> BlockedBy;
 		std::vector<Watcher*> Unblocked;
