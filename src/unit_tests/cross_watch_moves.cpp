@@ -459,6 +459,67 @@ UTEST( CrossWatchMoves, EntryLeavesAnArrivingTreeBetweenGenericScans ) {
 	}
 }
 
+// Seed 331: discovery caches g, then a rescan in the same pass finds it deleted. The tree's
+// comparison already reports the Delete; the destination must not hold and deliver it again.
+// Generic discovery can rescan a newly installed sub-watch too: this is not kqueue-specific.
+UTEST( CrossWatchMoves, GenericArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( createDepartingTree( tree, false ) );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/file" ), tree.path( "src/outer/g" ) ) );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/f" ), "f" ) );
+	ASSERT_TRUE( createDirectory( tree.path( "dst/d" ) ) );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	efsw::WatcherGeneric source( 1, tree.path( "src/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric destination( 2, tree.path( "dst/" ), &listener, &backend, true, true );
+	for ( auto* watch : { &source, &destination } )
+		watch->SharedActionBatch = &batch;
+	const std::vector<std::string> roots{ tree.path( "src" ), tree.path( "dst" ) };
+	const ReportedPaths reported( tree.Root );
+	auto paths = reported.list( roots );
+	const std::string arrived = tree.path( "dst/d/n9" );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), arrived ) );
+	ASSERT_TRUE( removeFile( tree.path( "dst/d/n9/f" ) ) );
+	batch.beginPass();
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	std::vector<const efsw::FileInfo*> entries;
+	ASSERT_TRUE( destination.collectTree( arrived, &entries ) );
+	ASSERT_EQ( 1u, entries.size() );
+	const std::string cached = tree.path( "dst/d/n9/g" );
+	ASSERT_STREQ( cached.c_str(), entries[0]->Filepath.c_str() );
+	// Borrowed snapshot pointers do not survive the next scan.
+	entries.clear();
+	ASSERT_TRUE( removeFile( cached ) );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	// A held duplicate would arrive here, after the comparison already deleted g.
+	batch.beginPass();
+	for ( auto* watch : { &source, &destination } ) {
+		watch->watch();
+		batch.scanned( watch );
+	}
+	batch.finishPass();
+	int deletes = 0, moves = 0;
+	for ( auto& event : listener.Events ) {
+		event.Path = reported( event.Path );
+		event.OldPath = reported( event.OldPath );
+		if ( event.Action == efsw::Actions::Delete && event.Path == cached )
+			deletes++;
+		if ( event.Action == efsw::Actions::Moved && event.Path == arrived )
+			moves++;
+	}
+	EXPECT_EQ( 1, deletes );
+	EXPECT_EQ( 1, moves );
+	const std::string problem = replay( paths, listener.Events );
+	EXPECT_STREQ( "", problem.c_str() );
+	EXPECT_TRUE( paths == reported.list( roots ) );
+}
+
 // A directory moved between two registrations, then changed inside before the next scan with
 // changes that depend on one another, or moved to and from a third registration: the events,
 // replayed, turn the trees the registrations started with into the trees on disk.
