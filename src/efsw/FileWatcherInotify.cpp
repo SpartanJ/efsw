@@ -496,8 +496,16 @@ void FileWatcherInotify::run() {
 	// Directories require extra cleanup because every recursively watched child
 	// has its own native inotify watch. Only the watches of the source's registration
 	// are affected; other registrations sharing those directories keep them.
-	auto emitMovedOutside = [this]( WatcherInotify* watch, const std::string& oldFileName ) {
+	auto emitMovedOutside = [this]( WatcherInotify* watch, const std::string& oldFileName,
+									uint32_t mask ) {
 		watch->OldFileName.clear();
+		// The event records the type before the move. Files have no subtree watches to remove,
+		// so do not search every watched directory for each unpaired file move. Checking the
+		// old path on disk would be wrong here: even a moved directory is no longer there.
+		if ( !( mask & IN_ISDIR ) ) {
+			handleAction( watch, oldFileName, IN_DELETE );
+			return;
+		}
 
 		std::vector<Watcher*> eraseWatches;
 		{
@@ -615,7 +623,7 @@ void FileWatcherInotify::run() {
 													  PendingMove{ owners[s], partners[s],
 																   event.filename } );
 							else
-								emitMovedOutside( owners[s], event.filename );
+								emitMovedOutside( owners[s], event.filename, event.mask );
 						}
 					} else if ( event.mask & IN_MOVED_TO ) {
 						moves.clear();
@@ -649,7 +657,7 @@ void FileWatcherInotify::run() {
 								if ( !moveDirectoryBetweenRoots( source, sourceFilename, owner,
 																 event.filename ) ) {
 									if ( !source->Removed )
-										emitMovedOutside( source, sourceFilename );
+										emitMovedOutside( source, sourceFilename, event.mask );
 									handleAction( owner, event.filename, event.mask );
 								}
 							} else {
@@ -661,7 +669,7 @@ void FileWatcherInotify::run() {
 						// Sources whose destination owner disappeared in the meantime.
 						for ( PendingMove& move : moves ) {
 							if ( !move.source->Removed )
-								emitMovedOutside( move.source, move.filename );
+								emitMovedOutside( move.source, move.filename, event.mask );
 						}
 					} else {
 						for ( WatcherInotify* owner : owners ) {

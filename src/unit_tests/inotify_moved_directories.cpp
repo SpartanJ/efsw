@@ -422,6 +422,86 @@ UTEST( InotifyMovedDirectories, ParentMovesDuringArrivalDiscovery ) {
 	removeDirectory( root );
 }
 
+// File move-outs need no subtree cleanup. Directory move-outs still remove their native tree,
+// although their old paths no longer exist. Unpaired moves between registrations retain the
+// source's Delete before the destination's Add, with neither option or only the source opted in.
+UTEST( InotifyMovedDirectories, UnpairedMovesKeepOrderAndDirectoryCoverage ) {
+	for ( bool directory : { false, true } ) {
+		for ( int route = 0; route < 3; route++ ) {
+			const std::string root = getTemporaryDirectory() + "_unpaired_move_coverage";
+			const std::string source = root + "/source", destination = root + "/destination";
+			removeDirectory( root );
+			for ( const auto& dir : { root, source, destination, source + "/keep" } )
+				ASSERT_TRUE( createDirectory( dir ) );
+			if ( directory ) {
+				ASSERT_TRUE( createDirectory( source + "/entry" ) );
+				ASSERT_TRUE( createDirectory( source + "/entry/child" ) );
+			} else {
+				ASSERT_TRUE( createFile( source + "/entry" ) );
+			}
+			PathListener listener;
+			efsw::WatchID sourceID = 0, destinationID = 0;
+			{
+				LockableWatcher watcher;
+				sourceID = watcher.addWatch( source, &listener, true,
+											 route == 1 ? std::vector<efsw::WatcherOption>{}
+														: crossMoves );
+				ASSERT_GT( sourceID, 0 );
+				if ( route != 0 ) {
+					destinationID = watcher.addWatch( destination, &listener, true, {} );
+					ASSERT_GT( destinationID, 0 );
+				}
+				watcher.watch();
+				ASSERT_TRUE( renameFile( source + "/entry", destination + "/entry" ) );
+				ASSERT_TRUE( listener.waitFor( efsw::Actions::Delete, source + "/entry" ) );
+				if ( route != 0 )
+					ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, destination + "/entry" ) );
+				ASSERT_TRUE( createFile( source + "/keep/retained" ) );
+				ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, source + "/keep/retained" ) );
+				if ( directory ) {
+					ASSERT_TRUE( createFile( destination + "/entry/child/late" ) );
+					if ( route != 0 ) {
+						ASSERT_TRUE( listener.waitFor( efsw::Actions::Add,
+													   destination + "/entry/child/late" ) );
+					}
+				}
+				ASSERT_TRUE( listener.settle( source ) );
+			}
+			const auto events = listener.events();
+			int removed = -1, childRemoved = -1, added = -1;
+			int deletes = 0, adds = 0;
+			for ( size_t i = 0; i < events.size(); i++ ) {
+				const auto& event = events[i];
+				if ( event.Action == efsw::Actions::Delete && event.Path == source + "/entry" ) {
+					EXPECT_EQ( sourceID, event.ID );
+					removed = static_cast<int>( i );
+					deletes++;
+				}
+				if ( event.Action == efsw::Actions::Delete &&
+					 event.Path == source + "/entry/child" )
+					childRemoved = static_cast<int>( i );
+				if ( event.Action == efsw::Actions::Add && event.Path == destination + "/entry" ) {
+					EXPECT_EQ( destinationID, event.ID );
+					added = static_cast<int>( i );
+					adds++;
+				}
+				EXPECT_NE( efsw::Actions::Moved, event.Action );
+				if ( event.Path.find( "/late" ) != std::string::npos )
+					EXPECT_NE( sourceID, event.ID );
+			}
+			EXPECT_EQ( 1, deletes );
+			EXPECT_EQ( route == 0 ? 0 : 1, adds );
+			if ( route != 0 )
+				EXPECT_LT( removed, added );
+			if ( directory ) {
+				EXPECT_GE( childRemoved, 0 );
+				EXPECT_LT( childRemoved, removed );
+			}
+			removeDirectory( root );
+		}
+	}
+}
+
 // linkAllowed() runs after the arrival was found to be a directory, before its native watch
 // is created. Move its parent there, so registration fails on the stale path deterministically.
 UTEST( InotifyMovedDirectories, ParentMovesBetweenArrivalCheckAndRegistration ) {
