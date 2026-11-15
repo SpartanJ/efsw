@@ -3154,6 +3154,82 @@ UTEST( FileActionBatch, ArrivalRescanChangesReplayOnlyOnce ) {
 	EXPECT_TRUE( expected == actual );
 }
 
+// Seed 46, without filesystem timing: an arriving tree is scanned before its file leaves,
+// while the source sees both moves. A refresh collects that cached file's Delete in this
+// pass; otherwise the next pass reports the comparison's Delete a second time.
+UTEST( FileActionBatch, DepartureFromAnArrivingTreeRefreshesItsSnapshot ) {
+	struct ArrivingWatch : FakeWatch {
+		using FakeWatch::FakeWatch;
+
+		void watch() override {
+			if ( Scans == 1 ) {
+				for ( const auto& entry : Tree )
+					report( "/dst/outer/", "file", efsw::Actions::Delete, entry );
+				Tree.clear();
+				Snapshot.clear();
+			}
+			FakeWatch::watch();
+		}
+	};
+	efsw::FileActionBatch batch;
+	PathListener listener;
+	ArrivingWatch destination( 1, batch, &listener );
+	FakeWatch source( 2, batch, &listener );
+	FakeWatch unrelated( 3, batch, &listener );
+	const auto outer = synthetic( "", id( 1001 ), true );
+	const auto file = synthetic( "", id( 1002 ), false );
+	destination.Tree = { at( file, "/dst/outer/file" ) };
+	destination.Snapshot.insert( file.identity() );
+	destination.report( "/dst/", "outer", efsw::Actions::Add, outer );
+	source.report( "/src/", "file", efsw::Actions::Add, file );
+	source.report( "/src/", "outer", efsw::Actions::Delete, outer );
+	source.report( "/src/outer/", "file", efsw::Actions::Delete, file );
+	source.GiveUp.emplace_back( outer, std::vector<efsw::FileInfoList>() );
+	ReplayTree model;
+	model.Entries[slashes( "/src" )] = id( 10 );
+	model.Entries[slashes( "/dst" )] = id( 11 );
+	model.Entries[slashes( "/src/outer" )] = outer.identity();
+	model.Entries[slashes( "/src/outer/file" )] = file.identity();
+	runPass( batch, { &destination, &source, &unrelated } );
+	EXPECT_EQ( 2, destination.Scans );
+	EXPECT_EQ( 1, source.Scans );
+	EXPECT_EQ( 1, unrelated.Scans );
+	runPass( batch, { &destination, &source, &unrelated } );
+	for ( const auto& event : listener.Events ) {
+		auto normalized = event;
+		normalized.Path = slashes( normalized.Path );
+		normalized.OldPath = slashes( normalized.OldPath );
+		const std::string problem = model.apply( normalized );
+		EXPECT_STREQ( "", problem.c_str() );
+	}
+	EXPECT_EQ( 3u, listener.Events.size() );
+	EXPECT_EQ( 4u, model.Entries.size() );
+	EXPECT_EQ( 1u, model.Entries.count( slashes( "/src/file" ) ) );
+	EXPECT_EQ( 0u, model.Entries.count( slashes( "/dst/outer/file" ) ) );
+}
+
+// A departure already absent from the destination's snapshot, and an unrelated Add, need
+// no refresh. Neither ordinary Adds nor tree comparison alone should introduce rescans.
+UTEST( FileActionBatch, DeparturesAlreadyAbsentFromAnArrivingTreeDoNotRescan ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	const auto kept = file.make( "outer/kept" );
+	const auto left = file.make( "outer/left" );
+	const auto unrelated = file.make( "unrelated" );
+	tree.was( kept, "kept" );
+	tree.was( left, "left" );
+	tree.is( second, kept, "kept" );
+	second.Snapshot.insert( kept.identity() );
+	tree.move( first, second );
+	third.report( "/other/", "left", efsw::Actions::Add, left );
+	third.report( "/other/", "unrelated", efsw::Actions::Add, unrelated );
+	runPass( batch, watches );
+	EXPECT_EQ( 1, first.Scans );
+	EXPECT_EQ( 1, second.Scans );
+	EXPECT_EQ( 1, third.Scans );
+	EXPECT_EQ( 4u, listener.getEventCount() );
+}
+
 // A rename collected with the arrival, not on a later scan: holding the whole move must
 // retain that distinction, so releasing it does not deliver both its comparison and rename.
 UTEST( FileActionBatch, ArrivalRenameStaysWithItsHeldTree ) {

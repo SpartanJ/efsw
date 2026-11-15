@@ -363,7 +363,101 @@ std::string replay( std::set<std::string>& paths,
 	return "";
 }
 
+// Seed 46: the destination caches the arriving tree before a file (or subtree) leaves it;
+// the source then sees both moves. The next pass must not repeat a departure already reported
+// by the comparison. Recreating and deleting that path afterwards must still be reported.
+bool createDepartingTree( HeldChildTree& tree, bool directory ) {
+	return tree.create() && ( directory || ( renameFile( tree.path( "src/outer/inner/file" ),
+														 tree.path( "src/outer/file" ) ) &&
+											 removeDirectory( tree.path( "src/outer/inner" ) ) ) );
+}
+
+void checkDepartureFromArrivingTree( const HeldChildTree& tree, efsw::FileActionBatch& batch,
+									 ReplayListener& listener, efsw::Watcher& destination,
+									 efsw::Watcher& source, bool directory, int* utest_result ) {
+	const std::vector<std::string> roots{ tree.path( "src" ), tree.path( "dst" ) };
+	const ReportedPaths reported( tree.Root );
+	auto paths = reported.list( roots );
+	auto scan = [&]( efsw::Watcher& watch ) {
+		watch.watch();
+		batch.scanned( &watch );
+	};
+	auto pass = [&]() {
+		batch.beginPass();
+		scan( destination );
+		scan( source );
+		batch.finishPass();
+	};
+	auto check = [&]() {
+		std::vector<ReplayListener::Recorded> events;
+		events.swap( listener.Events );
+		for ( auto& event : events ) {
+			event.Path = reported( event.Path );
+			event.OldPath = reported( event.OldPath );
+		}
+		const std::string problem = replay( paths, events );
+		EXPECT_STREQ( "", problem.c_str() );
+		const auto expected = reported.list( roots );
+		if ( paths != expected ) {
+			printf( "Departure directory=%d\n", directory );
+			for ( const auto& event : events )
+				printf( "  %d %s <- %s\n", event.Action, event.Path.c_str(),
+						event.OldPath.c_str() );
+			for ( const auto& path : expected )
+				if ( !paths.count( path ) )
+					printf( "  Missing %s\n", path.c_str() );
+			for ( const auto& path : paths )
+				if ( !expected.count( path ) )
+					printf( "  Extra %s\n", path.c_str() );
+		}
+		EXPECT_TRUE( paths == expected );
+	};
+	ASSERT_TRUE( renameFile( source.Directory + "outer", destination.Directory + "outer" ) );
+	batch.beginPass();
+	scan( destination );
+	const std::string from = destination.Directory +
+							 ReportedPaths::normalize( directory ? "outer/inner" : "outer/file" );
+	const std::string to = source.Directory + ( directory ? "inner" : "file" );
+	ASSERT_TRUE( renameFile( from, to ) );
+	scan( source );
+	batch.finishPass();
+	pass();
+	pass();
+	check();
+	ASSERT_TRUE( directory ? createDirectory( from ) : createFile( from, "recreated" ) );
+	pass();
+	pass();
+	check();
+	ASSERT_TRUE( directory ? removeDirectory( from ) : removeFile( from ) );
+	pass();
+	pass();
+	check();
+}
+
 } // namespace
+
+UTEST( CrossWatchMoves, EntryLeavesAnArrivingTreeBetweenGenericScans ) {
+	for ( int configuration = 0; configuration < 4; configuration++ ) {
+		const bool directory = configuration & 1;
+		const bool reverse = configuration & 2;
+		HeldChildTree tree;
+		ASSERT_TRUE( createDepartingTree( tree, directory ) );
+		if ( reverse )
+			ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherGeneric backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherGeneric destination( 1, tree.path( reverse ? "src/" : "dst/" ), &listener,
+										  &backend, true, true );
+		efsw::WatcherGeneric source( 2, tree.path( reverse ? "dst/" : "src/" ), &listener, &backend,
+									 true, true );
+		for ( auto* watch : { &destination, &source } )
+			watch->SharedActionBatch = &batch;
+		checkDepartureFromArrivingTree( tree, batch, listener, destination, source, directory,
+										utest_result );
+	}
+}
 
 // A directory moved between two registrations, then changed inside before the next scan with
 // changes that depend on one another, or moved to and from a third registration: the events,
@@ -1383,6 +1477,14 @@ struct FallbackKqueueWatch : efsw::WatcherKqueue {
 		}
 		return !mWatches.empty();
 	}
+
+	bool hasOnlyNativeChildren() const {
+		for ( const auto& child : mWatches ) {
+			if ( NULL == dynamic_cast<efsw::WatcherKqueue*>( child.second ) )
+				return false;
+		}
+		return !mWatches.empty();
+	}
 };
 
 } // namespace
@@ -1406,6 +1508,47 @@ UTEST( CrossWatchMoves, KqueueHeldChildDeleteBeforeMovingItsParent ) {
 	source.addAll();
 	ASSERT_TRUE( source.hasOnlyGenericChildren() );
 	checkHeldChildMove( tree, batch, listener, { &destination, &source, &other }, utest_result );
+}
+
+UTEST( CrossWatchMoves, KqueueEntryLeavesAnArrivingTreeBetweenScans ) {
+	for ( bool genericSource : { false, true } ) {
+		for ( bool genericDestination : { false, true } ) {
+			for ( int configuration = 0; configuration < 4; configuration++ ) {
+				const bool directory = configuration & 1;
+				const bool reverse = configuration & 2;
+				HeldChildTree tree;
+				ASSERT_TRUE( createDepartingTree( tree, directory ) );
+				if ( reverse )
+					ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+				ReplayListener listener;
+				efsw::FileWatcher owner( true );
+				ExhaustibleKqueue backend( &owner, 100 );
+				efsw::FileActionBatch batch;
+				FallbackKqueueWatch destination( 1, tree.path( reverse ? "src/" : "dst/" ),
+												 &listener, true, &backend, NULL, true );
+				FallbackKqueueWatch source( 2, tree.path( reverse ? "dst/" : "src/" ), &listener,
+											true, &backend, NULL, true );
+				for ( auto* watch : { &destination, &source } )
+					watch->SharedActionBatch = &batch;
+				destination.addAll();
+				if ( genericSource )
+					backend.exhaust();
+				source.addAll();
+				EXPECT_TRUE( genericSource ? source.hasOnlyGenericChildren()
+										   : source.hasOnlyNativeChildren() );
+				if ( genericSource )
+					backend.restore();
+				if ( genericDestination )
+					backend.exhaust();
+				checkDepartureFromArrivingTree( tree, batch, listener, destination, source,
+												directory, utest_result );
+				EXPECT_TRUE( genericDestination ? destination.hasOnlyGenericChildren()
+												: destination.hasOnlyNativeChildren() );
+				if ( genericDestination )
+					backend.restore();
+			}
+		}
+	}
 }
 
 // Registrations added and removed from two threads at once, with the file descriptors used up

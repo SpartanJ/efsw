@@ -429,6 +429,11 @@ class FileActionBatch {
 	/// Sets, for each segment, whether its watch was scanned again, in mScratch.Rescanned.
 	void rescanMoveSources();
 
+	/// Refreshes arriving trees that still cache an entry added elsewhere in the pass. Their
+	/// comparison must not report a departure before the destination's snapshot sees it.
+	/// @return True when a watch was scanned again.
+	bool rescanArrivingTrees( const Moves& moves );
+
 	/// @return True when events were held.
 	bool holdMoveSources( const Moves& moves );
 

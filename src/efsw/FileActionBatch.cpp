@@ -3,6 +3,7 @@
 #include <deque>
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileSystem.hpp>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <set>
@@ -286,6 +287,98 @@ void FileActionBatch::rescanMoveSources() {
 			later.erase( std::unique( later.begin(), later.end() ), later.end() );
 		}
 	}
+}
+
+bool FileActionBatch::rescanArrivingTrees( const Moves& moves ) {
+	if ( moves.Reconciled.empty() )
+		return false;
+	// Reuse the matching scratch: no per-watch containers or retained event history. An Add
+	// outside a compared tree may have left its destination's still-cached snapshot. Include
+	// unpaired Adds: native kqueue sources give up snapshots, not a Delete for each child.
+	std::vector<size_t>& compared = mScratch.Position;
+	compared.assign( mEvents.size(), 0 );
+	for ( size_t move : moves.Reconciled )
+		compared[move] = 1;
+	// Within is found while matching in destination order: a subtree going to an earlier path
+	// may be matched before its enclosing move. Look up those compared sources by path too,
+	// without allocating path prefixes or doing a tree-by-tree search.
+	std::vector<const FileInfo*>& sources = mScratch.Contents;
+	bool sourcesIndexed = false;
+	auto nestedSource = [&]( size_t move ) {
+		if ( moves.Reconciled.size() < 2 )
+			return false;
+		if ( !sourcesIndexed ) {
+			sourcesIndexed = true;
+			sources.clear();
+			for ( size_t root : moves.Reconciled )
+				sources.push_back( &mEvents[moves.SourceOf[root]].Info );
+			std::sort( sources.begin(), sources.end(), []( const FileInfo* a, const FileInfo* b ) {
+				return a->Filepath.compare( 0, directoryLength( a->Filepath ), b->Filepath, 0,
+											directoryLength( b->Filepath ) ) < 0;
+			} );
+		}
+		const std::string& path = mEvents[moves.SourceOf[move]].Info.Filepath;
+		for ( size_t length = path.rfind( FileSystem::getOSSlash(), directoryLength( path ) - 1 );
+			  length != std::string::npos && length > 0;
+			  length = path.rfind( FileSystem::getOSSlash(), length - 1 ) ) {
+			auto root = std::lower_bound(
+				sources.begin(), sources.end(), length, [&]( const FileInfo* entry, size_t end ) {
+					return entry->Filepath.compare( 0, directoryLength( entry->Filepath ), path, 0,
+													end ) < 0;
+				} );
+			if ( root != sources.end() && directoryLength( ( *root )->Filepath ) == length &&
+				 path.compare( 0, length, ( *root )->Filepath, 0, length ) == 0 )
+				return true;
+		}
+		return false;
+	};
+	std::vector<FileIdentity>& leaving = mScratch.Later;
+	leaving.clear();
+	mScratch.MoveCandidates.forEach( [&]( const Candidates& candidate ) {
+		if ( !candidate.Added )
+			return;
+		const size_t move = moves.MoveOf[candidate.Created];
+		// Entries claimed by an arriving tree are not separate arrivals. A compared subtree
+		// can still leave an enclosing moved tree, so its own Add must be checked too.
+		if ( Moves::None != move &&
+			 ( move != candidate.Created ||
+			   ( compared[move] && moves.Within.find( move ) == moves.Within.end() &&
+				 !nestedSource( move ) ) ) )
+			return;
+		leaving.push_back( mEvents[candidate.Created].Info.identity() );
+	} );
+	if ( leaving.empty() )
+		return false;
+	std::sort( leaving.begin(), leaving.end() );
+	leaving.erase( std::unique( leaving.begin(), leaving.end() ), leaving.end() );
+	std::vector<size_t>& destinations = mScratch.Order;
+	destinations.assign( moves.Reconciled.begin(), moves.Reconciled.end() );
+	auto ownerBefore = [&]( size_t a, size_t b ) {
+		return std::less<Watcher*>()( mEvents[a].Owner, mEvents[b].Owner );
+	};
+	std::sort( destinations.begin(), destinations.end(), ownerBefore );
+	bool any = false;
+	std::vector<bool>& rescanned = mScratch.Rescanned;
+	for ( size_t s = 0; s < rescanned.size(); s++ ) {
+		const Segment segment = mSegments[s];
+		if ( rescanned[s] || NULL == segment.Owner )
+			continue;
+		auto destination =
+			std::lower_bound( destinations.begin(), destinations.end(), segment.Owner,
+							  [&]( size_t move, Watcher* owner ) {
+								  return std::less<Watcher*>()( mEvents[move].Owner, owner );
+							  } );
+		if ( destination == destinations.end() || mEvents[*destination].Owner != segment.Owner ||
+			 !segment.Owner->snapshotHasAny( leaving ) )
+			continue;
+		const size_t begin = mEvents.size();
+		segment.Owner->watch();
+		addHalves( begin );
+		addSegment( segment.Owner, begin );
+		rescanned[s] = true;
+		any = true;
+	}
+	return any;
 }
 
 bool FileActionBatch::holdMoveSources( const Moves& moves ) {
@@ -644,10 +737,16 @@ void FileActionBatch::finishPass() {
 
 	Moves& moves = mMoves;
 	bool hasMoves = matchMoves( moves );
+	bool refreshed = hasMoves && rescanArrivingTrees( moves );
+	if ( refreshed )
+		hasMoves = matchMoves( moves );
 	if ( hasMoves && rescanBeforeMovedTrees( moves ) ) {
+		refreshed = true;
+		hasMoves = matchMoves( moves );
+	}
+	if ( refreshed ) {
 		mScratch.HalvesSeen.forEach(
 			[&unpaired]( const Halves& halves ) { unpaired = unpaired || !halves.paired(); } );
-		hasMoves = matchMoves( moves );
 	}
 	if ( unpaired && holdMoveSources( moves ) )
 		hasMoves = matchMoves( moves );
@@ -1544,7 +1643,15 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 	for ( size_t i = 0; i < mEvents.size(); i++ ) {
 		if ( moves.MoveOf[i] != i )
 			continue;
-		const size_t left = treeOf( sourceRoots, mEvents[moves.SourceOf[i]].Info.Filepath );
+		const Event& source = mEvents[moves.SourceOf[i]];
+		size_t left = treeOf( sourceRoots, source.Info.Filepath );
+		// A destination rescan may discover the departure at the tree's arriving path, not
+		// the path it left. Its subtree still leaves the enclosing comparison as a whole.
+		if ( Moves::None == left ) {
+			const size_t arrived = treeOf( destinationRoots, source.Info.Filepath );
+			if ( Moves::None != arrived && source.Owner == mEvents[arrived].Owner )
+				left = arrived;
+		}
 		if ( Moves::None != left && left != i )
 			leaving[left].push_back( i );
 		const size_t entered = treeOf( destinationRoots, mEvents[i].Info.Filepath );
@@ -1622,9 +1729,20 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 			for ( size_t own : movedTrees->second ) {
 				const FileInfo& entry = mEvents[moves.SourceOf[own]].Info;
 				leftTree[entry.identity()] = own;
-				if ( entry.isDirectory() )
-					carriedOut.insert(
-						entry.Filepath.substr( 0, directoryLength( entry.Filepath ) ) );
+				if ( entry.isDirectory() ) {
+					const size_t end = directoryLength( entry.Filepath );
+					std::string path;
+					if ( !inside( entry, sourceRoot, before.RootLength ) &&
+						 inside( entry, destinationRoot, after.RootLength ) ) {
+						// Compare the contents at the source's paths, even when the departure
+						// was discovered after the directory arrived.
+						path.reserve( before.RootLength + end - after.RootLength );
+						path.append( sourceRoot, 0, before.RootLength );
+						path.append( entry.Filepath, after.RootLength, end - after.RootLength );
+					} else
+						path.assign( entry.Filepath, 0, end );
+					carriedOut.insert( std::move( path ) );
+				}
 			}
 		}
 		movedTrees = entering.find( move );
