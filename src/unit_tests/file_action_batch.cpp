@@ -1520,6 +1520,38 @@ UTEST( FileActionBatch, MoveAfterACanceledRenameOfItsSourceDirectory ) {
 // The source's evidence of a tree may be split: a generic watch that found its directory gone
 // emptied its snapshot and reported a Delete for each entry, while others gave up their
 // snapshots. Both count, once each.
+// A file passed through an earlier registration, then entered an arriving tree before its
+// initial snapshot. Its earlier move does not report the path found inside that tree.
+UTEST( FileActionBatch, EarlierMoveDoesNotHideALaterArrivalInATree ) {
+	START_BATCH_TEST();
+	FakeWatch fourth( 4, batch, &listener );
+	watches.push_back( &fourth );
+	const auto directory = file.make( "tree", true );
+	const auto unchanged = file.make( "unchanged" );
+	first.report( "/first/", "g", efsw::Actions::Delete, file.Info );
+	second.report( "/second/", "g", efsw::Actions::Add, file.Info );
+	third.report( "/third/", "tree", efsw::Actions::Add, directory );
+	third.Tree = { at( unchanged, "/third/tree/unchanged" ),
+				   at( file.Info, "/third/tree/arrived" ) };
+	fourth.report( "/fourth/", "tree", efsw::Actions::Delete, directory );
+	fourth.GiveUp.push_back(
+		{ at( directory, "/fourth/tree" ), { { at( unchanged, "/fourth/tree/unchanged" ) } } } );
+	runPass( batch, watches );
+	const auto events = listener.getEvents();
+	ASSERT_EQ( 3u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Moved, "g" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "tree" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Add, "arrived" ) );
+
+	// The intermediate watch observes the departure on its next scan. Its ordinary Delete
+	// must still be reported, rather than being consumed by the arrival comparison.
+	second.report( "/second/", "g", efsw::Actions::Delete, file.Info );
+	runPass( batch, watches );
+	runPass( batch, watches );
+	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Delete, "g" ) );
+	EXPECT_EQ( 4u, listener.getEventCount() );
+}
+
 UTEST( FileActionBatch, TreeEvidenceFromSnapshotsAndDeletes ) {
 	START_BATCH_TEST();
 	MovedTree tree( file );

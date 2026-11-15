@@ -1466,12 +1466,13 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		} );
 		return index;
 	};
-	// The entries that are halves of moves of their own, between the tree and the rest: those
-	// moves report them.
-	std::unordered_set<FileIdentity, FileIdentityHash> movedOnTheirOwn;
+	// The entries that are halves of moves of their own. An identity may have passed through
+	// another registration before reaching a tree's snapshot: only the paths actually reported
+	// by its own move are excluded from the comparison.
+	std::unordered_map<FileIdentity, size_t, FileIdentityHash> movedOnTheirOwn;
 	for ( size_t i = 0; i < mEvents.size(); i++ )
 		if ( moves.MoveOf[i] == i )
-			movedOnTheirOwn.insert( mEvents[i].Info.identity() );
+			movedOnTheirOwn.emplace( mEvents[i].Info.identity(), i );
 	// The moves of their own that leave a compared tree, and those that enter one, by the tree's
 	// move. An entry that left is deleted from its tree, unless its move was reported while the
 	// directory was still at its source; what moved with it leaves the tree, and what moved with
@@ -1570,6 +1571,28 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				   entry.Filepath[length] == FileSystem::getOSSlash() &&
 				   entry.Filepath.compare( 0, length, root, 0, length ) == 0;
 		};
+		auto reportedSeparately = [&]( const FileInfo& entry, size_t rootLength,
+									   const std::string& otherRoot, size_t otherLength ) {
+			auto own = movedOnTheirOwn.find( entry.identity() );
+			if ( own == movedOnTheirOwn.end() ||
+				 entry.isDirectory() != mEvents[own->second].Info.isDirectory() )
+				return false;
+			const size_t length = directoryLength( entry.Filepath );
+			auto matches = [&]( const std::string& path ) {
+				const size_t end = directoryLength( path );
+				if ( length == end && entry.Filepath.compare( 0, length, path, 0, end ) == 0 )
+					return true;
+				// The enclosing directory's move carries an endpoint from its old root to its
+				// new one. Compare below those roots too, without building rebased paths.
+				return end > otherLength && path[otherLength] == FileSystem::getOSSlash() &&
+					   path.compare( 0, otherLength, otherRoot, 0, otherLength ) == 0 &&
+					   length - rootLength == end - otherLength &&
+					   entry.Filepath.compare( rootLength, length - rootLength, path, otherLength,
+											   end - otherLength ) == 0;
+			};
+			return matches( mEvents[own->second].Info.Filepath ) ||
+				   matches( mEvents[moves.SourceOf[own->second]].Info.Filepath );
+		};
 		// The entries that left the tree, by identity, with their moves; the directories among
 		// them, and those that entered it, whose trees moved with them.
 		std::unordered_map<FileIdentity, size_t, FileIdentityHash> leftTree;
@@ -1604,7 +1627,8 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		};
 		auto addBefore = [&]( const FileInfo& entry ) {
 			if ( inside( entry, sourceRoot, before.RootLength ) &&
-				 ( !movedOnTheirOwn.count( entry.identity() ) ||
+				 ( !reportedSeparately( entry, before.RootLength, destinationRoot,
+										after.RootLength ) ||
 				   leftTree.count( entry.identity() ) ) &&
 				 !carried( carriedOut, entry.Filepath ) )
 				before.ById.push_back( { entry.identity(), &entry } );
@@ -1653,7 +1677,7 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		after.ById.reserve( destinationTree.size() );
 		for ( const FileInfo* entry : destinationTree )
 			if ( inside( *entry, destinationRoot, after.RootLength ) &&
-				 !movedOnTheirOwn.count( entry->identity() ) &&
+				 !reportedSeparately( *entry, after.RootLength, sourceRoot, before.RootLength ) &&
 				 !carried( carriedIn, entry->Filepath ) )
 				after.ById.push_back( { entry->identity(), entry } );
 		before.index();
