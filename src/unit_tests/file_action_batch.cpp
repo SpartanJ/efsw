@@ -2061,6 +2061,19 @@ UTEST( FileActionBatch, ChangesInsideAMovedTreeReplayInOrder ) {
 		utest_result, "inverted nesting" );
 }
 
+// An unrelated Delete holds a move out of the tree, which holds the tree itself. An incoming
+// move collected before the tree's Add must wait with it instead of naming a missing parent.
+UTEST( FileActionBatch, IncomingMoveWaitsForItsHeldParent ) {
+	for ( Reporting reporting : { Reporting::Entries, Reporting::Directories } ) {
+		checkReplay( { { at( { "leave" } ), { id( 10 ), false } } },
+					 { { at( { "arrived" } ), { id( 11 ), false } } }, utest_result,
+					 "incoming move into a held tree",
+					 { { at( { "source" } ), { id( 11 ), false } },
+					   { at( { "gone" } ), { id( 12 ), false } } },
+					 { { at( { "leave" } ), { id( 10 ), false } } }, reporting );
+	}
+}
+
 // An identity reused by an entry of another kind is another entry: a file deleted, and a
 // directory created that reuses its inode, at the same path or another, or the other way round.
 UTEST( FileActionBatch, ReusedIdentityOfAnotherKindInsideAMovedTree ) {

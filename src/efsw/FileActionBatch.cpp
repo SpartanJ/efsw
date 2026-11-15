@@ -400,6 +400,26 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 				links.push_back( { mEvents[move].Owner, move, directory->second } );
 		}
 	}
+	// An incoming move (or a Modified) can precede its new parent's Add in scan order. If
+	// holding another watch holds that parent, hold these earlier events with it too. Reuse
+	// the source-directory index now that its links have been built; none point into the map.
+	leftDirectories.clear();
+	for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
+		if ( moves.MoveOf[i] == i && mEvents[i].Info.isDirectory() && mEvents[i].Owner ) {
+			const std::string& path = mEvents[i].Info.Filepath;
+			leftDirectories.emplace( path.substr( 0, directoryLength( path ) ), i );
+		}
+	}
+	if ( !leftDirectories.empty() ) {
+		NearestDirectory<size_t> arriving( leftDirectories, Moves::None );
+		for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
+			if ( Actions::Delete == mEvents[i].ActionType || NULL == mEvents[i].Owner )
+				continue;
+			const size_t parent = arriving.of( mEvents[i].Info.Filepath );
+			if ( Moves::None != parent && i < parent && mEvents[i].Owner == mEvents[parent].Owner )
+				links.push_back( { mEvents[parent].Owner, parent, i } );
+		}
+	}
 	std::sort( links.begin(), links.end(), []( const HoldLink& a, const HoldLink& b ) {
 		return a.Owner != b.Owner ? std::less<Watcher*>()( a.Owner, b.Owner ) : a.Move > b.Move;
 	} );
@@ -422,15 +442,15 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 		const size_t from = holdFrom.find( watcher )->second;
 		for ( size_t& l = range->second.first; l < range->second.second && links[l].Move >= from;
 			  l++ ) {
-			const size_t directory = links[l].Directory;
-			if ( inHeldRange( directory ) )
+			const size_t event = links[l].Event;
+			if ( inHeldRange( event ) )
 				continue;
-			Watcher* owner = mEvents[directory].Owner;
+			Watcher* owner = mEvents[event].Owner;
 			auto hold = holdFrom.find( owner );
 			if ( hold == holdFrom.end() )
-				holdFrom.emplace( owner, directory );
-			else if ( directory < hold->second )
-				hold->second = directory;
+				holdFrom.emplace( owner, event );
+			else if ( event < hold->second )
+				hold->second = event;
 			worklist.push_back( owner );
 		}
 	}

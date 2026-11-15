@@ -97,12 +97,12 @@ class FileActionBatch {
 			   FileWatchListener* listener, Watcher* owner );
 	};
 
-	/// A held move's source inside a directory that left in the pass: holding the watch of the
-	/// move's destination from Move or before holds the directory's watch from Directory.
+	/// Holding Owner from Move or before also holds the registration of Event from there:
+	/// a directory containing the source, or an earlier event inside the arriving directory.
 	struct HoldLink {
 		Watcher* Owner;
 		size_t Move;
-		size_t Directory;
+		size_t Event;
 	};
 
 	/// The events one watch collected during a pass, as positions in mEvents. Owner is NULL
