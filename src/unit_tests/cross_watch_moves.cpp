@@ -2,6 +2,7 @@
 #include "utest.h"
 #include <atomic>
 #include <efsw/FileSystem.hpp>
+#include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileWatcherGeneric.hpp>
 #include <efsw/WatcherGeneric.hpp>
 #include <efsw/agent_protocol.hpp>
@@ -1526,6 +1527,31 @@ UTEST( CrossWatchMoves, GenericFallbackKeepsItsTreeUntilItsParentRelocatesIt ) {
 	}
 }
 
+// A parent can move or rename a directory after scanning it but before scanning one of its
+// children. The missing child must retain its snapshot until its own parent catches up.
+UTEST( CrossWatchMoves, GenericChildScannedBeforeItsRenameKeepsItsSnapshot ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::WatcherGeneric watch( 1, tree.path( "src/outer/" ), &listener, &backend, true, true );
+	auto child = watch.DirWatch->Directories.find( "inner" );
+	ASSERT_TRUE( child != watch.DirWatch->Directories.end() );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/inner" ), tree.path( "src/outer/renamed" ) ) );
+	child->second->watch();
+	EXPECT_EQ( 0u, listener.getEventCount() );
+	EXPECT_EQ( 1u, child->second->DirSnap.Files.size() );
+	watch.watch();
+	auto events = listener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "renamed" );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/renamed/after" ), "x" ) );
+	watch.watch();
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after" ) );
+}
+
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
 #include <efsw/FileActionBatch.hpp>
 #include <efsw/FileInfo.hpp>
@@ -1909,8 +1935,13 @@ void checkFallbackRename( bool nested, bool reportMoves, bool changeContents, in
 			renameFile( tree.path( "src/moved/inner" ), tree.path( "src/moved/renamed" ) ) );
 		ASSERT_TRUE( renameFile( tree.path( "src/moved/renamed/file" ),
 								 tree.path( "src/moved/renamed/renamed_file" ) ) );
-		ASSERT_TRUE( removeFile( tree.path( "src/moved/gone" ) ) );
+		// Keep gone alive until the new file exists: immediate inode reuse can legitimately
+		// make this Delete/Add pair look like a rename to the snapshot matcher.
 		ASSERT_TRUE( createFile( tree.path( "src/moved/renamed/new_file" ), "x" ) );
+		ASSERT_FALSE(
+			efsw::FileInfo( tree.path( "src/moved/gone" ) )
+				.sameInode( efsw::FileInfo( tree.path( "src/moved/renamed/new_file" ) ) ) );
+		ASSERT_TRUE( removeFile( tree.path( "src/moved/gone" ) ) );
 	}
 	auto pass = [&]() {
 		batch.beginPass();
@@ -1966,6 +1997,84 @@ UTEST( CrossWatchMoves, KqueueFallbackRenameReportsOnlyTheDirectoryMove ) {
 UTEST( CrossWatchMoves, KqueueFallbackRenamePreservesChangesInsideTheTree ) {
 	for ( bool nested : { false, true } )
 		checkFallbackRename( nested, true, true, utest_result );
+}
+
+// Seed 146, with fixed scan boundaries: a local move reported as Delete/Add is held behind
+// an unrelated Delete. Its new directory is renamed again before the held move is released.
+UTEST( CrossWatchMoves, KqueueHeldArrivalRenamedBeforeReleaseKeepsChanges ) {
+	for ( bool genericSource : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		ASSERT_TRUE( createFile( tree.path( "src/blocker" ), "x" ) );
+		struct timeval oldTime[2] = { { 1000000000, 0 }, { 1000000000, 0 } };
+		ASSERT_EQ( 0, utimes( tree.path( "src/outer" ).c_str(), oldTime ) );
+		ReportedPaths reported( tree.Root );
+		auto model = reported.list( { tree.path( "src" ), tree.path( "other" ) } );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		ExhaustibleKqueue backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch source( 1, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+		FallbackKqueueWatch other( 2, tree.path( "other/" ), &listener, true, &backend, NULL,
+								   true );
+		for ( auto* watch : { &source, &other } ) {
+			watch->SharedActionBatch = &batch;
+			watch->addAll();
+			ASSERT_TRUE( watch->initOK() );
+		}
+		if ( genericSource ) {
+			const efsw::WatchID child = source.watchingDirectory( tree.path( "src/outer" ) );
+			ASSERT_GT( child, 0 );
+			source.removeWatch( child );
+			source.addGenericWatch( tree.path( "src/outer/" ), &listener, true );
+			ASSERT_TRUE( source.hasOnlyGenericChildren() );
+		}
+		auto pass = [&]() {
+			batch.beginPass();
+			for ( auto* watch : { &other, &source } ) {
+				watch->watch();
+				batch.scanned( watch );
+			}
+			batch.finishPass();
+		};
+		ASSERT_TRUE( renameFile( tree.path( "src/outer/inner/file" ), tree.path( "other/file" ) ) );
+		ASSERT_TRUE( removeFile( tree.path( "src/blocker" ) ) );
+		ASSERT_TRUE( createFile( tree.path( "src/outer/new" ), "x" ) );
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/arrived" ) ) );
+		// Changed directory metadata prevents the native snapshot's local-rename shortcut.
+		struct timeval newTime[2] = { { 1000000001, 0 }, { 1000000001, 0 } };
+		ASSERT_EQ( 0, utimes( tree.path( "src/arrived" ).c_str(), newTime ) );
+		pass();
+		for ( const auto& event : listener.Events )
+			ASSERT_NE( efsw::Actions::Moved, event.Action );
+
+		ASSERT_TRUE( renameFile( tree.path( "src/arrived" ), tree.path( "src/renamed" ) ) );
+		ASSERT_TRUE(
+			renameFile( tree.path( "other/file" ), tree.path( "src/renamed/inner/returned" ) ) );
+		ASSERT_EQ( 0, utimes( tree.path( "src/renamed" ).c_str(), newTime ) );
+		for ( int i = 0; i < 3; ++i )
+			pass();
+		for ( auto& event : listener.Events ) {
+			event.Path = reported( event.Path );
+			event.OldPath = reported( event.OldPath );
+		}
+		const std::string failure = replay( model, listener.Events );
+		EXPECT_STREQ( "", failure.c_str() );
+		EXPECT_TRUE( model == reported.list( { tree.path( "src" ), tree.path( "other" ) } ) );
+		size_t newAdds = 0, oldDeletes = 0, rootMoves = 0;
+		for ( const auto& event : listener.Events ) {
+			newAdds +=
+				event.Action == efsw::Actions::Add && event.Path == tree.path( "src/arrived/new" );
+			oldDeletes += event.Action == efsw::Actions::Delete &&
+						  event.Path == tree.path( "src/arrived/inner/file" );
+			rootMoves += event.Action == efsw::Actions::Moved &&
+						 ( event.Path == tree.path( "src/arrived" ) ||
+						   event.Path == tree.path( "src/renamed" ) );
+		}
+		EXPECT_EQ( 1u, newAdds );
+		EXPECT_EQ( 1u, oldDeletes );
+		EXPECT_EQ( 2u, rootMoves );
+	}
 }
 
 // A directory watched by generic watches, because file descriptors ran out, is renamed inside

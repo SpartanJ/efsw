@@ -36,8 +36,11 @@ class FakeWatch : public efsw::Watcher {
 	std::vector<std::pair<efsw::FileInfo, std::vector<efsw::FileInfoList>>> GiveUp;
 	/// The entries of the trees the watch watches, for collectTree().
 	std::vector<efsw::FileInfo> Tree;
+	std::vector<efsw::FileInfo> LinkedTree;
 	/// Whether the watch watches inside the directories of Tree.
 	bool WatchesTrees{ true };
+	/// Paths no longer watched after a native rename, even when entries exist elsewhere.
+	std::set<std::string> MissingTrees;
 	int Scans{ 0 };
 
 	FakeWatch( efsw::WatchID id, efsw::FileActionBatch& batch, efsw::FileWatchListener* listener ) :
@@ -67,12 +70,19 @@ class FakeWatch : public efsw::Watcher {
 					  std::vector<const efsw::FileInfo*>* entries ) override {
 		if ( !WatchesTrees )
 			return false;
+		if ( MissingTrees.count( directory ) )
+			return false;
 		// With or without a final separator, as the backends report directories.
 		std::string prefix( directory );
 		if ( prefix.empty() || prefix.back() != efsw::FileSystem::getOSSlash() )
 			prefix += efsw::FileSystem::getOSSlash();
 		for ( const efsw::FileInfo& entry : Tree )
 			if ( entries && 0 == entry.Filepath.compare( 0, prefix.size(), prefix ) )
+				entries->push_back( &entry );
+		// A followed directory symlink contributes snapshots at its resolved target path,
+		// which need not be inside the tree being collected.
+		if ( entries )
+			for ( const efsw::FileInfo& entry : LinkedTree )
 				entries->push_back( &entry );
 		return true;
 	}
@@ -1211,6 +1221,144 @@ UTEST( FileActionBatch, HeldMoveIsFollowedByAnAddInsideIt ) {
 	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
 	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
 	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Add, "new" ) );
+}
+
+// Seed 146: an arrival waits behind a Delete, and its whole directory is renamed before
+// release. The comparison must still find its tree and rewind the later changes there.
+UTEST( FileActionBatch, HeldArrivalComparedBeforeItsDirectoryIsRenamed ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	const efsw::FileInfo leaf = file.make( "outer/f" );
+	const efsw::FileInfo added = file.make( "outer/new" );
+	const efsw::FileInfo gone = file.make( "outer/gone" );
+	const efsw::FileInfo unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	tree.was( gone, "gone" );
+	tree.is( second, added, "new" );
+	tree.is( second, gone, "gone" );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	third.report( "/other/", "f", efsw::Actions::Add, leaf );
+	runPass( batch, watches );
+	ASSERT_EQ( 1u, listener.getEventCount() );
+	ASSERT_EQ( 0, listener.indexOf( efsw::Actions::Add, "f" ) );
+
+	second.Tree = { at( added, "/dst/renamed/new" ), at( leaf, "/dst/renamed/returned" ) };
+	second.MissingTrees.insert( slashes( "/dst/outer" ) );
+	second.report( "/dst/", "renamed", efsw::Actions::Moved, tree.Outer );
+	second.Next.back().Old = "outer";
+	second.report( "/dst/renamed/", "returned", efsw::Actions::Add, leaf );
+	second.report( "/dst/renamed/", "gone", efsw::Actions::Delete, gone );
+	third.report( "/other/", "f", efsw::Actions::Delete, leaf );
+	runPass( batch, watches );
+	runPass( batch, watches );
+	EXPECT_EQ( 8u, listener.getEventCount() );
+	size_t goneDeletes = 0;
+	for ( const auto& event : listener.getEvents() )
+		goneDeletes +=
+			std::get<0>( event ) == efsw::Actions::Delete && std::get<1>( event ) == "gone";
+	EXPECT_EQ( 1u, goneDeletes );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "f" ) );
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "new" ) );
+	EXPECT_LT( listener.indexOf( efsw::Actions::Moved, "outer" ),
+			   listener.indexOf( efsw::Actions::Delete, "f" ) );
+	EXPECT_LT( listener.indexOf( efsw::Actions::Add, "new" ),
+			   listener.indexOf( efsw::Actions::Moved, "renamed" ) );
+	EXPECT_LT( listener.indexOf( efsw::Actions::Moved, "renamed" ),
+			   listener.indexOf( efsw::Actions::Moved, "returned" ) );
+}
+
+// The arrival and its later rename can both be held in one pass. On release the snapshot is
+// already at the rename's path, even though no new rename was collected during that pass.
+UTEST( FileActionBatch, HeldArrivalFollowsARenameHeldWithIt ) {
+	for ( bool laterChange : { false, true } ) {
+		START_BATCH_TEST();
+		MovedTree tree( file );
+		const auto leaf = file.make( "outer/f" );
+		const auto added = file.make( "outer/new" );
+		const auto unrelated = file.make( "unrelated" );
+		const auto later = file.make( "later" );
+		second.LinkedTree = { at( later, "/x" ), at( later, "/dst/renamed-x/outside" ) };
+		tree.was( leaf, "f" );
+		second.Tree = { at( added, "/dst/renamed/new" ) };
+		second.MissingTrees.insert( slashes( "/dst/outer" ) );
+		second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+		tree.move( first, second );
+		second.report( "/dst/", "renamed", efsw::Actions::Moved, tree.Outer );
+		second.Next.back().Old = "outer";
+		if ( laterChange ) {
+			second.Tree.push_back( at( later, "/dst/renamed/later" ) );
+			second.report( "/dst/renamed/", "later", efsw::Actions::Add, later );
+		}
+		runPass( batch, watches );
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		runPass( batch, watches );
+		ASSERT_EQ( laterChange ? 6u : 5u, listener.getEventCount() );
+		EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+		EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+		EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "f" ) );
+		EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Add, "new" ) );
+		EXPECT_EQ( 4, listener.indexOf( efsw::Actions::Moved, "renamed" ) );
+		if ( laterChange )
+			EXPECT_EQ( 5, listener.indexOf( efsw::Actions::Add, "later" ) );
+	}
+}
+
+// Native scans can report an Add/Delete at the old path and an Add after relocating their
+// watch. If held together, the comparison covers both old-path records, not just the Add.
+UTEST( FileActionBatch, HeldArrivalKeepsChangesCollectedBeforeItsRename ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	const auto leaf = file.make( "outer/f" );
+	const auto unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	second.Tree = { at( leaf, "/dst/renamed/returned" ) };
+	second.MissingTrees.insert( slashes( "/dst/outer" ) );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	second.report( "/dst/outer/", "returned", efsw::Actions::Add, leaf );
+	second.report( "/dst/outer/", "returned", efsw::Actions::Delete, leaf );
+	second.report( "/dst/", "renamed", efsw::Actions::Moved, tree.Outer );
+	second.Next.back().Old = "outer";
+	second.report( "/dst/renamed/", "returned", efsw::Actions::Add, leaf );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+	runPass( batch, watches );
+	ASSERT_EQ( 5u, listener.getEventCount() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "f" ) );
+	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Moved, "renamed" ) );
+	EXPECT_EQ( 4, listener.indexOf( efsw::Actions::Add, "returned" ) );
+}
+
+// A file leaving an arriving tree cannot name that arrival's path before the held parent
+// move is delivered. Its destination follows the parent's hold even in another registration.
+UTEST( FileActionBatch, MoveOutOfAnArrivalWaitsForItsHeldParent ) {
+	START_BATCH_TEST();
+	MovedTree tree( file );
+	const auto leaf = file.make( "outer/f" );
+	const auto unrelated = file.make( "unrelated" );
+	tree.was( leaf, "f" );
+	second.MissingTrees.insert( slashes( "/dst/outer" ) );
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	tree.move( first, second );
+	second.report( "/dst/outer/", "f", efsw::Actions::Delete, leaf );
+	second.report( "/dst/", "renamed", efsw::Actions::Moved, tree.Outer );
+	second.Next.back().Old = "outer";
+	third.report( "/other/", "f", efsw::Actions::Add, leaf );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+	runPass( batch, watches );
+	runPass( batch, watches );
+	const auto events = listener.getEvents();
+	ASSERT_EQ( 5u, events.size() );
+	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Delete, "f" ) );
+	// The unrelated destination's Add and the later root rename may take either order.
+	EXPECT_GT( listener.indexOf( efsw::Actions::Add, "f" ), 2 );
+	EXPECT_GT( listener.indexOf( efsw::Actions::Moved, "renamed" ), 2 );
 }
 
 // A Delete inside a directory, held to the next pass, where the directory moves to another
@@ -3251,4 +3399,42 @@ UTEST( FileActionBatch, ArrivalRenameStaysWithItsHeldTree ) {
 	EXPECT_EQ( 0, listener.indexOf( efsw::Actions::Delete, "unrelated" ) );
 	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
 	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "b" ) );
+}
+
+// Renaming an ancestor and then the arriving directory itself must not lose the arrival's
+// comparison. Repeated root renames rebase the tree once, not once per entry per rename.
+UTEST( FileActionBatch, HeldArrivalFollowsRenamedAncestors ) {
+	START_BATCH_TEST();
+	const auto outer = file.make( "outer", true );
+	const auto parent = file.make( "parent", true );
+	const auto leaf = file.make( "leaf" );
+	const auto added = file.make( "new" );
+	const auto unrelated = file.make( "unrelated" );
+	first.report( "/src/", "outer", efsw::Actions::Delete, outer );
+	first.GiveUp.emplace_back( at( outer, "/src/outer" ),
+							   std::vector<efsw::FileInfoList>{ { at( leaf, "/src/outer/f" ) } } );
+	second.Tree = { at( leaf, "/dst/parent/outer/g" ), at( added, "/dst/parent/outer/new" ) };
+	second.report( "/dst/", "unrelated", efsw::Actions::Delete, unrelated );
+	second.report( "/dst/parent/", "outer", efsw::Actions::Add, outer );
+	runPass( batch, watches );
+	EXPECT_EQ( 0u, listener.getEventCount() );
+
+	second.MissingTrees.insert( slashes( "/dst/parent/outer" ) );
+	second.Tree = { at( leaf, "/dst/next/renamed/h" ), at( added, "/dst/next/renamed/new" ) };
+	second.report( "/dst/", "next", efsw::Actions::Moved, parent );
+	second.Next.back().Old = "parent";
+	second.report( "/dst/next/", "renamed", efsw::Actions::Moved, outer );
+	second.Next.back().Old = "outer";
+	second.report( "/dst/next/renamed/", "h", efsw::Actions::Moved, leaf );
+	second.Next.back().Old = "g";
+	runPass( batch, watches );
+	runPass( batch, watches );
+	const auto events = listener.getEvents();
+	ASSERT_EQ( 7u, events.size() );
+	EXPECT_EQ( 1, listener.indexOf( efsw::Actions::Moved, "outer" ) );
+	EXPECT_EQ( 2, listener.indexOf( efsw::Actions::Moved, "g" ) );
+	EXPECT_EQ( 3, listener.indexOf( efsw::Actions::Add, "new" ) );
+	EXPECT_EQ( 4, listener.indexOf( efsw::Actions::Moved, "next" ) );
+	EXPECT_EQ( 5, listener.indexOf( efsw::Actions::Moved, "renamed" ) );
+	EXPECT_EQ( 6, listener.indexOf( efsw::Actions::Moved, "h" ) );
 }

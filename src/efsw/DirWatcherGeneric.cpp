@@ -139,12 +139,13 @@ void DirWatcherGeneric::addChildren( bool reportNewFiles ) {
 }
 
 void DirWatcherGeneric::watch( bool reportOwnChange ) {
-	const bool fallbackRoot = NULL == Parent && NULL != Watch->SharedActionOwner;
-	DirectorySnapshotDiff Diff = DirSnap.scan( fallbackRoot );
-	// A native kqueue parent may not have processed its rename yet. Like a native child,
-	// keep this entire tree until the parent relocates it or takes its snapshots on removal.
+	const bool parentResolvesDirectory = NULL != Parent || NULL != Watch->SharedActionOwner;
+	DirectorySnapshotDiff Diff = DirSnap.scan( parentResolvesDirectory );
+	// A parent may not have processed its rename yet, even when a fallback's root scan
+	// succeeded before the move. Keep every missing subtree until its generic or native
+	// parent relocates it or reports its removal, rather than emptying its old snapshots.
 	// The scan reports its path checks, so no extra lookup is needed here.
-	if ( fallbackRoot && Diff.DirMissing )
+	if ( parentResolvesDirectory && Diff.DirMissing )
 		return;
 
 	if ( reportOwnChange && Diff.DirChanged && NULL != Parent ) {

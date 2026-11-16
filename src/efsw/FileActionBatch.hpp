@@ -84,7 +84,10 @@ class FileActionBatch {
 		bool WithContents{ false };
 		/// A destination rescan collected this change with its arriving tree. If held with
 		/// that move, it still belongs to the comparison when both are released next pass.
-		bool ArrivalChange{ false };
+		bool ArrivalChange : 1;
+		/// Already held by an earlier pass: distinguishes it from new changes held during
+		/// this pass when reconstructing an arriving directory's tree.
+		bool Released : 1;
 		std::string OldFilename;
 		FileInfo Info;
 		FileWatchListener* Listener;
@@ -341,6 +344,8 @@ class FileActionBatch {
 		// deliver().
 		std::vector<size_t> HeldRenames;
 		std::unordered_map<std::string, std::vector<size_t>> RenamesTo;
+		/// During destination lookup, RenamesTo indexes old paths instead. Rebuilt after holding.
+		size_t IndexedRenameEvents{ 0 };
 		std::vector<FileIdentity> ArrivedIdentities;
 		/// Identities of unpaired Adds, sorted when looked up.
 		std::vector<FileIdentity> Later;
@@ -442,6 +447,10 @@ class FileActionBatch {
 	/// watch collected inside it since are undone, since they are reported after its Moved event.
 	/// @return False when the destination does not watch inside the directory.
 	bool destinationTree( size_t move, std::vector<const FileInfo*>& entries );
+
+	/// Follows native directory renames since a held arrival, including its ancestors.
+	/// Uses the delivery rename index before delivery starts; false leaves directory untouched.
+	bool relocatedDestination( size_t move, std::string& directory );
 
 	/// Scans again the watches scanned before a compared directory move whose tree lost
 	/// entries: an entry that left it after their scan, to one of them, is found by the rescan.

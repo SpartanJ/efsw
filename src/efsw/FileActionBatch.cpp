@@ -31,6 +31,8 @@ FileActionBatch::Event::Event( WatchID watchid, const std::string& directory,
 	Directory( directory ),
 	Filename( filename ),
 	ActionType( action ),
+	ArrivalChange( false ),
+	Released( false ),
 	OldFilename( oldFilename ),
 	Info( fileInfo ),
 	Listener( listener ),
@@ -150,6 +152,8 @@ void FileActionBatch::beginPass() {
 	mHeld.erase( std::remove_if( mHeld.begin(), mHeld.end(),
 								 []( const Event& event ) { return event.Canceled; } ),
 				 mHeld.end() );
+	for ( Event& event : mHeld )
+		event.Released = true;
 	mEvents.insert( mEvents.begin(), std::make_move_iterator( mHeld.begin() ),
 					std::make_move_iterator( mHeld.end() ) );
 	mHeld.clear();
@@ -506,11 +510,20 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	if ( !leftDirectories.empty() ) {
 		NearestDirectory<size_t> arriving( leftDirectories, Moves::None );
 		for ( size_t i = mReleased; i < mEvents.size(); i++ ) {
-			if ( Actions::Delete == mEvents[i].ActionType || NULL == mEvents[i].Owner )
+			if ( NULL == mEvents[i].Owner )
 				continue;
 			const size_t parent = arriving.of( mEvents[i].Info.Filepath );
-			if ( Moves::None != parent && i < parent && mEvents[i].Owner == mEvents[parent].Owner )
+			if ( Moves::None == parent || mEvents[i].Owner != mEvents[parent].Owner )
+				continue;
+			if ( Actions::Delete != mEvents[i].ActionType && i < parent ) {
 				links.push_back( { mEvents[parent].Owner, parent, i } );
+			} else if ( Actions::Delete == mEvents[i].ActionType && i > parent ) {
+				// A move out of the arriving tree names its new path. If its arrival is held,
+				// the move's destination must wait too, even in another registration.
+				const size_t move = moves.MoveOf[i];
+				if ( Moves::None != move && move != i && mEvents[move].Owner )
+					links.push_back( { mEvents[parent].Owner, parent, move } );
+			}
 		}
 	}
 	std::sort( links.begin(), links.end(), []( const HoldLink& a, const HoldLink& b ) {
@@ -567,40 +580,122 @@ bool FileActionBatch::holdMoveSources( const Moves& moves ) {
 	return true;
 }
 
+bool FileActionBatch::relocatedDestination( size_t move, std::string& directory ) {
+	std::vector<size_t>& steps = mScratch.HeldRenames;
+	steps.clear();
+	if ( move >= mPassReleased )
+		return false;
+	// Reuse the delivery index. Rescans only append events; holding changes their positions
+	// and resets it. Arrivals not released from a previous pass need no index or path copies.
+	auto& renames = mScratch.RenamesTo;
+	const size_t count = mEvents.size() + mHeld.size();
+	for ( size_t i = mScratch.IndexedRenameEvents; i < count; ++i ) {
+		const Event& event = i < mEvents.size() ? mEvents[i] : mHeld[i - mEvents.size()];
+		if ( Actions::Moved != event.ActionType || !event.Info.isDirectory() || event.Canceled ||
+			 event.Superseded || event.OldFilename.empty() )
+			continue;
+		std::string from =
+			event.OldFilename[0] == FileSystem::getOSSlash()
+				? event.OldFilename
+				: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
+		from.resize( directoryLength( from ) );
+		renames[std::move( from )].push_back( i );
+	}
+	mScratch.IndexedRenameEvents = count;
+	if ( renames.empty() )
+		return false;
+	const Event& arrival = mEvents[move];
+	std::string path( arrival.Info.Filepath, 0, directoryLength( arrival.Info.Filepath ) );
+	bool changed = false;
+	// A rename held with the arrival still follows it: both paths can already be stale when
+	// they are released. Ignore only renames preceding this arrival, not all released ones.
+	for ( size_t after = move + 1;; ) {
+		size_t next = Moves::None, length = 0;
+		for ( size_t end = path.size(); end != std::string::npos && end > 0;
+			  end = path.rfind( FileSystem::getOSSlash(), end - 1 ) ) {
+			auto found = renames.find( path.substr( 0, end ) );
+			if ( found == renames.end() )
+				continue;
+			for ( auto position =
+					  std::lower_bound( found->second.begin(), found->second.end(), after );
+				  position != found->second.end(); ++position ) {
+				const size_t i = *position;
+				const Event& event = i < mEvents.size() ? mEvents[i] : mHeld[i - mEvents.size()];
+				if ( event.Owner != arrival.Owner ||
+					 ( end == path.size() && !event.Info.sameInode( arrival.Info ) ) )
+					continue;
+				if ( next == Moves::None || i < next ) {
+					next = i;
+					length = end;
+				}
+				break;
+			}
+		}
+		if ( next == Moves::None )
+			break;
+		const Event& rename = next < mEvents.size() ? mEvents[next] : mHeld[next - mEvents.size()];
+		const std::string& to = rename.Info.Filepath;
+		path.replace( 0, length, to, 0, directoryLength( to ) );
+		steps.push_back( next );
+		after = next + 1;
+		changed = true;
+	}
+	if ( changed )
+		directory = std::move( path );
+	return changed;
+}
+
 bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>& entries ) {
 	const Event& destination = mEvents[move];
 	if ( NULL == destination.Owner )
 		return false;
+	std::string relocated;
+	const bool rootMoved = relocatedDestination( move, relocated );
 	const size_t begin = entries.size();
-	if ( !destination.Owner->collectTree( destination.Info.Filepath, &entries ) )
+	if ( !destination.Owner->collectTree( rootMoved ? relocated : destination.Info.Filepath,
+										  &entries ) )
 		return false;
 	if ( move >= mPassReleased )
 		return true;
-	const std::string& root = destination.Info.Filepath;
-	const size_t length = directoryLength( root );
-	auto inside = [&]( const Event& event ) {
-		return event.Owner == destination.Owner &&
+	const std::string& root = rootMoved ? relocated : destination.Info.Filepath;
+	size_t length = directoryLength( root );
+	const size_t renamedAt = rootMoved ? mScratch.HeldRenames.front() : Moves::None;
+	auto eventAt = [&]( size_t i ) -> const Event& {
+		return i < mEvents.size() ? mEvents[i] : mHeld[i - mEvents.size()];
+	};
+	auto inside = [&]( const Event& event, size_t position ) {
+		// Changes following a rename held with the arrival are delivered at its new path,
+		// after that rename. Do not also report them in the arrival's comparison.
+		return ( !event.Released || position > renamedAt ) && event.Owner == destination.Owner &&
 			   ( Actions::Add == event.ActionType || Actions::Delete == event.ActionType ||
 				 Actions::Moved == event.ActionType ) &&
 			   event.Info.Filepath.size() > length + 1 &&
 			   event.Info.Filepath[length] == FileSystem::getOSSlash() &&
 			   event.Info.Filepath.compare( 0, length, root, 0, length ) == 0;
 	};
-	bool changed = false;
-	for ( size_t i = mPassReleased; i < mEvents.size() && !changed; i++ )
-		changed = inside( mEvents[i] );
+	bool changed = rootMoved;
+	const size_t count = mEvents.size() + mHeld.size();
+	for ( size_t i = 0; i < count && !changed; i++ )
+		changed = inside( eventAt( i ), i );
 	if ( !changed )
 		return true;
-	// The paths without a final separator, as the snapshots list them.
-	auto key = []( const std::string& path ) { return path.substr( 0, directoryLength( path ) ); };
-	// Ordered: the entries below a directory are one range.
+	// Relative paths keep a rename of the root (or its parent) constant time: the tree's
+	// keys do not change. Ordered: the entries below an interior directory are one range.
 	std::map<std::string, const FileInfo*>& tree = mScratch.TreeAtHold;
 	tree.clear();
 	// The entries renamed since, at their names before. The tree changes found point to them
 	// until the pass is delivered: kept for the pass, in a deque, where they do not move.
 	std::deque<FileInfo>& renamed = mScratch.RenamedAtHold;
-	for ( size_t i = begin; i < entries.size(); i++ )
-		tree[key( entries[i]->Filepath )] = entries[i];
+	for ( size_t i = begin; i < entries.size(); i++ ) {
+		const std::string& path = entries[i]->Filepath;
+		const size_t pathLength = directoryLength( path );
+		// Followed symlinks can contribute snapshots outside this tree. Like the comparison,
+		// exclude them before interpreting paths relative to this root.
+		if ( pathLength <= length || path[length] != FileSystem::getOSSlash() ||
+			 path.compare( 0, length, root, 0, length ) != 0 )
+			continue;
+		tree[path.substr( length + 1, pathLength - length - 1 )] = entries[i];
+	}
 	// The entries below a directory, which go with it: those found after it was added were not
 	// there before, and those of a renamed one were below its old name.
 	std::vector<std::pair<std::string, const FileInfo*>>& below = mScratch.BelowAtHold;
@@ -613,11 +708,28 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 			below.emplace_back( last->first.substr( prefix.size() ), last->second );
 		tree.erase( first, last );
 	};
-	for ( size_t i = mEvents.size(); i-- > mPassReleased; ) {
-		const Event& event = mEvents[i];
-		if ( !inside( event ) )
+	const std::vector<size_t>& rootRenames = mScratch.HeldRenames;
+	size_t rootRename = rootRenames.size();
+	// Held new changes follow this registration's kept events. Undo them too: they are
+	// delivered on a later pass, not changes that the arrival comparison may report now.
+	for ( size_t i = count; i-- > 0; ) {
+		const Event& event = eventAt( i );
+		const std::string& to = event.Info.Filepath;
+		const size_t toLength = directoryLength( to );
+		if ( rootRename && rootRenames[rootRename - 1] == i ) {
+			const std::string from =
+				!event.OldFilename.empty() && event.OldFilename[0] == FileSystem::getOSSlash()
+					? event.OldFilename
+					: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
+			relocated.replace( 0, toLength, from, 0, directoryLength( from ) );
+			length = root.size();
+			--rootRename;
 			continue;
-		const std::string path( key( event.Info.Filepath ) );
+		}
+		if ( !inside( event, i ) )
+			continue;
+		const std::string path = event.Info.Filepath.substr(
+			length + 1, directoryLength( event.Info.Filepath ) - length - 1 );
 		if ( Actions::Add == event.ActionType ) {
 			tree.erase( path );
 			if ( event.Info.isDirectory() )
@@ -625,27 +737,37 @@ bool FileActionBatch::destinationTree( size_t move, std::vector<const FileInfo*>
 		} else if ( Actions::Delete == event.ActionType ) {
 			tree[path] = &event.Info;
 		} else {
-			// Renamed in its directory, the old name relative to it.
+			// Renamed in its directory, the old name relative to it. Metadata is borrowed until
+			// final paths are materialized, so repeated renames copy no FileInfo or full path.
 			tree.erase( path );
-			renamed.push_back( event.Info );
-			renamed.back().Filepath =
+			const std::string old =
 				path.substr( 0, path.find_last_of( FileSystem::getOSSlash() ) + 1 ) +
 				event.OldFilename;
-			const std::string old( key( renamed.back().Filepath ) );
-			tree[old] = &renamed.back();
+			tree[old] = &event.Info;
 			if ( !event.Info.isDirectory() )
 				continue;
 			takeBelow( path );
-			for ( const auto& entry : below ) {
-				renamed.push_back( *entry.second );
-				renamed.back().Filepath = old + FileSystem::getOSSlash() + entry.first;
-				tree[renamed.back().Filepath] = &renamed.back();
-			}
+			for ( const auto& entry : below )
+				tree[old + FileSystem::getOSSlash() + entry.first] = entry.second;
 		}
 	}
 	entries.resize( begin );
-	for ( const auto& entry : tree )
-		entries.push_back( entry.second );
+	const size_t rootLength = directoryLength( destination.Info.Filepath );
+	for ( const auto& entry : tree ) {
+		const std::string& path = entry.second->Filepath;
+		if ( path.size() == rootLength + 1 + entry.first.size() &&
+			 path.compare( 0, rootLength, destination.Info.Filepath, 0, rootLength ) == 0 &&
+			 path[rootLength] == FileSystem::getOSSlash() &&
+			 path.compare( rootLength + 1, std::string::npos, entry.first ) == 0 ) {
+			entries.push_back( entry.second );
+		} else {
+			renamed.push_back( *entry.second );
+			renamed.back().Filepath.assign( destination.Info.Filepath, 0, rootLength );
+			renamed.back().Filepath += FileSystem::getOSSlash();
+			renamed.back().Filepath += entry.first;
+			entries.push_back( &renamed.back() );
+		}
+	}
 	return true;
 }
 
@@ -726,6 +848,8 @@ bool FileActionBatch::movedTreeLostEntries(
 
 void FileActionBatch::finishPass() {
 	mScratch.RenamedAtHold.clear();
+	mScratch.RenamesTo.clear();
+	mScratch.IndexedRenameEvents = 0;
 	addHalves( 0 );
 	bool unpaired = false;
 	mScratch.HalvesSeen.forEach(
@@ -748,12 +872,17 @@ void FileActionBatch::finishPass() {
 		mScratch.HalvesSeen.forEach(
 			[&unpaired]( const Halves& halves ) { unpaired = unpaired || !halves.paired(); } );
 	}
-	if ( unpaired && holdMoveSources( moves ) )
+	if ( unpaired && holdMoveSources( moves ) ) {
+		mScratch.RenamesTo.clear();
+		mScratch.IndexedRenameEvents = 0;
 		hasMoves = matchMoves( moves );
+	}
 	mSegments.clear();
 	mReleased = 0;
 	if ( hasMoves ) {
 		followEnclosingMoves( moves );
+		mScratch.RenamesTo.clear();
+		mScratch.IndexedRenameEvents = 0;
 		reconcileTrees( moves );
 	}
 	const size_t events = mEvents.size();
@@ -858,10 +987,15 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 	auto comparesTrees = [&]( size_t deleted, size_t created ) {
 		const Event& destination = mEvents[created];
 		const Event& source = mEvents[deleted];
-		return ( mSourceTrees.count( source.Info.identity() ) ||
-				 enclosingRoot( roots, source.Info.Filepath, noIdentity ) != noIdentity ) &&
-			   NULL != destination.Owner && !destination.Canceled &&
-			   destination.Owner->collectTree( destination.Info.Filepath, NULL );
+		if ( !mSourceTrees.count( source.Info.identity() ) &&
+			 enclosingRoot( roots, source.Info.Filepath, noIdentity ) == noIdentity )
+			return false;
+		if ( NULL == destination.Owner || destination.Canceled )
+			return false;
+		std::string relocated;
+		return destination.Owner->collectTree(
+			relocatedDestination( created, relocated ) ? relocated : destination.Info.Filepath,
+			NULL );
 	};
 	std::vector<bool> comparedTrees;
 	// A destination can install an arriving directory, then rescan it again in this pass.
@@ -908,6 +1042,7 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 	};
 
 	bool hasMove = false;
+	size_t firstArrival = mEvents.size();
 	for ( const auto& pair : pairs ) {
 		const size_t created = pair.first;
 		const size_t deleted = pair.second;
@@ -946,6 +1081,7 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			moves.Within[created] = enclosingSource;
 
 		if ( source.Info.isDirectory() ) {
+			firstArrival = std::min( firstArrival, created );
 			movedSources[source.Info.Filepath.substr(
 				0, directoryLength( source.Info.Filepath ) )] = created;
 			movedDestinations[destination.Info.Filepath.substr(
@@ -965,6 +1101,17 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 		NearestDirectory<size_t> sourceOwners( movedSources, Moves::None );
 		NearestDirectory<size_t> destinationOwners( movedDestinations, Moves::None );
 		for ( size_t i = 0; i < mEvents.size(); i++ ) {
+			// A rescan's change belongs to the arriving tree even when that tree already moved
+			// again and cannot be compared yet. Preserve that fact through a hold: looking up
+			// its relocated snapshot next pass must not expose only one of its Add/Delete pair.
+			if ( i > firstArrival && i >= mPassReleased &&
+				 ( Actions::Delete == mEvents[i].ActionType ||
+				   Actions::Moved == mEvents[i].ActionType ) ) {
+				const size_t arrival = destinationOwners.of( mEvents[i].Info.Filepath );
+				if ( Moves::None != arrival && arrival < i &&
+					 mEvents[i].Owner == mEvents[arrival].Owner )
+					mEvents[i].ArrivalChange = true;
+			}
 			if ( Moves::None != moves.MoveOf[i] )
 				continue;
 			if ( Actions::Delete == mEvents[i].ActionType ) {
