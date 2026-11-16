@@ -2162,6 +2162,94 @@ efsw::FileIdentity id( unsigned long inode ) {
 
 enum class RemovalBeforeChildDelete { None, Source, Destination };
 
+// Seed 146, round 3: discovery reports descendants before their parent moves, but the
+// parent's source snapshots are incomplete. Those earlier Adds are already known to the
+// listener and must not be synthesized again at the parent's destination.
+void checkArrivalBeforeParentMove( int scenario, int* utest_result ) {
+	efsw::FileActionBatch batch;
+	PathListener listener;
+	FakeWatch watch( 1, batch, &listener );
+	const auto parent = synthetic( at( { "dst", "parent" } ), id( 1 ), true );
+	const auto tree = synthetic( at( { "dst", "parent", "tree" } ), id( 2 ), true );
+	const auto nested = synthetic( at( { "dst", "parent", "tree", "nested" } ), id( 3 ), true );
+	const auto leaf = synthetic( nested.Filepath + at( { "file" } ), id( 4 ), false );
+	watch.Tree = { at( tree, at( { "dst", "next", "tree" } ) ),
+				   at( nested, at( { "dst", "next", "tree", "nested" } ) ) };
+	watch.report( at( { "dst", "parent" } ) + ReplayTree::slash(), "tree", efsw::Actions::Add,
+				  tree );
+	watch.report( at( { "dst", "parent", "tree" } ) + ReplayTree::slash(), "nested",
+				  efsw::Actions::Add, nested );
+	if ( scenario == 3 || scenario == 4 ) {
+		watch.Next.back().Info.Device = watch.Next.back().Info.Inode = 0;
+		watch.Next.back().Info.Permissions = 0;
+		watch.Next.back().Info.Filepath += ReplayTree::slash();
+	}
+	if ( scenario == 2 || scenario == 4 || scenario == 6 ) {
+		watch.report( nested.Filepath + ReplayTree::slash(), "file", efsw::Actions::Add, leaf );
+		watch.Tree.push_back( at( leaf, at( { "dst", "next", "tree", "nested", "file" } ) ) );
+	}
+	std::vector<efsw::FileInfoList> evidence{ { tree } };
+	if ( scenario == 1 || scenario == 6 ) {
+		watch.report( at( { "dst", "parent", "tree" } ) + ReplayTree::slash(), "nested",
+					  efsw::Actions::Delete, nested );
+		evidence[0].push_back( nested );
+		watch.Tree.resize( 1 );
+		if ( scenario == 6 ) {
+			evidence[0].push_back( leaf );
+			const auto replacement = synthetic( nested.Filepath, nested.identity(), false );
+			watch.report( at( { "dst", "parent", "tree" } ) + ReplayTree::slash(), "nested",
+						  efsw::Actions::Add, replacement );
+			watch.Tree.push_back( at( replacement, at( { "dst", "next", "tree", "nested" } ) ) );
+		}
+	} else if ( scenario == 2 ) {
+		watch.report( at( { "dst", "parent", "tree" } ) + ReplayTree::slash(), "renamed",
+					  efsw::Actions::Moved, nested );
+		watch.Next.back().Old = "nested";
+		watch.Tree[1] = at( nested, at( { "dst", "next", "tree", "renamed" } ) );
+		watch.Tree[2] = at( leaf, at( { "dst", "next", "tree", "renamed", "file" } ) );
+	} else if ( scenario == 4 ) {
+		// The unknown directory disappears during the parent's move; its known file survives
+		// elsewhere. The planner must move that file out before deleting the directory.
+		watch.Tree = { at( tree, at( { "dst", "next", "tree" } ) ),
+					   at( leaf, at( { "dst", "next", "tree", "kept" } ) ) };
+	} else if ( scenario == 5 ) {
+		watch.report( at( { "dst", "parent2" } ) + ReplayTree::slash(), "sibling",
+					  efsw::Actions::Add, synthetic( "", id( 5 ), false ) );
+	}
+	watch.report( at( { "dst" } ) + ReplayTree::slash(), "next", efsw::Actions::Add, parent );
+	for ( const auto& entry : watch.Tree )
+		if ( entry.isDirectory() )
+			watch.report( efsw::FileSystem::pathRemoveFileName( entry.Filepath ),
+						  efsw::FileSystem::fileNameFromPath( entry.Filepath ), efsw::Actions::Add,
+						  entry );
+	watch.report( at( { "dst" } ) + ReplayTree::slash(), "parent", efsw::Actions::Delete, parent );
+	watch.GiveUp.emplace_back( parent, std::move( evidence ) );
+	runPass( batch, { &watch } );
+	runPass( batch, { &watch } );
+	ReplayTree replay;
+	replay.Entries[at( { "dst" } )] = Unknown;
+	replay.Entries[parent.Filepath] = parent.identity();
+	if ( scenario == 5 )
+		replay.Entries[at( { "dst", "parent2" } )] = Unknown;
+	for ( auto event : listener.Events ) {
+		if ( event.Action == efsw::Actions::Moved && !event.OldPath.empty() &&
+			 event.OldPath[0] != efsw::FileSystem::getOSSlash() &&
+			 !( event.OldPath.size() > 1 && event.OldPath[1] == ':' ) )
+			event.OldPath = efsw::FileSystem::pathRemoveFileName( event.Path ) + event.OldPath;
+		const std::string problem = replay.apply( event );
+		EXPECT_STREQ( "", problem.c_str() );
+	}
+	const size_t expected[] = { 3, 4, 5, 3, 6, 4, 6 };
+	ASSERT_EQ( expected[scenario], listener.Events.size() );
+	EXPECT_EQ( efsw::Actions::Add, listener.Events[0].Action );
+	EXPECT_EQ( efsw::Actions::Add, listener.Events[1].Action );
+	EXPECT_EQ( 0u, replay.Entries.count( parent.Filepath ) );
+	EXPECT_EQ( 1u, replay.Entries.count( at( { "dst", "next" } ) ) );
+	for ( const auto& entry : watch.Tree )
+		EXPECT_EQ( 1u, replay.Entries.count( entry.Filepath ) );
+	EXPECT_EQ( watch.Tree.size() + 2u + ( scenario == 5 ? 2u : 0u ), replay.Entries.size() );
+}
+
 // Seed 370: a directory leaves all watches in one pass; its parent moves in the next while
 // a file returns from the departed directory. Its released Delete waits for the file, but
 // must still name a path the consumer knows when the parent is moved to another registration.
@@ -2256,6 +2344,49 @@ void checkReleasedChildDelete( bool queuedMove, RemovalBeforeChildDelete removal
 }
 
 } // namespace
+
+UTEST( FileActionBatch, ArrivalsBeforeMovingAParentAreNotReportedAgain ) {
+	for ( int scenario = 0; scenario < 7; ++scenario )
+		checkArrivalBeforeParentMove( scenario, utest_result );
+}
+
+UTEST( FileActionBatch, MovingAParentWaitsForItsEarlierSourceArrivals ) {
+	efsw::FileActionBatch batch;
+	PathListener listener;
+	FakeWatch source( 1, batch, &listener ), destination( 2, batch, &listener ),
+		other( 3, batch, &listener );
+	const auto parent = synthetic( at( { "src", "parent" } ), id( 1 ), true );
+	const auto tree = synthetic( parent.Filepath + at( { "tree" } ), id( 2 ), true );
+	const auto nested = synthetic( tree.Filepath + at( { "nested" } ), id( 3 ), true );
+	const auto blocker = synthetic( at( { "src", "blocker" } ), id( 4 ), false );
+	source.report( at( { "src" } ) + ReplayTree::slash(), "blocker", efsw::Actions::Delete,
+				   blocker );
+	source.report( parent.Filepath + ReplayTree::slash(), "tree", efsw::Actions::Add, tree );
+	source.report( tree.Filepath + ReplayTree::slash(), "nested", efsw::Actions::Add, nested );
+	source.report( at( { "src" } ) + ReplayTree::slash(), "parent", efsw::Actions::Delete, parent );
+	source.GiveUp.emplace_back( parent, std::vector<efsw::FileInfoList>{ { tree } } );
+	destination.Tree = { at( tree, at( { "dst", "parent", "tree" } ) ),
+						 at( nested, at( { "dst", "parent", "tree", "nested" } ) ) };
+	destination.report( at( { "dst" } ) + ReplayTree::slash(), "parent", efsw::Actions::Add,
+						parent );
+	other.report( at( { "other" } ) + ReplayTree::slash(), "blocker", efsw::Actions::Add, blocker );
+	runPass( batch, { &source, &destination, &other } );
+	runPass( batch, { &source, &destination, &other } );
+	ReplayTree replay;
+	for ( const auto& root : { at( { "src" } ), at( { "dst" } ), at( { "other" } ) } )
+		replay.Entries[root] = Unknown;
+	replay.Entries[parent.Filepath] = parent.identity();
+	replay.Entries[blocker.Filepath] = blocker.identity();
+	for ( auto event : listener.Events ) {
+		const std::string problem = replay.apply( event );
+		EXPECT_STREQ( "", problem.c_str() );
+	}
+	ASSERT_EQ( 4u, listener.Events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, listener.Events[0].Action );
+	EXPECT_EQ( efsw::Actions::Add, listener.Events[1].Action );
+	EXPECT_EQ( efsw::Actions::Add, listener.Events[2].Action );
+	EXPECT_EQ( efsw::Actions::Moved, listener.Events[3].Action );
+}
 
 UTEST( FileActionBatch, ReleasedChildDeleteRemainsValidWhenItsParentMoves ) {
 	checkReleasedChildDelete( false, RemovalBeforeChildDelete::None, utest_result );

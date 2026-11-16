@@ -1595,6 +1595,16 @@ struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
 struct FallbackKqueueWatch : efsw::WatcherKqueue {
 	using efsw::WatcherKqueue::WatcherKqueue;
 
+	// Model the two native discovery listings: child watches and their reported Adds exist,
+	// but the saved listing missed them. No callback or scan runs while the lists are moved.
+	void reportArrivalsWithIncompleteSnapshots( efsw::WatcherKqueue* parent ) {
+		std::vector<efsw::FileInfoList> lists;
+		takeSnapshots( parent, lists );
+		mCollectActions = true;
+		parent->reportDirectories();
+		mCollectActions = false;
+	}
+
 	efsw::WatcherKqueue* nativeChild( const std::string& directory ) {
 		return dynamic_cast<efsw::WatcherKqueue*>( findWatcher( directory ) );
 	}
@@ -1617,6 +1627,65 @@ struct FallbackKqueueWatch : efsw::WatcherKqueue {
 };
 
 } // namespace
+
+UTEST( CrossWatchMoves, KqueueSourceArrivalsBeforeItsParentMovesAreReportedOnce ) {
+	const std::string base = getTemporaryDirectory() + "_xw_kqarrivalhistory";
+	const std::string sourcePath = base + "/source";
+	const std::string destinationPath = base + "/destination";
+	HeldChildTree cleanup;
+	cleanup.Root = base;
+	ASSERT_TRUE( createDirectory( base ) );
+	ASSERT_TRUE( createDirectory( sourcePath ) );
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent" ) );
+	ASSERT_TRUE( createDirectory( destinationPath ) );
+	ReportedPaths paths( base );
+	auto model = paths.list( { sourcePath, destinationPath } );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch source( 1, sourcePath, &listener, true, &backend, NULL, true );
+	FallbackKqueueWatch destination( 2, destinationPath, &listener, true, &backend, NULL, true );
+	for ( auto* watch : { &source, &destination } ) {
+		watch->SharedActionBatch = &batch;
+		watch->addAll();
+		ASSERT_TRUE( watch->initOK() );
+	}
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent/tree" ) );
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent/tree/nested" ) );
+	auto* parent = source.nativeChild( sourcePath + "/parent" );
+	ASSERT_NE( nullptr, parent );
+	ASSERT_GT( parent->addWatch( sourcePath + "/parent/tree", &listener, true, parent ), 0 );
+	// The parent was scanned before tree arrived. Its new tree already has native watches,
+	// but their cached lists missed the descendants that discovery reported to the listener.
+	const auto treeId = parent->watchingDirectory( sourcePath + "/parent/tree" );
+	ASSERT_GT( treeId, 0 );
+	batch.beginPass();
+	source.reportArrivalsWithIncompleteSnapshots( parent );
+	ASSERT_TRUE( renameFile( sourcePath + "/parent", destinationPath + "/parent" ) );
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	batch.beginPass();
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	for ( auto& event : listener.Events ) {
+		event.Path = paths( event.Path );
+		event.OldPath = paths( event.OldPath );
+	}
+	const std::string problem = replay( model, listener.Events );
+	EXPECT_STREQ( "", problem.c_str() );
+	EXPECT_TRUE( model == paths.list( { sourcePath, destinationPath } ) );
+	size_t structural = 0;
+	for ( const auto& event : listener.Events )
+		structural += event.Action != efsw::Actions::Modified;
+	EXPECT_EQ( 3u, structural );
+}
 
 UTEST( CrossWatchMoves, KqueueHeldChildDeleteBeforeMovingItsParent ) {
 	HeldChildTree tree;

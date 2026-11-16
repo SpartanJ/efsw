@@ -6,6 +6,7 @@
 #include <efsw/Watcher.hpp>
 #include <efsw/efsw.hpp>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -243,6 +244,20 @@ class FileActionBatch {
 		/// Empties a position's list.
 		void drop( size_t position ) { mHead[position] = mTail[position] = None; }
 
+		bool empty( size_t position ) const { return mHead[position] == None; }
+
+		const Value* front( size_t position ) const {
+			return position < mHead.size() && mHead[position] != None
+					   ? &mLinks[mHead[position]].first
+					   : NULL;
+		}
+
+		void popFront( size_t position ) {
+			mHead[position] = mLinks[mHead[position]].second;
+			if ( mHead[position] == None )
+				mTail[position] = None;
+		}
+
 	  private:
 		std::vector<size_t> mHead;
 		std::vector<size_t> mTail;
@@ -324,7 +339,18 @@ class FileActionBatch {
 	/// allocates when it holds more than the ones before. They keep the memory of the largest
 	/// pass since they were last released: see releaseScratch().
 	static constexpr size_t RetainedEvents = 1024;
+	class SourceHistory;
 	struct Scratch {
+		Scratch();
+
+		~Scratch();
+
+		Scratch( Scratch&& );
+
+		Scratch& operator=( Scratch&& );
+
+		/// Allocated only when earlier callbacks update a compared tree's source state.
+		std::unique_ptr<SourceHistory> PriorSource;
 		/// The halves seen for each identity of the pass.
 		IdentityTable<Halves> HalvesSeen;
 		std::vector<bool> Rescanned;

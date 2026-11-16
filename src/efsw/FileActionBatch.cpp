@@ -1381,6 +1381,257 @@ struct SlotHash {
 
 } // namespace
 
+// Earlier callbacks describe the listener's source tree more recently than incomplete
+// snapshots can. Replay just those touched paths. Parent/name links let a directory rename
+// move all known descendants without walking or copying them for every rename.
+class FileActionBatch::SourceHistory {
+  public:
+	ListsByPosition<size_t> Events;
+
+	void reset( const std::string& root ) {
+		clear();
+		mRoot = &root;
+		if ( root.size() != directoryLength( root ) ) {
+			mRootPath.assign( root, 0, directoryLength( root ) );
+			mRoot = &mRootPath;
+		}
+		mNodes.emplace_back();
+		mNodes[0].Present = mNodes[0].Ready = mNodes[0].Directory = true;
+		mNodes[0].CurrentPath = mRoot;
+	}
+
+	void clear() {
+		mUsedNodes = std::max( mUsedNodes, mNodes.size() );
+		mSlots.clear();
+		mNodes.clear();
+		mStack.clear();
+		mRoot = NULL;
+	}
+
+	void endPass() {
+		// A deeply nested history may use many nodes with few callbacks, so the batch's
+		// event-count retention limit alone does not bound this cache after an idle pass.
+		if ( mNodes.capacity() > RetainedEvents && 4 * mUsedNodes < mNodes.capacity() ) {
+			std::vector<Node>().swap( mNodes );
+			decltype( mSlots )().swap( mSlots );
+			std::vector<int>().swap( mStack );
+		}
+		mUsedNodes = 0;
+		Events.reset( 0 );
+	}
+
+	void apply( const Event& event ) {
+		if ( Actions::Add == event.ActionType ) {
+			add( event.Info );
+		} else if ( Actions::Delete == event.ActionType ) {
+			erase( event.Info.Filepath );
+		} else if ( Actions::Moved == event.ActionType ) {
+			if ( event.OldFilename.empty() )
+				return;
+			const std::string from =
+				!event.OldFilename.empty() && event.OldFilename[0] == FileSystem::getOSSlash()
+					? event.OldFilename
+					: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
+			const int node = find( from, directoryLength( from ), false );
+			if ( node <= 0 ) {
+				add( event.Info );
+				return;
+			}
+			const Slot old{ mNodes[node].Parent, mNodes[node].Name };
+			mSlots.find( old )->second = Removed;
+			mNodes[node].Present = false;
+			if ( contains( event.Info.Filepath ) )
+				place( node, event.Info );
+		}
+	}
+
+	void collect( const TreeSide& before, const TreeSide& after,
+				  std::vector<const FileInfo*>& entries, std::deque<FileInfo>& copies ) {
+		entries.clear();
+		for ( size_t i = 1; i < mNodes.size(); ++i ) {
+			if ( !resolve( static_cast<int>( i ) ) )
+				continue;
+			Node& node = mNodes[i];
+			const std::string& path = *node.CurrentPath;
+			std::string relative;
+			if ( NULL == node.Info || node.Info->Inode == 0 )
+				relative.assign( path, directoryLength( *mRoot ), std::string::npos );
+			if ( NULL == node.Info )
+				node.Info = before.atPath( relative );
+			if ( NULL == node.Info || node.Info->Inode == 0 ) {
+				const FileInfo* known = before.atPath( relative );
+				if ( !known || !known->Inode || known->isDirectory() != node.Directory )
+					known = after.atPath( relative );
+				if ( known && known->Inode && known->isDirectory() == node.Directory ) {
+					copies.push_back( *known );
+				} else if ( node.Info ) {
+					copies.push_back( *node.Info );
+					copies.back().Permissions = node.Directory ? S_IFDIR : S_IFREG;
+				} else {
+					copies.emplace_back();
+					copies.back().Permissions = S_IFDIR;
+				}
+				copies.back().Filepath = path;
+				node.Info = &copies.back();
+			} else if ( node.Info->Filepath != path ) {
+				copies.push_back( *node.Info );
+				copies.back().Filepath = path;
+				node.Info = &copies.back();
+			}
+			entries.push_back( node.Info );
+		}
+	}
+
+	bool accepts( const FileInfo& entry ) {
+		const int node = find( entry.Filepath, directoryLength( entry.Filepath ), false );
+		return node == Missing ||
+			   ( node >= 0 && ( !mNodes[node].Info || mNodes[node].Info == &entry ) );
+	}
+
+  private:
+	static constexpr int Missing = -1;
+	static constexpr int Removed = -2;
+	struct Node {
+		const FileInfo* Info{ NULL };
+		const std::string* CurrentPath{ NULL };
+		NameRef Name{ NULL, 0 };
+		std::string Path;
+		int Parent{ -1 };
+		bool Present{ true };
+		bool Ready{ false };
+		bool Reachable{ false };
+		bool Directory{ true };
+	};
+	std::vector<Node> mNodes;
+	std::unordered_map<Slot, int, SlotHash> mSlots;
+	std::vector<int> mStack;
+	const std::string* mRoot{ NULL };
+	std::string mRootPath;
+	size_t mUsedNodes{ 0 };
+
+	bool contains( const std::string& path ) const {
+		const size_t length = directoryLength( *mRoot );
+		return directoryLength( path ) > length && path[length] == FileSystem::getOSSlash() &&
+			   path.compare( 0, length, *mRoot, 0, length ) == 0;
+	}
+
+	int find( const std::string& path, size_t end, bool create ) {
+		const size_t rootLength = directoryLength( *mRoot );
+		if ( end == rootLength && path.compare( 0, end, *mRoot, 0, end ) == 0 )
+			return 0;
+		if ( !contains( path ) )
+			return Missing;
+		int parent = 0;
+		for ( size_t begin = rootLength + 1; begin < end; ) {
+			if ( parent > 0 && !mNodes[parent].Directory )
+				return Removed;
+			size_t next = path.find( FileSystem::getOSSlash(), begin );
+			if ( next == std::string::npos || next > end )
+				next = end;
+			const Slot slot{ parent, { path.data() + begin, next - begin } };
+			auto found = mSlots.find( slot );
+			if ( found == mSlots.end() || found->second == Removed ) {
+				if ( !create )
+					return found == mSlots.end() ? Missing : Removed;
+				const int node = static_cast<int>( mNodes.size() );
+				mNodes.emplace_back();
+				mNodes[node].Parent = parent;
+				mNodes[node].Name = slot.Name;
+				mSlots[slot] = node;
+				parent = node;
+			} else {
+				parent = found->second;
+			}
+			begin = next + 1;
+		}
+		return parent;
+	}
+
+	void place( int node, const FileInfo& info ) {
+		const size_t end = directoryLength( info.Filepath );
+		const size_t slash = info.Filepath.rfind( FileSystem::getOSSlash(), end - 1 );
+		const int parent = find( info.Filepath, slash, true );
+		if ( parent < 0 ) {
+			mNodes[node].Present = false;
+			return;
+		}
+		const Slot slot{ parent, { info.Filepath.data() + slash + 1, end - slash - 1 } };
+		auto existing = mSlots.find( slot );
+		if ( existing != mSlots.end() && existing->second >= 0 && existing->second != node )
+			mNodes[existing->second].Present = false;
+		Node& entry = mNodes[node];
+		entry.Parent = parent;
+		entry.Name = slot.Name;
+		entry.Info = &info;
+		entry.Directory = info.isDirectory() || FileSystem::slashAtEnd( info.Filepath );
+		entry.Present = true;
+		mSlots[slot] = node;
+	}
+
+	void add( const FileInfo& info ) {
+		if ( !contains( info.Filepath ) )
+			return;
+		int node = find( info.Filepath, directoryLength( info.Filepath ), false );
+		if ( node < 0 || ( mNodes[node].Info && !mNodes[node].Info->sameInode( info ) ) ) {
+			node = static_cast<int>( mNodes.size() );
+			mNodes.emplace_back();
+		}
+		place( node, info );
+	}
+
+	void erase( const std::string& path ) {
+		if ( !contains( path ) )
+			return;
+		const size_t end = directoryLength( path );
+		const size_t slash = path.rfind( FileSystem::getOSSlash(), end - 1 );
+		const int parent = find( path, slash, true );
+		if ( parent < 0 )
+			return;
+		const Slot slot{ parent, { path.data() + slash + 1, end - slash - 1 } };
+		auto existing = mSlots.find( slot );
+		if ( existing != mSlots.end() && existing->second >= 0 )
+			mNodes[existing->second].Present = false;
+		mSlots[slot] = Removed;
+	}
+
+	bool resolve( int node ) {
+		mStack.clear();
+		int parent = node;
+		while ( parent > 0 && !mNodes[parent].Ready && mStack.size() < mNodes.size() ) {
+			mStack.push_back( parent );
+			parent = mNodes[parent].Parent;
+		}
+		bool reachable = parent == 0 || ( parent > 0 && mNodes[parent].Reachable );
+		if ( mStack.size() == mNodes.size() )
+			reachable = false;
+		for ( auto it = mStack.rbegin(); it != mStack.rend(); ++it ) {
+			Node& entry = mNodes[*it];
+			reachable = reachable && entry.Present;
+			entry.Ready = true;
+			entry.Reachable = reachable;
+			if ( !reachable )
+				continue;
+			const std::string& prefix = *mNodes[entry.Parent].CurrentPath;
+			if ( entry.Info && entry.Info->Filepath.size() == prefix.size() + 1 + entry.Name.Size &&
+				 entry.Info->Filepath.compare( 0, prefix.size(), prefix ) == 0 &&
+				 entry.Info->Filepath.compare( prefix.size() + 1, entry.Name.Size, entry.Name.Data,
+											   entry.Name.Size ) == 0 ) {
+				entry.CurrentPath = &entry.Info->Filepath;
+			} else {
+				entry.Path = prefix + FileSystem::getOSSlash();
+				entry.Path.append( entry.Name.Data, entry.Name.Size );
+				entry.CurrentPath = &entry.Path;
+			}
+		}
+		return mNodes[node].Reachable;
+	}
+};
+
+FileActionBatch::Scratch::Scratch() = default;
+FileActionBatch::Scratch::~Scratch() = default;
+FileActionBatch::Scratch::Scratch( Scratch&& ) = default;
+FileActionBatch::Scratch& FileActionBatch::Scratch::operator=( Scratch&& ) = default;
+
 /// Orders the changes that turn the tree before a directory move, as its Moved event leaves it
 /// at the destination, into the tree the destination found, so that a listener can apply them
 /// one after the other: each Delete, Add and Moved event names an existing entry, or a free name
@@ -1400,7 +1651,7 @@ class FileActionBatch::TreePlanner {
 	void consider( const FileInfo* before, const FileInfo* after ) {
 		const FileInfo* entry = before ? before : after;
 		if ( entry->isDirectory() )
-			directoryNode( entry->identity() );
+			directoryNode( entry, before != NULL );
 		else
 			fileNode( before, after );
 	}
@@ -1433,6 +1684,8 @@ class FileActionBatch::TreePlanner {
 	TreeChanges& mOutput;
 	std::vector<Node> mNodes;
 	std::unordered_map<FileIdentity, int, FileIdentityHash> mDirectories;
+	/// A reported directory whose identity could not be read is distinct at each path.
+	std::unordered_map<const FileInfo*, int> mUnknownDirectories;
 	std::unordered_map<Slot, int, SlotHash> mOccupied;
 	std::unordered_map<Slot, std::vector<int>, SlotHash> mSlotWaiters;
 	std::unordered_map<int, std::vector<int>> mNodeWaiters;
@@ -1456,7 +1709,22 @@ class FileActionBatch::TreePlanner {
 			mFailed = true;
 			return 0;
 		}
-		return directoryNode( parent->identity() );
+		return directoryNode( parent, &side == &mBefore );
+	}
+
+	int directoryNode( const FileInfo* entry, bool before ) {
+		if ( entry->Inode != 0 )
+			return directoryNode( entry->identity() );
+		auto found = mUnknownDirectories.find( entry );
+		if ( found != mUnknownDirectories.end() )
+			return found->second;
+		const int index = static_cast<int>( mNodes.size() );
+		mUnknownDirectories[entry] = index;
+		mNodes.emplace_back();
+		mNodes[index].Directory = true;
+		( before ? mNodes[index].Before : mNodes[index].After ) = entry;
+		resolve( index );
+		return index;
 	}
 
 	void resolve( int index ) {
@@ -1744,11 +2012,80 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 	// directory was still at its source; what moved with it leaves the tree, and what moved with
 	// one that entered is reported by its move.
 	std::unordered_map<std::string, size_t> sourceRoots, destinationRoots;
+	size_t lastComparedMove = 0;
 	for ( size_t move : moves.Reconciled ) {
 		const std::string& source = mEvents[moves.SourceOf[move]].Info.Filepath;
 		const std::string& destination = mEvents[move].Info.Filepath;
 		sourceRoots[source.substr( 0, directoryLength( source ) )] = move;
 		destinationRoots[destination.substr( 0, directoryLength( destination ) )] = move;
+		lastComparedMove = std::max( lastComparedMove, move );
+	}
+	// Most comparisons have no earlier source arrival. Do not allocate history storage or
+	// rebuild source state for those passes. Index relevant callbacks once, not per tree.
+	// Later events cannot update a source before its move: they must not pay path lookups.
+	SourceHistory* history = NULL;
+	for ( size_t i = 0; i < lastComparedMove; ++i ) {
+		const Event& event = mEvents[i];
+		if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+			 ( event.ActionType != Actions::Add && event.ActionType != Actions::Moved ) )
+			continue;
+		const size_t source = enclosingRoot( sourceRoots, event.Info.Filepath, Moves::None );
+		if ( source != Moves::None && i < source &&
+			 event.Owner == mEvents[moves.SourceOf[source]].Owner ) {
+			if ( !mScratch.PriorSource )
+				mScratch.PriorSource.reset( new SourceHistory );
+			history = mScratch.PriorSource.get();
+			history->Events.reset( mEvents.size() );
+			break;
+		}
+	}
+	if ( history ) {
+		NearestDirectory<size_t> sources( sourceRoots, Moves::None );
+		// Reuse delivery scratch to select only trees with an earlier arrival or rename.
+		// The memoized lookup is shared with the indexing pass below.
+		std::vector<bool>& priorSources = mScratch.Converted;
+		priorSources.assign( mEvents.size(), false );
+		for ( size_t i = 0; i < lastComparedMove; ++i ) {
+			const Event& event = mEvents[i];
+			if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+				 ( event.ActionType != Actions::Add && event.ActionType != Actions::Moved ) )
+				continue;
+			const size_t source = sources.of( event.Info.Filepath );
+			if ( source != Moves::None && i < source &&
+				 event.Owner == mEvents[moves.SourceOf[source]].Owner )
+				priorSources[source] = true;
+		}
+		for ( size_t i = 0; i < lastComparedMove; ++i ) {
+			const Event& event = mEvents[i];
+			const size_t claimed = moves.MoveOf[i];
+			if ( event.ActionType == Actions::Delete && claimed != Moves::None &&
+				 priorSources[claimed] && i < claimed && i < moves.SourceOf[claimed] &&
+				 event.Owner == mEvents[moves.SourceOf[claimed]].Owner ) {
+				// A source change collected before the parent's own departure must precede
+				// later source Adds too. Do not hide that Delete in the parent's comparison.
+				moves.MoveOf[i] = Moves::None;
+			}
+			if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+				 ( event.ActionType != Actions::Add && event.ActionType != Actions::Delete &&
+				   event.ActionType != Actions::Moved ) )
+				continue;
+			auto index = [&]( const std::string& path, size_t already ) {
+				const size_t source = sources.of( path );
+				if ( source != already && source != Moves::None && priorSources[source] &&
+					 i < source && event.Owner == mEvents[moves.SourceOf[source]].Owner ) {
+					history->Events.append( source, i );
+				}
+				return source;
+			};
+			const size_t at = index( event.Info.Filepath, Moves::None );
+			if ( event.ActionType == Actions::Moved && !event.OldFilename.empty() ) {
+				const std::string from =
+					event.OldFilename[0] == FileSystem::getOSSlash()
+						? event.OldFilename
+						: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
+				index( from, at );
+			}
+		}
 	}
 	// The tree whose root contains the path, if any.
 	auto treeOf = []( const std::unordered_map<std::string, size_t>& roots,
@@ -1841,7 +2178,7 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		before.RootLength = directoryLength( sourceRoot );
 		after.RootLength = directoryLength( destinationRoot );
 		auto inside = []( const FileInfo& entry, const std::string& root, size_t length ) {
-			return entry.Inode != 0 && entry.Filepath.size() > length + 1 &&
+			return entry.Filepath.size() > length + 1 &&
 				   entry.Filepath[length] == FileSystem::getOSSlash() &&
 				   entry.Filepath.compare( 0, length, root, 0, length ) == 0;
 		};
@@ -1910,8 +2247,8 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 					return true;
 			return false;
 		};
-		auto addBefore = [&]( const FileInfo& entry ) {
-			if ( inside( entry, sourceRoot, before.RootLength ) &&
+		auto addBefore = [&]( const FileInfo& entry, bool known = false ) {
+			if ( ( known || entry.Inode != 0 ) && inside( entry, sourceRoot, before.RootLength ) &&
 				 ( !reportedSeparately( entry, before.RootLength, destinationRoot,
 										after.RootLength ) ||
 				   leftTree.count( entry.identity() ) ) &&
@@ -1961,12 +2298,32 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				superseded[mHeld[h].Info.identity()] = h;
 		after.ById.reserve( destinationTree.size() );
 		for ( const FileInfo* entry : destinationTree )
-			if ( inside( *entry, destinationRoot, after.RootLength ) &&
+			if ( entry->Inode != 0 && inside( *entry, destinationRoot, after.RootLength ) &&
 				 !reportedSeparately( *entry, after.RootLength, sourceRoot, before.RootLength ) &&
 				 !carried( carriedIn, entry->Filepath ) )
 				after.ById.push_back( { entry->identity(), entry } );
 		before.index();
 		after.index();
+		if ( history ) {
+			if ( !history->Events.empty( move ) ) {
+				before.indexPaths();
+				after.indexPaths();
+				history->reset( sourceRoot );
+				history->Events.forEach(
+					move, [&]( size_t position ) { history->apply( mEvents[position] ); } );
+				std::vector<const FileInfo*>& known = mScratch.Arrived;
+				history->collect( before, after, known, mScratch.RenamedAtHold );
+				before.ById.erase( std::remove_if( before.ById.begin(), before.ById.end(),
+												   [&]( const TreeEntry& entry ) {
+													   return !history->accepts( *entry.Info );
+												   } ),
+								   before.ById.end() );
+				for ( const FileInfo* entry : known )
+					addBefore( *entry, true );
+				before.index();
+				history->clear();
+			}
+		}
 		for ( Event* added : unpairedDirectories ) {
 			const FileIdentity identity = added->Info.identity();
 			if ( before.directory( identity ) && !after.directory( identity ) )
@@ -2185,6 +2542,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	if ( !moves ) {
 		for ( size_t i = 0; i < mEvents.size(); i++ )
 			deliverOrdinary( i );
+		if ( mScratch.PriorSource )
+			mScratch.PriorSource->endPass();
 		clear();
 		return;
 	}
@@ -2412,6 +2771,16 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 	// @return The event it waits for, or None.
 	auto blocker = [&]( size_t i ) {
 		const size_t move = moves->MoveOf[i];
+		if ( mScratch.PriorSource ) {
+			auto& earlier = mScratch.PriorSource->Events;
+			const size_t* event = earlier.front( i );
+			while ( event && MoveState::Unresolved != state[*event] ) {
+				earlier.popFront( i );
+				event = earlier.front( i );
+			}
+			if ( event )
+				return *event;
+		}
 		if ( !prerequisites.empty() && Moves::None != prerequisites[i].first ) {
 			const size_t position = firstUnresolved( prerequisites[i].first );
 			if ( position < prerequisites[i].second )
@@ -2638,6 +3007,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 			skipped.forEach( i, [&]( size_t j ) { deliverEvent( listener, j ); } );
 		}
 	}
+	if ( mScratch.PriorSource )
+		mScratch.PriorSource->endPass();
 	clear();
 }
 
