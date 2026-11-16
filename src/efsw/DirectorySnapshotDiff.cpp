@@ -3,6 +3,8 @@
 namespace efsw {
 
 void DirectorySnapshotDiff::clear() {
+	DirChanged = false;
+	DirMissing = false;
 	FilesCreated.clear();
 	FilesModified.clear();
 	FilesMoved.clear();

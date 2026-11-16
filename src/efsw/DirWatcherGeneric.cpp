@@ -139,7 +139,14 @@ void DirWatcherGeneric::addChildren( bool reportNewFiles ) {
 }
 
 void DirWatcherGeneric::watch( bool reportOwnChange ) {
-	DirectorySnapshotDiff Diff = DirSnap.scan();
+	const bool parentResolvesDirectory = NULL != Parent || NULL != Watch->SharedActionOwner;
+	DirectorySnapshotDiff Diff = DirSnap.scan( parentResolvesDirectory );
+	// A parent may not have processed its rename yet, even when a fallback's root scan
+	// succeeded before the move. Keep every missing subtree until its generic or native
+	// parent relocates it or reports its removal, rather than emptying its old snapshots.
+	// The scan reports its path checks, so no extra lookup is needed here.
+	if ( parentResolvesDirectory && Diff.DirMissing )
+		return;
 
 	if ( reportOwnChange && Diff.DirChanged && NULL != Parent ) {
 		Watch->handleAction( FileSystem::pathRemoveFileName( DirSnap.DirectoryInfo.Filepath ),
@@ -171,7 +178,7 @@ void DirWatcherGeneric::watch( bool reportOwnChange ) {
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
-			createDirectory( ( *it ).Filepath );
+			createDirectory( *it );
 		}
 
 		DiffIterator( DirsModified ) {
@@ -265,7 +272,8 @@ DirWatcherGeneric* DirWatcherGeneric::findDirWatcher( std::string dir ) {
 	return NULL;
 }
 
-DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
+DirWatcherGeneric* DirWatcherGeneric::createDirectory( const FileInfo& arrival ) {
+	std::string newdir( arrival.Filepath );
 	FileSystem::dirRemoveSlashAtEnd( newdir );
 	newdir = FileSystem::fileNameFromPath( newdir );
 
@@ -280,7 +288,14 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 
 	FileInfo fi( dir );
 
-	if ( !fi.isDirectory() || !fi.isReadable() || FileSystem::isRemoteFS( dir ) ) {
+	if ( !fi.isDirectory() ) {
+		// The scan already saved this arrival. Even if it disappeared before discovery,
+		// report its Add: the next scan will report its Delete from that saved snapshot.
+		handleAction( newdir, Actions::Add, "", arrival );
+		return NULL;
+	}
+
+	if ( !fi.isReadable() || FileSystem::isRemoteFS( dir ) ) {
 		return NULL;
 	}
 
@@ -310,6 +325,11 @@ DirWatcherGeneric* DirWatcherGeneric::createDirectory( std::string newdir ) {
 
 	if ( !skip ) {
 		handleAction( newdir, Actions::Add, "", fi );
+
+		// A non-recursive watch reports the directory as one of its entries, but does not
+		// watch inside it.
+		if ( !Recursive )
+			return NULL;
 
 		/// Creates the new directory watcher of the subfolder and check for new files
 		dw = new DirWatcherGeneric( this, Watch, dir, Recursive );
@@ -374,6 +394,16 @@ void DirWatcherGeneric::moveDirectory( std::string oldDir, std::string newDir ) 
 
 		dw->resetDirectory( newDir );
 	}
+}
+
+bool DirWatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
+	if ( DirSnap.hasAny( identities ) )
+		return true;
+	for ( const auto& directory : Directories ) {
+		if ( directory.second->snapshotHasAny( identities ) )
+			return true;
+	}
+	return false;
 }
 
 bool DirWatcherGeneric::pathInWatches( std::string path ) {

@@ -16,6 +16,8 @@ class DirectorySnapshotDiff {
 	FileInfoList DirsModified;
 	MovedList DirsMoved;
 	bool DirChanged;
+	/// The directory was missing when read, or disappeared while a fallback scanned it.
+	bool DirMissing;
 
 	void clear();
 

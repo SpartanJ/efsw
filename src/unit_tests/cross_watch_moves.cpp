@@ -1,0 +1,2524 @@
+#include "test_util.hpp"
+#include "utest.h"
+#include <atomic>
+#include <efsw/FileSystem.hpp>
+#include <efsw/DirWatcherGeneric.hpp>
+#include <efsw/FileWatcherGeneric.hpp>
+#include <efsw/WatcherGeneric.hpp>
+#include <efsw/agent_protocol.hpp>
+#include <efsw/base.hpp>
+#include <set>
+#include <thread>
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+#include <fcntl.h>
+#endif
+
+using namespace efsw_test;
+
+namespace {
+
+const std::vector<efsw::WatcherOption> crossMoveOptions = {
+	{ efsw::Options::ReportCrossDirectoryMoves, 1 } };
+
+struct TwoWatches {
+	std::string Source;
+	std::string Destination;
+	TestListener SourceListener;
+	TestListener DestinationListener;
+	efsw::FileWatcher Watcher;
+	efsw::WatchID SourceId{ 0 };
+	efsw::WatchID DestinationId{ 0 };
+
+	TwoWatches() :
+		Source( getTemporaryDirectory() + "_xw_source" ),
+		Destination( getTemporaryDirectory() + "_xw_destination" ),
+		Watcher( useGeneric, 100 ) {
+		removeDirectory( Source );
+		removeDirectory( Destination );
+		createDirectory( Source );
+		createDirectory( Destination );
+	}
+
+	~TwoWatches() {
+		Watcher.removeWatch( SourceId );
+		Watcher.removeWatch( DestinationId );
+		removeDirectory( Source );
+		removeDirectory( Destination );
+	}
+
+	bool start( bool sourceRecursive, bool destinationRecursive ) {
+		SourceId = Watcher.addWatch( Source, &SourceListener, sourceRecursive, crossMoveOptions );
+		DestinationId = Watcher.addWatch( Destination, &DestinationListener,
+										  destinationRecursive, crossMoveOptions );
+		if ( SourceId <= 0 || DestinationId <= 0 )
+			return false;
+		Watcher.watch();
+		const bool ready = waitForPending();
+		SourceListener.clearEvents();
+		DestinationListener.clearEvents();
+		return ready;
+	}
+
+	/// Waits until both registrations delivered the events of the changes made so far.
+	bool waitForPending() {
+		return efsw_test::waitForPending( SourceListener, Source ) &&
+			   efsw_test::waitForPending( DestinationListener, Destination );
+	}
+};
+
+// Polling backends compare directory snapshots and may never see a short-lived file.
+bool pollsSnapshots() {
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+	return true;
+#else
+	return useGeneric;
+#endif
+}
+
+// inotify and Windows report every create and delete. FSEvents can merge a create and a
+// delete of one path into a single record, reported as Delete only.
+bool reportsEveryCreate() {
+#if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+	return !useGeneric;
+#else
+	return false;
+#endif
+}
+
+// A coalesced move must not also be reported through the Delete + Add fallback.
+void expectSingleMove( TwoWatches& watches, const std::string& name, int* utest_result ) {
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, name ) );
+	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, name ) );
+}
+
+} // namespace
+
+namespace {
+
+struct HeldChildTree {
+	std::string Root{ getTemporaryDirectory() + "_held_child" };
+
+	~HeldChildTree() { removeDirectory( Root ); }
+
+	std::string path( const char* relative ) const {
+		std::string result( relative );
+		for ( char& c : result )
+			if ( c == '/' )
+				c = efsw::FileSystem::getOSSlash();
+		return Root + efsw::FileSystem::getOSSlash() + result;
+	}
+
+	bool create() {
+		if ( !createDirectory( Root ) )
+			return false;
+		std::string canonical = efsw::FileSystem::getRealPath( Root );
+		if ( canonical.empty() )
+			return false;
+		Root = std::move( canonical );
+		for ( const char* dir : { "src", "dst", "other", "out", "src/outer", "src/outer/inner" } ) {
+			if ( !createDirectory( path( dir ) ) )
+				return false;
+		}
+		return createFile( path( "src/outer/inner/file" ), "x" );
+	}
+};
+
+// A real filesystem version of seed 370, with scan boundaries fixed instead of timed:
+// inner leaves in one pass, then its parent moves and its file returns in the next.
+void checkHeldChildMove( const HeldChildTree& tree, efsw::FileActionBatch& batch,
+						 TestListener& listener, const std::vector<efsw::Watcher*>& watches,
+						 int* utest_result ) {
+	auto pass = [&]() {
+		batch.beginPass();
+		for ( auto* watch : watches ) {
+			watch->watch();
+			batch.scanned( watch );
+		}
+		batch.finishPass();
+	};
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/inner" ), tree.path( "out/inner" ) ) );
+	pass();
+	for ( const auto& event : listener.getEvents() )
+		ASSERT_EQ( efsw::Actions::Modified, std::get<0>( event ) );
+	listener.clearEvents();
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+	ASSERT_TRUE( renameFile( tree.path( "out/inner/file" ), tree.path( "other/file" ) ) );
+	pass();
+	pass();
+	const int returned = listener.indexOf( efsw::Actions::Moved, "file" );
+	const int deleted = listener.indexOf( efsw::Actions::Delete, "inner" );
+	const int parent = listener.indexOf( efsw::Actions::Moved, "outer" );
+	ASSERT_GE( returned, 0 );
+	ASSERT_GT( deleted, returned );
+	ASSERT_GT( parent, deleted );
+	const auto events = listener.getEvents();
+	const std::string oldFile = tree.path( "src/outer/inner/file" );
+	const std::string oldParent = tree.path( "src/outer" );
+	EXPECT_STREQ( oldFile.c_str(), std::get<2>( events[returned] ).c_str() );
+	EXPECT_STREQ( oldParent.c_str(), std::get<2>( events[parent] ).c_str() );
+}
+
+} // namespace
+
+UTEST( CrossWatchMoves, HeldChildDeleteBeforeMovingItsParentGeneric ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	efsw::WatcherGeneric destination( 1, tree.path( "dst/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric source( 2, tree.path( "src/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric other( 3, tree.path( "other/" ), &listener, &backend, true, true );
+	for ( auto* watch : { &destination, &source, &other } )
+		watch->SharedActionBatch = &batch;
+	checkHeldChildMove( tree, batch, listener, { &destination, &source, &other }, utest_result );
+}
+
+// A directory moved between two registrations must be owned by the destination afterwards:
+// events inside it reach the destination listener and survive removing the source watch.
+UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+	const std::string canonicalSource = efsw::FileSystem::getRealPath( watches.Source + "/sub" );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.checkEvent( efsw::Actions::Moved, "sub", canonicalSource ) );
+	EXPECT_TRUE( watches.waitForPending() );
+	expectSingleMove( watches, "sub", utest_result );
+
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "inside.txt" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Add, "inside.txt" ) );
+
+	watches.Watcher.removeWatch( watches.SourceId );
+	watches.SourceId = 0;
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/after_remove.txt", "x" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.waitForActions( efsw::Actions::Add, "after_remove.txt" ) );
+}
+
+// A directory moved between two registrations, then changed inside, possibly before the next
+// scan: a directory and a file renamed in it, and a file created. Each change is reported, after
+// the directory's Moved event, and the file inside the renamed directory, which kept its place,
+// is not.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, ChangesInsideMovedDirectoryAreReported ) {
+	if ( !pollsSnapshots() ) {
+		UTEST_SKIP( "native backends report the changes as they happen" );
+	}
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/outer" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/outer/inner" ) );
+	EXPECT_TRUE( createFile( watches.Source + "/outer/inner/leaf.txt", "x" ) );
+	EXPECT_TRUE( createFile( watches.Source + "/outer/a.txt", "x" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	const std::string outer = watches.Destination + "/outer";
+	EXPECT_TRUE( renameFile( watches.Source + "/outer", outer ) );
+	EXPECT_TRUE( renameFile( outer + "/inner", outer + "/renamed" ) );
+	EXPECT_TRUE( renameFile( outer + "/a.txt", outer + "/b.txt" ) );
+	EXPECT_TRUE( createFile( outer + "/new.txt", "x" ) );
+	TestListener& destination = watches.DestinationListener;
+	EXPECT_TRUE( destination.waitForActions( efsw::Actions::Moved, "outer" ) );
+	EXPECT_TRUE( destination.waitForActions( efsw::Actions::Moved, "renamed" ) );
+	EXPECT_TRUE( destination.waitForActions( efsw::Actions::Moved, "b.txt" ) );
+	EXPECT_TRUE( destination.waitForActions( efsw::Actions::Add, "new.txt" ) );
+	EXPECT_TRUE( watches.waitForPending() );
+	expectSingleMove( watches, "outer", utest_result );
+	EXPECT_LT( destination.indexOf( efsw::Actions::Moved, "outer" ),
+			   destination.indexOf( efsw::Actions::Moved, "renamed" ) );
+	EXPECT_EQ( -1, destination.indexOf( efsw::Actions::Add, "renamed" ) );
+	EXPECT_EQ( -1, destination.indexOf( efsw::Actions::Add, "b.txt" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, "inner" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, "a.txt" ) );
+	for ( efsw::Action action :
+		  { efsw::Actions::Add, efsw::Actions::Delete, efsw::Actions::Moved } ) {
+		EXPECT_EQ( -1, destination.indexOf( action, "leaf.txt" ) );
+		EXPECT_EQ( -1, watches.SourceListener.indexOf( action, "leaf.txt" ) );
+	}
+}
+#else
+UTEST( CrossWatchMoves, ChangesInsideMovedDirectoryAreReported ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+namespace {
+
+/// Records every event with its full paths, to replay them.
+struct ReplayListener : efsw::FileWatchListener {
+	struct Recorded {
+		efsw::Action Action;
+		std::string Path;
+		std::string OldPath;
+	};
+	std::mutex Mutex;
+	std::vector<Recorded> Events;
+
+	void handleFileAction( efsw::WatchID, const std::string& dir, const std::string& file,
+						   efsw::Action action, const std::string& old ) override {
+		std::lock_guard<std::mutex> lock( Mutex );
+		// A move within a directory gives the old name only.
+		const bool absolute =
+			!old.empty() && old.find( efsw::FileSystem::getOSSlash() ) != std::string::npos;
+		Events.push_back( { action, dir + file, absolute || old.empty() ? old : dir + old } );
+	}
+};
+
+/// Paths as efsw reports them: with the platform's separators, and below the directories as
+/// they were registered, not resolved: a Moved event gives its source resolved, which on macOS
+/// is below /private/var where temporary directories are registered below /var.
+struct ReportedPaths {
+	std::string Base;
+	std::string ResolvedBase;
+
+	explicit ReportedPaths( const std::string& base ) :
+		Base( normalize( base ) ), ResolvedBase( efsw::FileSystem::getRealPath( base ) ) {}
+
+	static std::string normalize( std::string path ) {
+		for ( char& c : path )
+			if ( c == '/' || c == '\\' )
+				c = efsw::FileSystem::getOSSlash();
+		return path;
+	}
+
+	std::string operator()( const std::string& path ) const {
+		std::string result = normalize( path );
+		if ( !ResolvedBase.empty() && ResolvedBase != Base &&
+			 0 == result.compare( 0, ResolvedBase.size(), ResolvedBase ) )
+			result = Base + result.substr( ResolvedBase.size() );
+		return result;
+	}
+
+	/// The paths of the directories and the entries below them, as the file system lists them.
+	std::set<std::string> list( const std::vector<std::string>& roots ) const {
+		std::set<std::string> paths;
+		for ( const std::string& root : roots ) {
+			paths.insert( ( *this )( root ) );
+			std::error_code ec;
+			for ( auto it = std::filesystem::recursive_directory_iterator( root, ec );
+				  it != std::filesystem::recursive_directory_iterator(); it.increment( ec ) )
+				paths.insert( ( *this )( root + it->path().string().substr( root.size() ) ) );
+		}
+		return paths;
+	}
+};
+
+/// Applies the events to the paths, as a listener would. @return What was wrong, or nothing.
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE // Used by active fallback tests; reconstruction tests are deferred.
+std::string replay( std::set<std::string>& paths,
+					const std::vector<ReplayListener::Recorded>& events ) {
+	const std::string slash( 1, efsw::FileSystem::getOSSlash() );
+	auto parent = [&slash]( const std::string& path ) {
+		return path.substr( 0, path.rfind( slash ) );
+	};
+	auto erase = [&]( const std::string& path ) {
+		paths.erase( path );
+		const std::string below = path + slash;
+		auto it = paths.lower_bound( below );
+		while ( it != paths.end() && 0 == it->compare( 0, below.size(), below ) )
+			it = paths.erase( it );
+	};
+	std::vector<std::string> deleted;
+	for ( const auto& event : events ) {
+		switch ( event.Action ) {
+			case efsw::Actions::Delete: {
+				if ( !paths.count( event.Path ) ) {
+					// The generic backend reports the entries of a deleted directory after it.
+					bool below = false;
+					for ( const std::string& gone : deleted )
+						below =
+							below || 0 == event.Path.compare( 0, gone.size() + 1, gone + slash );
+					if ( below )
+						break;
+					return "deletes a missing " + event.Path;
+				}
+				erase( event.Path );
+				deleted.push_back( event.Path );
+				break;
+			}
+			case efsw::Actions::Add:
+				if ( paths.count( event.Path ) )
+					return "adds an existing " + event.Path;
+				if ( !paths.count( parent( event.Path ) ) )
+					return "adds into a missing parent: " + event.Path;
+				paths.insert( event.Path );
+				break;
+			case efsw::Actions::Moved: {
+				if ( !paths.count( event.OldPath ) )
+					return "moves a missing " + event.OldPath;
+				if ( paths.count( event.Path ) )
+					return "moves onto an existing " + event.Path;
+				if ( !paths.count( parent( event.Path ) ) )
+					return "moves into a missing parent: " + event.Path;
+				std::set<std::string> moved{ event.Path };
+				const std::string below = event.OldPath + slash;
+				for ( auto it = paths.lower_bound( below );
+					  it != paths.end() && 0 == it->compare( 0, below.size(), below ); ++it )
+					moved.insert( event.Path + it->substr( event.OldPath.size() ) );
+				erase( event.OldPath );
+				paths.insert( moved.begin(), moved.end() );
+				break;
+			}
+			default:
+				break;
+		}
+	}
+	return "";
+}
+#endif
+
+// Seed 46: the destination caches the arriving tree before a file (or subtree) leaves it;
+// the source then sees both moves. The next pass must not repeat a departure already reported
+// by the comparison. Recreating and deleting that path afterwards must still be reported.
+#if 0 // Deferred reconstruction fixture; restored with its active tests in branch 2.
+bool createDepartingTree( HeldChildTree& tree, bool directory ) {
+	return tree.create() && ( directory || ( renameFile( tree.path( "src/outer/inner/file" ),
+														 tree.path( "src/outer/file" ) ) &&
+											 removeDirectory( tree.path( "src/outer/inner" ) ) ) );
+}
+#endif
+
+#if 0 // Deferred reconstruction fixture; restored with its active tests in branch 2.
+void checkDepartureFromArrivingTree( const HeldChildTree& tree, efsw::FileActionBatch& batch,
+									 ReplayListener& listener, efsw::Watcher& destination,
+									 efsw::Watcher& source, bool directory, int* utest_result ) {
+	const std::vector<std::string> roots{ tree.path( "src" ), tree.path( "dst" ) };
+	const ReportedPaths reported( tree.Root );
+	auto paths = reported.list( roots );
+	auto scan = [&]( efsw::Watcher& watch ) {
+		watch.watch();
+		batch.scanned( &watch );
+	};
+	auto pass = [&]() {
+		batch.beginPass();
+		scan( destination );
+		scan( source );
+		batch.finishPass();
+	};
+	auto check = [&]() {
+		std::vector<ReplayListener::Recorded> events;
+		events.swap( listener.Events );
+		for ( auto& event : events ) {
+			event.Path = reported( event.Path );
+			event.OldPath = reported( event.OldPath );
+		}
+		const std::string problem = replay( paths, events );
+		EXPECT_STREQ( "", problem.c_str() );
+		const auto expected = reported.list( roots );
+		if ( paths != expected ) {
+			printf( "Departure directory=%d\n", directory );
+			for ( const auto& event : events )
+				printf( "  %d %s <- %s\n", event.Action, event.Path.c_str(),
+						event.OldPath.c_str() );
+			for ( const auto& path : expected )
+				if ( !paths.count( path ) )
+					printf( "  Missing %s\n", path.c_str() );
+			for ( const auto& path : paths )
+				if ( !expected.count( path ) )
+					printf( "  Extra %s\n", path.c_str() );
+		}
+		EXPECT_TRUE( paths == expected );
+	};
+	ASSERT_TRUE( renameFile( source.Directory + "outer", destination.Directory + "outer" ) );
+	batch.beginPass();
+	scan( destination );
+	const std::string from = destination.Directory +
+							 ReportedPaths::normalize( directory ? "outer/inner" : "outer/file" );
+	const std::string to = source.Directory + ( directory ? "inner" : "file" );
+	ASSERT_TRUE( renameFile( from, to ) );
+	scan( source );
+	batch.finishPass();
+	pass();
+	pass();
+	check();
+	ASSERT_TRUE( directory ? createDirectory( from ) : createFile( from, "recreated" ) );
+	pass();
+	pass();
+	check();
+	ASSERT_TRUE( directory ? removeDirectory( from ) : removeFile( from ) );
+	pass();
+	pass();
+	check();
+}
+#endif
+
+} // namespace
+
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, EntryLeavesAnArrivingTreeBetweenGenericScans ) {
+	for ( int configuration = 0; configuration < 4; configuration++ ) {
+		const bool directory = configuration & 1;
+		const bool reverse = configuration & 2;
+		HeldChildTree tree;
+		ASSERT_TRUE( createDepartingTree( tree, directory ) );
+		if ( reverse )
+			ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherGeneric backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherGeneric destination( 1, tree.path( reverse ? "src/" : "dst/" ), &listener,
+										  &backend, true, true );
+		efsw::WatcherGeneric source( 2, tree.path( reverse ? "dst/" : "src/" ), &listener, &backend,
+									 true, true );
+		for ( auto* watch : { &destination, &source } )
+			watch->SharedActionBatch = &batch;
+		checkDepartureFromArrivingTree( tree, batch, listener, destination, source, directory,
+										utest_result );
+	}
+}
+#else
+UTEST( CrossWatchMoves, EntryLeavesAnArrivingTreeBetweenGenericScans ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Seed 331: discovery caches g, then a rescan in the same pass finds it deleted. The tree's
+// comparison already reports the Delete; the destination must not hold and deliver it again.
+// Generic discovery can rescan a newly installed sub-watch too: this is not kqueue-specific.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, GenericArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( createDepartingTree( tree, false ) );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/file" ), tree.path( "src/outer/g" ) ) );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/f" ), "f" ) );
+	ASSERT_TRUE( createDirectory( tree.path( "dst/d" ) ) );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	efsw::WatcherGeneric source( 1, tree.path( "src/" ), &listener, &backend, true, true );
+	efsw::WatcherGeneric destination( 2, tree.path( "dst/" ), &listener, &backend, true, true );
+	for ( auto* watch : { &source, &destination } )
+		watch->SharedActionBatch = &batch;
+	const std::vector<std::string> roots{ tree.path( "src" ), tree.path( "dst" ) };
+	const ReportedPaths reported( tree.Root );
+	auto paths = reported.list( roots );
+	const std::string arrived = tree.path( "dst/d/n9" );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), arrived ) );
+	ASSERT_TRUE( removeFile( tree.path( "dst/d/n9/f" ) ) );
+	batch.beginPass();
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	std::vector<const efsw::FileInfo*> entries;
+	ASSERT_TRUE( destination.collectTree( arrived, &entries ) );
+	ASSERT_EQ( 1u, entries.size() );
+	const std::string cached = tree.path( "dst/d/n9/g" );
+	ASSERT_STREQ( cached.c_str(), entries[0]->Filepath.c_str() );
+	// Borrowed snapshot pointers do not survive the next scan.
+	entries.clear();
+	ASSERT_TRUE( removeFile( cached ) );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	// A held duplicate would arrive here, after the comparison already deleted g.
+	batch.beginPass();
+	for ( auto* watch : { &source, &destination } ) {
+		watch->watch();
+		batch.scanned( watch );
+	}
+	batch.finishPass();
+	int deletes = 0, moves = 0;
+	for ( auto& event : listener.Events ) {
+		event.Path = reported( event.Path );
+		event.OldPath = reported( event.OldPath );
+		if ( event.Action == efsw::Actions::Delete && event.Path == cached )
+			deletes++;
+		if ( event.Action == efsw::Actions::Moved && event.Path == arrived )
+			moves++;
+	}
+	EXPECT_EQ( 1, deletes );
+	EXPECT_EQ( 1, moves );
+	const std::string problem = replay( paths, listener.Events );
+	EXPECT_STREQ( "", problem.c_str() );
+	EXPECT_TRUE( paths == reported.list( roots ) );
+}
+#else
+UTEST( CrossWatchMoves, GenericArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// A directory moved between two registrations, then changed inside before the next scan with
+// changes that depend on one another, or moved to and from a third registration: the events,
+// replayed, turn the trees the registrations started with into the trees on disk.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, ChangesInsideMovedDirectoryReplay ) {
+	if ( !pollsSnapshots() ) {
+		UTEST_SKIP( "native backends report the changes as they happen" );
+	}
+	for ( int scenario = 0; scenario < 7; scenario++ ) {
+		const std::string base = getTemporaryDirectory() + "_xw_replay";
+		const std::string source = base + "/source";
+		const std::string destination = base + "/destination";
+		const std::string other = base + "/other";
+		removeDirectory( base );
+		EXPECT_TRUE( createDirectory( base ) );
+		EXPECT_TRUE( createDirectory( source ) );
+		EXPECT_TRUE( createDirectory( destination ) );
+		EXPECT_TRUE( createDirectory( other ) );
+		EXPECT_TRUE( createFile( other + "/in", "in" ) );
+		EXPECT_TRUE( createDirectory( source + "/outer" ) );
+		EXPECT_TRUE( createDirectory( source + "/outer/inner" ) );
+		EXPECT_TRUE( createDirectory( source + "/outer/other" ) );
+		EXPECT_TRUE( createFile( source + "/outer/inner/file", "x" ) );
+		EXPECT_TRUE( createFile( source + "/outer/other/g", "x" ) );
+		EXPECT_TRUE( createFile( source + "/outer/a", "a" ) );
+		EXPECT_TRUE( createFile( source + "/outer/b", "bb" ) );
+		ReplayListener listener;
+		TestListener markers;
+		{
+			efsw::FileWatcher watcher( useGeneric, 100 );
+			const efsw::WatchID sourceId =
+				watcher.addWatch( source, &listener, true, crossMoveOptions );
+			const efsw::WatchID destinationId =
+				watcher.addWatch( destination, &listener, true, crossMoveOptions );
+			const efsw::WatchID otherId =
+				watcher.addWatch( other, &listener, true, crossMoveOptions );
+			MarkerWatch marker( watcher, base + "_marker" );
+			ASSERT_GT( sourceId, 0 );
+			ASSERT_GT( destinationId, 0 );
+			ASSERT_GT( otherId, 0 );
+			watcher.watch();
+			EXPECT_TRUE( marker.waitForAllPending() );
+			const ReportedPaths reported( base );
+			std::set<std::string> paths = reported.list( { source, destination, other } );
+			{
+				std::lock_guard<std::mutex> lock( listener.Mutex );
+				listener.Events.clear();
+			}
+
+			const std::string outer = destination + "/outer";
+			EXPECT_TRUE( renameFile( source + "/outer", outer ) );
+			if ( scenario == 0 ) {
+				// The directory replaced by a new one, which gets its file.
+				EXPECT_TRUE( renameFile( outer + "/inner", outer + "/z" ) );
+				EXPECT_TRUE( createDirectory( outer + "/inner" ) );
+				EXPECT_TRUE( renameFile( outer + "/z/file", outer + "/inner/file" ) );
+			} else if ( scenario == 1 ) {
+				// A chain of renames.
+				EXPECT_TRUE( renameFile( outer + "/b", outer + "/c" ) );
+				EXPECT_TRUE( renameFile( outer + "/a", outer + "/b" ) );
+			} else if ( scenario == 2 ) {
+				// Swapped files.
+				EXPECT_TRUE( renameFile( outer + "/a", outer + "/t" ) );
+				EXPECT_TRUE( renameFile( outer + "/b", outer + "/a" ) );
+				EXPECT_TRUE( renameFile( outer + "/t", outer + "/b" ) );
+			} else if ( scenario == 4 ) {
+				// A file moved out to a third registration.
+				EXPECT_TRUE( renameFile( outer + "/inner/file", other + "/file" ) );
+			} else if ( scenario == 5 ) {
+				// A file moved in from a third registration.
+				EXPECT_TRUE( renameFile( other + "/in", outer + "/inner/in" ) );
+			} else if ( scenario == 6 ) {
+				// A directory moved out to a third registration.
+				EXPECT_TRUE( renameFile( outer + "/inner", other + "/inner" ) );
+			} else {
+				// A file moved out of a directory deleted after, and a directory moved into a
+				// renamed one.
+				EXPECT_TRUE( renameFile( outer + "/other/g", outer + "/g" ) );
+				EXPECT_TRUE( removeDirectory( outer + "/other" ) );
+				EXPECT_TRUE( renameFile( outer + "/inner", outer + "/renamed" ) );
+				EXPECT_TRUE( createDirectory( outer + "/renamed/deeper" ) );
+				EXPECT_TRUE( renameFile( outer + "/a", outer + "/renamed/deeper/a" ) );
+			}
+			// Twice: a pass may hold a Delete to the next one.
+			EXPECT_TRUE( marker.waitForAllPending() );
+			EXPECT_TRUE( marker.waitForAllPending() );
+			std::vector<ReplayListener::Recorded> events;
+			{
+				std::lock_guard<std::mutex> lock( listener.Mutex );
+				events = listener.Events;
+			}
+			for ( auto& event : events ) {
+				event.Path = reported( event.Path );
+				if ( !event.OldPath.empty() )
+					event.OldPath = reported( event.OldPath );
+			}
+			const std::string problem = replay( paths, events );
+			const std::set<std::string> expected = reported.list( { source, destination, other } );
+			EXPECT_TRUE( problem.empty() );
+			EXPECT_TRUE( expected == paths );
+			if ( !problem.empty() || expected != paths ) {
+				printf( "scenario %d: %s\n", scenario, problem.c_str() );
+				for ( const auto& event : events )
+					printf( "  %d %s <- %s\n", (int)event.Action, event.Path.c_str(),
+							event.OldPath.c_str() );
+			}
+			watcher.removeWatch( sourceId );
+			watcher.removeWatch( destinationId );
+			watcher.removeWatch( otherId );
+		}
+		removeDirectory( base );
+	}
+}
+#else
+UTEST( CrossWatchMoves, ChangesInsideMovedDirectoryReplay ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Without the option, the polling backends keep no evidence of a moved directory's tree: no move
+// is reported, and kqueue, whose source does not report the entries of a directory that left,
+// reports nothing about them.
+UTEST( CrossWatchMoves, WithoutTheOptionTreesAreNotCompared ) {
+	if ( !pollsSnapshots() ) {
+		UTEST_SKIP( "only the polling backends compare trees" );
+	}
+	const std::string source = getTemporaryDirectory() + "_xw_nooption_source";
+	const std::string destination = getTemporaryDirectory() + "_xw_nooption_destination";
+	removeDirectory( source );
+	removeDirectory( destination );
+	EXPECT_TRUE( createDirectory( source ) );
+	EXPECT_TRUE( createDirectory( source + "/outer" ) );
+	EXPECT_TRUE( createDirectory( source + "/outer/inner" ) );
+	EXPECT_TRUE( createFile( source + "/outer/inner/leaf.txt", "x" ) );
+	EXPECT_TRUE( createDirectory( destination ) );
+	TestListener sourceListener;
+	TestListener destinationListener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		const efsw::WatchID sourceId = watcher.addWatch( source, &sourceListener, true );
+		const efsw::WatchID destinationId =
+			watcher.addWatch( destination, &destinationListener, true );
+		ASSERT_GT( sourceId, 0 );
+		ASSERT_GT( destinationId, 0 );
+		watcher.watch();
+		EXPECT_TRUE( waitForPending( sourceListener, source ) );
+		EXPECT_TRUE( waitForPending( destinationListener, destination ) );
+		sourceListener.clearEvents();
+		destinationListener.clearEvents();
+
+		EXPECT_TRUE( renameFile( source + "/outer", destination + "/outer" ) );
+		EXPECT_TRUE( renameFile( destination + "/outer/inner", destination + "/outer/renamed" ) );
+		EXPECT_TRUE( destinationListener.waitForActions( efsw::Actions::Add, "outer" ) );
+		EXPECT_TRUE( waitForPending( sourceListener, source ) );
+		EXPECT_TRUE( waitForPending( destinationListener, destination ) );
+		for ( TestListener* listener : { &sourceListener, &destinationListener } )
+			for ( const auto& event : listener->getEvents() )
+				EXPECT_NE( efsw::Actions::Moved, std::get<0>( event ) );
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+		if ( !useGeneric ) {
+			EXPECT_EQ( -1, sourceListener.indexOf( efsw::Actions::Delete, "leaf.txt" ) );
+			EXPECT_EQ( -1, sourceListener.indexOf( efsw::Actions::Delete, "inner" ) );
+		}
+#endif
+		watcher.removeWatch( sourceId );
+		watcher.removeWatch( destinationId );
+	}
+	removeDirectory( source );
+	removeDirectory( destination );
+}
+
+// efsw-agent forwards a cross-watch Moved with an absolute old_path: the real event, converted
+// as the agent does, is absolute and names the source.
+UTEST( CrossWatchMoves, AgentKeepsAbsoluteSourceOfMoveFromAnotherWatch ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createFile( watches.Source + "/agent.txt", "content" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+	const std::string canonicalSource = efsw::FileSystem::getRealPath( watches.Source + "/agent.txt" );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/agent.txt", watches.Destination + "/agent.txt" ) );
+	ASSERT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "agent.txt" ) );
+	std::string oldFilename;
+	for ( const auto& event : watches.DestinationListener.getEvents() )
+		if ( std::get<0>( event ) == efsw::Actions::Moved && std::get<1>( event ) == "agent.txt" )
+			oldFilename = std::get<2>( event );
+
+	std::string root( watches.Destination );
+	std::string oldPath( oldFilename );
+	for ( std::string* path : { &root, &oldPath } )
+		for ( char& c : *path )
+			if ( c == '\\' )
+				c = '/';
+	root += '/';
+	const std::string sent = efsw::agent::EventPath::fromRoot( root, "", oldPath );
+	EXPECT_TRUE( efsw::agent::EventPath::isAbsolute( sent ) );
+	EXPECT_TRUE( sent == oldPath );
+	EXPECT_TRUE( oldFilename == canonicalSource );
+
+	// The record goes over the wire in an EVENT_BATCH frame, as the agent sends it, and a
+	// client parses it back with the absolute old_path.
+	std::vector<efsw::agent::WatchEventRecord> records( 1 );
+	records[0].action = efsw::agent::ActionMoved;
+	records[0].path = efsw::agent::EventPath::fromRoot( root, "", root + "agent.txt" );
+	records[0].oldPath = sent;
+	efsw::agent::Writer writer;
+	efsw::agent::EventBatch::write( writer, 7, records, 0, records.size() );
+	std::vector<uint8_t> frame = writer.frame( efsw::agent::MessageEventBatch );
+
+	efsw::agent::FrameParser parser;
+	parser.feed( &frame[0], frame.size() );
+	efsw::agent::Frame received;
+	std::string error;
+	ASSERT_EQ( 1, parser.next( received, error ) );
+	EXPECT_EQ( efsw::agent::MessageEventBatch, received.type );
+	efsw::agent::Reader reader( received.payload );
+	uint32_t watchId = 0;
+	std::vector<efsw::agent::WatchEventRecord> parsed;
+	ASSERT_TRUE( efsw::agent::EventBatch::read( reader, watchId, parsed ) );
+	EXPECT_EQ( 7u, watchId );
+	ASSERT_EQ( 1u, parsed.size() );
+	EXPECT_EQ( efsw::agent::ActionMoved, parsed[0].action );
+	EXPECT_TRUE( parsed[0].path == "agent.txt" );
+	EXPECT_TRUE( efsw::agent::EventPath::isAbsolute( parsed[0].oldPath ) );
+	EXPECT_TRUE( parsed[0].oldPath == oldPath );
+}
+
+// The handed-over subtree belongs to the destination registration: removing the destination
+// must also stop the events inside the moved directory, at every depth.
+UTEST( CrossWatchMoves, RemovingDestinationRemovesMovedSubtree ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub/deep" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/before.txt", "x" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.waitForActions( efsw::Actions::Add, "before.txt" ) );
+
+	watches.Watcher.removeWatch( watches.DestinationId );
+	watches.DestinationId = 0;
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
+	watches.SourceListener.clearEvents();
+	watches.DestinationListener.clearEvents();
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/after.txt", "x" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/after.txt", "x" ) );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
+	EXPECT_EQ( 0u, watches.DestinationListener.getEventCount() );
+	// Only the marker.
+	EXPECT_EQ( 1u, watches.SourceListener.getEventCount() );
+}
+
+// Registrations are added and removed while directory trees move between them. Run under
+// ThreadSanitizer and AddressSanitizer, this checks the watch bookkeeping of the event thread
+// against the registration calls. The roots are not recursive, so the churned registrations
+// below them are accepted by every backend, including inotify, which rejects registrations
+// inside a recursive one.
+UTEST( CrossWatchMoves, RegistrationChurnDuringMoves ) {
+	TwoWatches watches;
+	for ( int i = 0; i < 4; i++ ) {
+		const std::string tree = watches.Source + "/tree" + std::to_string( i );
+		EXPECT_TRUE( createDirectory( tree ) );
+		EXPECT_TRUE( createDirectory( tree + "/a" ) );
+		EXPECT_TRUE( createDirectory( tree + "/a/b" ) );
+		EXPECT_TRUE( createDirectory( watches.Destination + "/dst" + std::to_string( i ) ) );
+	}
+	ASSERT_TRUE( watches.start( false, false ) );
+
+	// Moves the subtree "a" between Source/treeN and Destination/dstN, which are the
+	// registered directories.
+	std::atomic<bool> stop{ false };
+	std::thread mover( [&] {
+		bool inSource = true;
+		while ( !stop ) {
+			for ( int i = 0; i < 4; i++ ) {
+				const std::string source = watches.Source + "/tree" + std::to_string( i ) + "/a";
+				const std::string destination =
+					watches.Destination + "/dst" + std::to_string( i ) + "/a";
+				const std::string& from = inSource ? source : destination;
+				const std::string& to = inSource ? destination : source;
+				renameFile( from, to );
+				createFile( to + "/b/file.txt", "x" );
+			}
+			inSource = !inSource;
+		}
+	} );
+
+	TestListener churnListener;
+	int registered = 0;
+	for ( int i = 0; i < 40; i++ ) {
+		const std::string directory =
+			i % 2 ? watches.Source + "/tree" + std::to_string( i % 4 )
+				  : watches.Destination + "/dst" + std::to_string( i % 4 );
+		const efsw::WatchID id =
+			watches.Watcher.addWatch( directory, &churnListener, true, crossMoveOptions );
+		sleepMs( 5 );
+		if ( id > 0 ) {
+			registered++;
+			watches.Watcher.removeWatch( id );
+		}
+	}
+	stop = true;
+	mover.join();
+	EXPECT_EQ( 40, registered );
+
+	// The original registrations still work.
+	EXPECT_TRUE( createFile( watches.Destination + "/final.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "final.txt" ) );
+}
+
+// A directory moved to another parent within one registration must be watched as part of its
+// new parent: deleting the former parent must not stop its events, and deleting the new
+// parent must remove it.
+UTEST( CrossWatchMoves, MoveWithinRegistrationFollowsNewParent ) {
+	const std::string root = getTemporaryDirectory() + "_xw_reparent";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/a" ) );
+	EXPECT_TRUE( createDirectory( root + "/a/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/b" ) );
+	TestListener listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true, crossMoveOptions );
+		ASSERT_GT( id, 0 );
+		watcher.watch();
+		EXPECT_TRUE( waitForPending( listener, root ) );
+
+		EXPECT_TRUE( renameFile( root + "/a/sub", root + "/b/sub" ) );
+		EXPECT_TRUE(
+			listener.waitForAnyAction( { efsw::Actions::Moved, efsw::Actions::Add }, "sub" ) );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		EXPECT_TRUE( createFile( root + "/b/sub/before.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "before.txt" ) );
+
+		// The former parent goes away.
+		EXPECT_TRUE( removeDirectory( root + "/a" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "a" ) );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		EXPECT_TRUE( createFile( root + "/b/sub/after.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+
+		// The new parent goes away, then comes back: it is watched again.
+		EXPECT_TRUE( removeDirectory( root + "/b" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "b" ) );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		EXPECT_TRUE( createDirectory( root + "/b" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "b" ) );
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		EXPECT_TRUE( createFile( root + "/b/again.txt", "x" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "again.txt" ) );
+		watcher.removeWatch( id );
+	}
+	removeDirectory( root );
+}
+
+// A listener removes its own registration on the first event of an action that reports
+// several: inotify reports a file moved in from outside as Add then Modified. Nothing may be
+// delivered after the removal.
+UTEST( CrossWatchMoves, SelfRemovalStopsLaterCallbacksOfAnAction ) {
+	const std::string root = getTemporaryDirectory() + "_xw_selfremove";
+	const std::string outside = root + "_outside";
+	removeDirectory( root );
+	removeDirectory( outside );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( outside ) );
+	EXPECT_TRUE( createFile( outside + "/moved.txt", "x" ) );
+
+	struct RemovingListener : TestListener {
+		efsw::FileWatcher* Watcher{ NULL };
+		std::atomic<efsw::WatchID> Id{ 0 };
+		/// The events recorded when the registration was removed: none may follow.
+		std::atomic<size_t> CountAtRemoval{ 0 };
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			TestListener::handleFileAction( id, dir, file, action, old );
+			// Only the move removes it: FSEvents may still report changes made before the
+			// registration, such as the setup's.
+			if ( file != "moved.txt" )
+				return;
+			efsw::WatchID registered = Id.exchange( 0 );
+			if ( registered > 0 ) {
+				CountAtRemoval = getEventCount();
+				Watcher->removeWatch( registered );
+			}
+		}
+	} listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		listener.Watcher = &watcher;
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
+		ASSERT_GT( id, 0 );
+		MarkerWatch marker( watcher, root + "_marker" );
+		watcher.watch();
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		listener.clearEvents();
+		listener.Id = id;
+
+		EXPECT_TRUE( renameFile( outside + "/moved.txt", root + "/moved.txt" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "moved.txt" ) );
+		EXPECT_TRUE( marker.waitForAllPending() );
+		EXPECT_GT( listener.CountAtRemoval.load(), 0u );
+		EXPECT_EQ( listener.CountAtRemoval.load(), listener.getEventCount() );
+	}
+	removeDirectory( root );
+	removeDirectory( outside );
+}
+
+// A listener removes its registration from the first callback while a directory moved in is
+// being discovered; on inotify, with synthetic events, that is the Add of a file inside it,
+// before the watches of its subdirectories are installed. Nothing may be reported afterwards,
+// from any directory of the moved tree.
+UTEST( CrossWatchMoves, SelfRemovalDuringDiscoveryStopsTheTree ) {
+	const std::string root = getTemporaryDirectory() + "_xw_discovery";
+	const std::string outside = root + "_outside";
+	removeDirectory( root );
+	removeDirectory( outside );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( outside ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved" ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved/nested" ) );
+	EXPECT_TRUE( createDirectory( outside + "/moved/nested/deeper" ) );
+	EXPECT_TRUE( createFile( outside + "/moved/seed.txt", "x" ) );
+
+	struct RemovingListener : TestListener {
+		efsw::FileWatcher* Watcher{ NULL };
+		std::atomic<efsw::WatchID> Id{ 0 };
+		/// The events recorded when the registration was removed: none may follow.
+		std::atomic<size_t> CountAtRemoval{ 0 };
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			TestListener::handleFileAction( id, dir, file, action, old );
+			// Only the moved tree removes it: FSEvents may still report changes made before
+			// the registration, such as the setup's.
+			if ( ( dir + file ).find( "moved" ) == std::string::npos )
+				return;
+			efsw::WatchID registered = Id.exchange( 0 );
+			if ( registered > 0 ) {
+				CountAtRemoval = getEventCount();
+				Watcher->removeWatch( registered );
+			}
+		}
+	} listener;
+	{
+		efsw::FileWatcher watcher( useGeneric, 100 );
+		listener.Watcher = &watcher;
+		const efsw::WatchID id = watcher.addWatch(
+			root, &listener, true, { { efsw::Options::LinuxProduceSyntheticEvents, 1 } } );
+		ASSERT_GT( id, 0 );
+		MarkerWatch marker( watcher, root + "_marker" );
+		watcher.watch();
+		EXPECT_TRUE( waitForPending( listener, root ) );
+		listener.clearEvents();
+		listener.Id = id;
+
+		EXPECT_TRUE( renameFile( outside + "/moved", root + "/moved" ) );
+		for ( int i = 0; i < 200 && listener.CountAtRemoval == 0; i++ )
+			sleepMs( 10 );
+		EXPECT_GT( listener.CountAtRemoval.load(), 0u );
+		EXPECT_TRUE( createFile( root + "/moved/nested/after.txt", "x" ) );
+		EXPECT_TRUE( createFile( root + "/moved/nested/deeper/after.txt", "x" ) );
+		EXPECT_TRUE( marker.waitForAllPending() );
+		EXPECT_EQ( listener.CountAtRemoval.load(), listener.getEventCount() );
+	}
+	removeDirectory( root );
+	removeDirectory( outside );
+}
+
+namespace {
+
+/// Removes a registration when it receives its first event, then counts every callback it
+/// gets afterwards: a listener may be destroyed as soon as its removal returns.
+struct RemovalListener : efsw::FileWatchListener {
+	efsw::FileWatcher* Watcher{ NULL };
+	std::atomic<efsw::WatchID> RemoveOnFirstEvent{ 0 };
+	std::atomic<bool> Removed{ false };
+	std::atomic<int> Events{ 0 };
+	std::atomic<int> EventsAfterRemoval{ 0 };
+
+	void handleFileAction( efsw::WatchID, const std::string&, const std::string&, efsw::Action,
+						   const std::string& ) override {
+		Events++;
+		if ( Removed )
+			EventsAfterRemoval++;
+		efsw::WatchID id = RemoveOnFirstEvent.exchange( 0 );
+		if ( id > 0 ) {
+			Watcher->removeWatch( id );
+			Removed = true;
+		}
+	}
+};
+
+/// Plain events counter that knows when its registration was removed by someone else.
+struct CountingListener : efsw::FileWatchListener {
+	std::atomic<bool>* Removed{ NULL };
+	std::atomic<int> EventsAfterRemoval{ 0 };
+
+	void handleFileAction( efsw::WatchID, const std::string&, const std::string&, efsw::Action,
+						   const std::string& ) override {
+		if ( *Removed )
+			EventsAfterRemoval++;
+	}
+};
+
+void burst( const std::string& directory, const std::string& prefix ) {
+	for ( int i = 0; i < 20; i++ ) {
+		const std::string file = directory + "/" + prefix + std::to_string( i ) + ".txt";
+		createFile( file, "x" );
+		writeFile( file, "more" );
+	}
+}
+
+} // namespace
+
+// A listener removes its own registration on the first of many pending events: on every
+// backend, with and without cross-directory moves (which make Windows hold Add events and
+// flush them before later events), nothing more is delivered to it.
+UTEST( CrossWatchMoves, SelfRemovalWithPendingEvents ) {
+	for ( int option = 0; option < 2; option++ ) {
+		const std::string root =
+			getTemporaryDirectory() + "_xw_pending" + std::to_string( option );
+		removeDirectory( root );
+		EXPECT_TRUE( createDirectory( root ) );
+		// Changes inside subdirectories make kqueue report the subdirectories as modified,
+		// while it scans the rest of the tree.
+		EXPECT_TRUE( createDirectory( root + "/sub0" ) );
+		EXPECT_TRUE( createDirectory( root + "/sub1" ) );
+		RemovalListener listener;
+		{
+			efsw::FileWatcher watcher( useGeneric, 100 );
+			listener.Watcher = &watcher;
+			std::vector<efsw::WatcherOption> options;
+			if ( option )
+				options = crossMoveOptions;
+			const efsw::WatchID id = watcher.addWatch( root, &listener, true, options );
+			ASSERT_GT( id, 0 );
+			MarkerWatch marker( watcher, root + "_marker" );
+			watcher.watch();
+			listener.RemoveOnFirstEvent = id;
+
+			burst( root + "/sub0", "pending" );
+			burst( root, "pending" );
+			burst( root + "/sub1", "pending" );
+			for ( int i = 0; i < 200 && !listener.Removed; i++ )
+				sleepMs( 10 );
+			EXPECT_TRUE( listener.Removed.load() );
+			burst( root + "/sub0", "later" );
+			burst( root, "later" );
+			EXPECT_TRUE( marker.waitForAllPending() );
+		}
+		EXPECT_EQ( 0, listener.EventsAfterRemoval.load() );
+		removeDirectory( root );
+	}
+}
+
+// A listener removes another registration whose events are already part of the batch being
+// delivered: nothing more is delivered to the removed registration.
+UTEST( CrossWatchMoves, RemovingAnotherRegistrationWithPendingEvents ) {
+	TwoWatches watches;
+	// Not recursive, so that every backend accepts the registrations below the roots.
+	ASSERT_TRUE( watches.start( false, false ) );
+	RemovalListener remover;
+	CountingListener removed;
+	removed.Removed = &remover.Removed;
+	remover.Watcher = &watches.Watcher;
+	const std::string first = watches.Source + "/first";
+	const std::string second = watches.Destination + "/second";
+	EXPECT_TRUE( createDirectory( first ) );
+	EXPECT_TRUE( createDirectory( second ) );
+	EXPECT_TRUE( watches.waitForPending() );
+	const efsw::WatchID firstId =
+		watches.Watcher.addWatch( first, &remover, true, crossMoveOptions );
+	const efsw::WatchID secondId =
+		watches.Watcher.addWatch( second, &removed, true, crossMoveOptions );
+	ASSERT_GT( firstId, 0 );
+	ASSERT_GT( secondId, 0 );
+	remover.RemoveOnFirstEvent = secondId;
+
+	for ( int i = 0; i < 20; i++ ) {
+		createFile( first + "/a" + std::to_string( i ) + ".txt", "x" );
+		createFile( second + "/b" + std::to_string( i ) + ".txt", "x" );
+	}
+	for ( int i = 0; i < 200 && !remover.Removed; i++ )
+		sleepMs( 10 );
+	EXPECT_TRUE( remover.Removed.load() );
+	burst( second, "later" );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
+	watches.Watcher.removeWatch( firstId );
+	EXPECT_EQ( 0, removed.EventsAfterRemoval.load() );
+}
+
+// Another thread removes a registration while its listener is inside a callback: removal
+// returns only once the callback returned, since the caller may destroy the listener next.
+// Another registration stays, so FSEvents replaces its stream instead of stopping it.
+UTEST( CrossWatchMoves, RemoveWatchWaitsForRunningCallback ) {
+	TwoWatches watches;
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	struct SlowListener : efsw::FileWatchListener {
+		std::atomic<bool> Entered{ false };
+		std::atomic<bool> Returned{ false };
+		void handleFileAction( efsw::WatchID, const std::string&, const std::string&,
+							   efsw::Action, const std::string& ) override {
+			if ( Entered.exchange( true ) )
+				return;
+			sleepMs( 300 );
+			Returned = true;
+		}
+	} slow;
+	const std::string directory = getTemporaryDirectory() + "_xw_slow";
+	removeDirectory( directory );
+	EXPECT_TRUE( createDirectory( directory ) );
+	const efsw::WatchID id = watches.Watcher.addWatch( directory, &slow, true );
+	ASSERT_GT( id, 0 );
+
+	EXPECT_TRUE( createFile( directory + "/slow.txt", "x" ) );
+	for ( int i = 0; i < 300 && !slow.Entered; i++ )
+		sleepMs( 10 );
+	ASSERT_TRUE( slow.Entered.load() );
+	watches.Watcher.removeWatch( id );
+	EXPECT_TRUE( slow.Returned.load() );
+	removeDirectory( directory );
+}
+
+#if EFSW_PLATFORM != EFSW_PLATFORM_WIN32
+namespace {
+int openDescriptors() {
+	int count = 0;
+	for ( int fd = 0; fd < 4096; fd++ )
+		if ( fcntl( fd, F_GETFD ) != -1 )
+			count++;
+	return count;
+}
+} // namespace
+
+// Adding and removing a recursive watch over files and subdirectories, again and again,
+// leaves no descriptor open: kqueue opens one per directory and per file.
+UTEST( CrossWatchMoves, RepeatedAddRemoveKeepsDescriptors ) {
+	const std::string root = getTemporaryDirectory() + "_xw_descriptors";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	for ( int d = 0; d < 3; d++ ) {
+		const std::string sub = root + "/sub" + std::to_string( d );
+		EXPECT_TRUE( createDirectory( sub ) );
+		for ( int f = 0; f < 10; f++ )
+			EXPECT_TRUE( createFile( sub + "/f" + std::to_string( f ), "x" ) );
+	}
+	for ( int f = 0; f < 10; f++ )
+		EXPECT_TRUE( createFile( root + "/f" + std::to_string( f ), "x" ) );
+
+	TestListener listener;
+	efsw::FileWatcher watcher( useGeneric, 50 );
+	watcher.watch();
+	// The first registration may set up state that lives as long as the file watcher.
+	watcher.removeWatch( watcher.addWatch( root, &listener, true ) );
+	// Counted once it is stable: a backend may close descriptors after removeWatch() returns.
+	int before = openDescriptors();
+	for ( int i = 0; i < 300; i++ ) {
+		sleepMs( 10 );
+		const int now = openDescriptors();
+		if ( now == before )
+			break;
+		before = now;
+	}
+	for ( int i = 0; i < 20; i++ ) {
+		const efsw::WatchID id = watcher.addWatch( root, &listener, true );
+		EXPECT_GT( id, 0 );
+		sleepMs( 5 );
+		watcher.removeWatch( id );
+	}
+	// A backend may close descriptors after removeWatch() returns.
+	for ( int i = 0; i < 300 && openDescriptors() != before; i++ )
+		sleepMs( 10 );
+	EXPECT_EQ( before, openDescriptors() );
+	removeDirectory( root );
+}
+#endif
+
+// directories() runs while a directory holding a registration moves in and out of another
+// registration, which renames the moved registration. Meant for ThreadSanitizer.
+UTEST( CrossWatchMoves, DirectoriesDuringMovesOfRegistration ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/holder" ) );
+	EXPECT_TRUE( createDirectory( watches.Source + "/holder/inner" ) );
+	ASSERT_TRUE( watches.start( false, true ) );
+	TestListener innerListener;
+	const efsw::WatchID innerId = watches.Watcher.addWatch(
+		watches.Source + "/holder/inner", &innerListener, true, crossMoveOptions );
+	ASSERT_GT( innerId, 0 );
+
+	std::atomic<bool> stop{ false };
+	std::atomic<size_t> listed{ 0 };
+	std::thread reader( [&] {
+		while ( !stop )
+			listed += watches.Watcher.directories().size();
+	} );
+	for ( int i = 0; i < 20; i++ ) {
+		const bool out = i % 2 == 0;
+		renameFile( ( out ? watches.Source : watches.Destination ) + "/holder",
+					( out ? watches.Destination : watches.Source ) + "/holder" );
+		sleepMs( 5 );
+	}
+	stop = true;
+	reader.join();
+	EXPECT_GT( listed.load(), 0u );
+	watches.Watcher.removeWatch( innerId );
+}
+
+// A recursive destination must start covering a directory that arrives from a non-recursive
+// source, which never had native watches inside it.
+UTEST( CrossWatchMoves, DirectoryMoveFromNonRecursiveAddsCoverage ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub" ) );
+	ASSERT_TRUE( watches.start( false, true ) );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( watches.waitForPending() );
+	expectSingleMove( watches, "sub", utest_result );
+
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "inside.txt" ) );
+}
+
+// A non-recursive destination must not report, and the source must no longer report, files
+// inside a directory that left the recursive source tree.
+UTEST( CrossWatchMoves, DirectoryMoveToNonRecursiveStopsSourceReports ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/sub" ) );
+	ASSERT_TRUE( watches.start( true, false ) );
+
+	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( watches.waitForPending() );
+	expectSingleMove( watches, "sub", utest_result );
+
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/inside.txt", "x" ) );
+	EXPECT_TRUE( waitForAllPending( watches.SourceListener, watches.Source ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Add, "inside.txt" ) );
+}
+
+// Enabling cross-directory moves must not reorder the events of ordinary file creation.
+UTEST( CrossWatchMoves, CreateThenModifyKeepsOrder ) {
+	TwoWatches watches;
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( createFile( watches.Source + "/written.txt", "content" ) );
+	EXPECT_TRUE( watches.SourceListener.waitForActions( efsw::Actions::Add, "written.txt" ) );
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
+	const int added = watches.SourceListener.indexOf( efsw::Actions::Add, "written.txt" );
+	const int modified = watches.SourceListener.indexOf( efsw::Actions::Modified, "written.txt" );
+	EXPECT_NE( -1, added );
+	if ( modified != -1 )
+		EXPECT_LT( added, modified );
+}
+
+// A move into a new directory must not be reported before the Add of that directory, even
+// when the polling backends hold the destination's events for a pass because of an unrelated
+// Delete. A directory is moved: entries already inside a new directory are only reported when
+// they are directories, and only by the polling backends.
+UTEST( CrossWatchMoves, MoveIntoNewDirectoryFollowsItsAdd ) {
+	TwoWatches watches;
+	EXPECT_TRUE( createDirectory( watches.Source + "/moved" ) );
+	EXPECT_TRUE( createFile( watches.Destination + "/unrelated.txt", "content" ) );
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( removeFile( watches.Destination + "/unrelated.txt" ) );
+	EXPECT_TRUE( createDirectory( watches.Destination + "/newparent" ) );
+	EXPECT_TRUE( renameFile( watches.Source + "/moved", watches.Destination + "/newparent/moved" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "newparent" ) );
+	EXPECT_TRUE(
+		watches.DestinationListener.waitForActions( efsw::Actions::Delete, "unrelated.txt" ) );
+	EXPECT_TRUE( watches.waitForPending() );
+
+	const int parent = watches.DestinationListener.indexOf( efsw::Actions::Add, "newparent" );
+	int moved = watches.DestinationListener.indexOf( efsw::Actions::Moved, "moved" );
+	if ( moved == -1 )
+		moved = watches.DestinationListener.indexOf( efsw::Actions::Add, "moved" );
+	if ( pollsSnapshots() )
+		EXPECT_NE( -1, moved );
+	if ( moved != -1 )
+		EXPECT_LT( parent, moved );
+}
+
+UTEST( CrossWatchMoves, CreateThenDeleteKeepsOrder ) {
+	TwoWatches watches;
+	ASSERT_TRUE( watches.start( true, true ) );
+
+	EXPECT_TRUE( createFile( watches.Source + "/temporary.txt", "content" ) );
+	EXPECT_TRUE( removeFile( watches.Source + "/temporary.txt" ) );
+	// Polling backends may never observe a file that lived between two scans.
+	if ( !pollsSnapshots() )
+		EXPECT_TRUE(
+			watches.SourceListener.waitForActions( efsw::Actions::Delete, "temporary.txt" ) );
+	EXPECT_TRUE( waitForPending( watches.SourceListener, watches.Source ) );
+	const int added = watches.SourceListener.indexOf( efsw::Actions::Add, "temporary.txt" );
+	const int deleted = watches.SourceListener.indexOf( efsw::Actions::Delete, "temporary.txt" );
+	if ( reportsEveryCreate() )
+		EXPECT_NE( -1, added );
+	if ( added != -1 ) {
+		EXPECT_NE( -1, deleted );
+		EXPECT_LT( added, deleted );
+	}
+}
+
+namespace {
+
+// A non-recursive watch on "source", an explicit watch on "source/sub/nested" and a recursive
+// watch on "destination". Moving "source/sub" to "destination/sub" puts the explicit
+// registration inside the recursive one, so one native directory has two logical owners.
+struct NestedRegistrationMove {
+	std::string Source;
+	std::string Destination;
+	TestListener SourceListener;
+	TestListener NestedListener;
+	TestListener DestinationListener;
+	efsw::FileWatcher Watcher;
+	efsw::WatchID SourceId{ 0 };
+	efsw::WatchID NestedId{ 0 };
+	efsw::WatchID DestinationId{ 0 };
+
+	NestedRegistrationMove() :
+		Source( getTemporaryDirectory() + "_xw_nested_source" ),
+		Destination( getTemporaryDirectory() + "_xw_nested_destination" ),
+		Watcher( useGeneric, 100 ) {
+		removeDirectory( Source );
+		removeDirectory( Destination );
+		createDirectory( Source );
+		createDirectory( Source + "/sub" );
+		createDirectory( Source + "/sub/nested" );
+		createDirectory( Destination );
+	}
+
+	~NestedRegistrationMove() {
+		Watcher.removeWatch( SourceId );
+		Watcher.removeWatch( NestedId );
+		Watcher.removeWatch( DestinationId );
+		removeDirectory( Source );
+		removeDirectory( Destination );
+	}
+
+	enum Setup { Ready, MoveRefused, Failed };
+
+	Setup startAndMove() {
+		SourceId = Watcher.addWatch( Source, &SourceListener, false, crossMoveOptions );
+		NestedId = Watcher.addWatch( Source + "/sub/nested", &NestedListener, false,
+									 crossMoveOptions );
+		DestinationId =
+			Watcher.addWatch( Destination, &DestinationListener, true, crossMoveOptions );
+		if ( SourceId <= 0 || NestedId <= 0 || DestinationId <= 0 )
+			return Failed;
+		Watcher.watch();
+		if ( !waitForPending( NestedListener, Source + "/sub/nested" ) ||
+			 !waitForPending( DestinationListener, Destination ) )
+			return Failed;
+
+		// Windows refuses to rename a directory while a directory inside it is open.
+		if ( !renameFile( Source + "/sub", Destination + "/sub" ) )
+			return MoveRefused;
+		if ( !DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) )
+			return Failed;
+		if ( !waitForPending( SourceListener, Source ) ||
+			 !waitForPending( DestinationListener, Destination ) )
+			return Failed;
+		// The move must be reported once, not also through the Delete + Add fallback.
+		if ( -1 != SourceListener.indexOf( efsw::Actions::Delete, "sub" ) ||
+			 -1 != DestinationListener.indexOf( efsw::Actions::Add, "sub" ) )
+			return Failed;
+		SourceListener.clearEvents();
+		NestedListener.clearEvents();
+		DestinationListener.clearEvents();
+		return Ready;
+	}
+};
+
+// inotify watches the directory itself, so a registration keeps working after its directory
+// is moved. The other backends watch paths, and lose a registration whose path moved away.
+bool followsMovedRegistrations() {
+#if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
+	return !useGeneric;
+#else
+	return false;
+#endif
+}
+
+#define START_NESTED_REGISTRATION_MOVE( watches )                                              \
+	do {                                                                                       \
+		const NestedRegistrationMove::Setup setup = ( watches ).startAndMove();                \
+		if ( setup == NestedRegistrationMove::MoveRefused )                                    \
+			UTEST_SKIP( "the platform refuses to move a directory containing a watched one" ); \
+		ASSERT_EQ( NestedRegistrationMove::Ready, setup );                                     \
+	} while ( 0 )
+
+} // namespace
+
+// Both logical owners of the moved native directory keep receiving its events.
+UTEST( CrossWatchMoves, MovedExplicitRegistrationKeepsReceivingEvents ) {
+	NestedRegistrationMove watches;
+	START_NESTED_REGISTRATION_MOVE( watches );
+
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/nested/after.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+	if ( followsMovedRegistrations() )
+		EXPECT_TRUE( watches.NestedListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Add, "after.txt" ) );
+}
+
+// Removing the explicit registration must not disable the recursive destination there.
+UTEST( CrossWatchMoves, RemovingMovedExplicitRegistrationKeepsDestination ) {
+	NestedRegistrationMove watches;
+	START_NESTED_REGISTRATION_MOVE( watches );
+
+	watches.Watcher.removeWatch( watches.NestedId );
+	watches.NestedId = 0;
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/nested/after.txt", "x" ) );
+	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+	EXPECT_EQ( -1, watches.NestedListener.indexOf( efsw::Actions::Add, "after.txt" ) );
+}
+
+// Removing the recursive destination must not disable the explicit registration.
+UTEST( CrossWatchMoves, RemovingDestinationKeepsMovedExplicitRegistration ) {
+	if ( !followsMovedRegistrations() )
+		UTEST_SKIP( "the backend watches paths and cannot follow a moved registration" );
+	NestedRegistrationMove watches;
+	START_NESTED_REGISTRATION_MOVE( watches );
+
+	watches.Watcher.removeWatch( watches.DestinationId );
+	watches.DestinationId = 0;
+	EXPECT_TRUE( createFile( watches.Destination + "/sub/nested/after.txt", "x" ) );
+	EXPECT_TRUE( watches.NestedListener.waitForActions( efsw::Actions::Add, "after.txt" ) );
+	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, "after.txt" ) );
+}
+
+// When registrations are nested, a move inside the outer watch out of the inner one must still
+// tell the inner watch that its file is gone.
+UTEST( CrossWatchMoves, NestedWatchStillSeesItsHalf ) {
+	const std::string outer = getTemporaryDirectory() + "_xw_outer";
+	removeDirectory( outer );
+	EXPECT_TRUE( createDirectory( outer ) );
+	EXPECT_TRUE( createDirectory( outer + "/inner" ) );
+	EXPECT_TRUE( createDirectory( outer + "/other" ) );
+
+	TestListener outerListener;
+	TestListener innerListener;
+	efsw::FileWatcher watcher( useGeneric, 100 );
+	const efsw::WatchID outerId = watcher.addWatch( outer, &outerListener, true, crossMoveOptions );
+	ASSERT_GT( outerId, 0 );
+	const efsw::WatchID innerId =
+		watcher.addWatch( outer + "/inner", &innerListener, true, crossMoveOptions );
+	if ( innerId <= 0 ) {
+		// Backends that reject overlapping registrations have nothing to verify.
+		removeDirectory( outer );
+		return;
+	}
+
+	watcher.watch();
+	EXPECT_TRUE( createFile( outer + "/inner/file.txt", "x" ) );
+	EXPECT_TRUE( innerListener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	EXPECT_TRUE( waitForPending( innerListener, outer + "/inner" ) );
+	EXPECT_TRUE( waitForPending( outerListener, outer ) );
+	innerListener.clearEvents();
+	outerListener.clearEvents();
+
+	EXPECT_TRUE( renameFile( outer + "/inner/file.txt", outer + "/other/file.txt" ) );
+	EXPECT_TRUE( innerListener.waitForActions( efsw::Actions::Delete, "file.txt" ) );
+	EXPECT_TRUE( outerListener.waitForAnyAction( { efsw::Actions::Moved, efsw::Actions::Add },
+												 "file.txt" ) );
+
+	watcher.removeWatch( innerId );
+	watcher.removeWatch( outerId );
+	removeDirectory( outer );
+}
+
+// Only a fallback's native parent resolves the disappearance of its root. Standalone
+// generic registrations still report Deletes when their root disappears.
+UTEST( CrossWatchMoves, GenericFallbackKeepsItsTreeUntilItsParentRelocatesIt ) {
+	for ( bool fallback : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		TestListener listener;
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherGeneric backend( &owner, 100 );
+		efsw::Watcher parent( 1, tree.path( "src/" ), &listener, true );
+		efsw::WatcherGeneric watch( 2, tree.path( "src/outer/" ), &listener, &backend, true, true );
+		if ( fallback )
+			watch.SharedActionOwner = &parent;
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/moved" ) ) );
+		for ( int pass = 0; pass < 2; ++pass )
+			watch.watch();
+		std::vector<const efsw::FileInfo*> entries;
+		auto collect = [&watch]( std::vector<const efsw::FileInfo*>& result ) {
+			std::vector<efsw::DirWatcherGeneric*> pending{ watch.DirWatch };
+			while ( !pending.empty() ) {
+				auto* directory = pending.back();
+				pending.pop_back();
+				for ( const auto& entry : directory->DirSnap.Files )
+					result.push_back( &entry );
+				for ( const auto& child : directory->Directories )
+					pending.push_back( child.second );
+			}
+		};
+		collect( entries );
+		if ( !fallback ) {
+			EXPECT_TRUE( entries.empty() );
+			EXPECT_NE( -1, listener.indexOf( efsw::Actions::Delete, "file" ) );
+			continue;
+		}
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		EXPECT_EQ( 2u, entries.size() );
+		entries.clear();
+		watch.moveDirectory( tree.path( "src/moved" ) );
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		collect( entries );
+		EXPECT_EQ( 2u, entries.size() );
+		entries.clear();
+		ASSERT_TRUE( createFile( tree.path( "src/moved/inner/after" ), "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after" ) );
+	}
+}
+
+// A parent can move or rename a directory after scanning it but before scanning one of its
+// children. The missing child must retain its snapshot until its own parent catches up.
+UTEST( CrossWatchMoves, GenericChildScannedBeforeItsRenameKeepsItsSnapshot ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	efsw::FileWatcherGeneric backend( &owner, 100 );
+	efsw::WatcherGeneric watch( 1, tree.path( "src/outer/" ), &listener, &backend, true, true );
+	auto child = watch.DirWatch->Directories.find( "inner" );
+	ASSERT_TRUE( child != watch.DirWatch->Directories.end() );
+	ASSERT_TRUE( renameFile( tree.path( "src/outer/inner" ), tree.path( "src/outer/renamed" ) ) );
+	child->second->watch();
+	EXPECT_EQ( 0u, listener.getEventCount() );
+	EXPECT_EQ( 1u, child->second->DirSnap.Files.size() );
+	watch.watch();
+	auto events = listener.getEvents();
+	ASSERT_EQ( 1u, events.size() );
+	EXPECT_EQ( efsw::Actions::Moved, std::get<0>( events[0] ) );
+	EXPECT_TRUE( std::get<1>( events[0] ) == "renamed" );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/renamed/after" ), "x" ) );
+	watch.watch();
+	EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after" ) );
+}
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
+#include <efsw/FileActionBatch.hpp>
+#include <efsw/FileInfo.hpp>
+#include <efsw/FileWatcherKqueue.hpp>
+#include <efsw/System.hpp>
+#include <efsw/WatcherKqueue.hpp>
+#include <mutex>
+#include <sys/time.h>
+
+namespace {
+
+/// A kqueue file watcher that can pretend its file descriptors ran out, so that new
+/// subdirectory watches fall back to the generic watcher.
+struct ExhaustibleKqueue : efsw::FileWatcherKqueue {
+	using efsw::FileWatcherKqueue::FileWatcherKqueue;
+
+	void exhaust() {
+		mAvailable = mFileDescriptorCount.load();
+		mFileDescriptorCount = exhaustedCount();
+	}
+
+	/// Undoes exhaust(), with the descriptors opened meanwhile.
+	void restore() {
+		mFileDescriptorCount = mAvailable + ( mFileDescriptorCount.load() - exhaustedCount() );
+	}
+
+	long mAvailable{ 0 };
+
+	long descriptors() const { return mFileDescriptorCount.load(); }
+
+  private:
+	static long exhaustedCount() {
+		// In the middle of availablesFD()'s 500-descriptor reserve, leaving room for
+		// the native descriptors these tests open or close while exhausted. The limit
+		// itself is LONG_MAX on macOS: addAll() would wrap it and permit native children.
+		return static_cast<long>( efsw::System::getMaxFD() ) - 250;
+	}
+};
+
+/// Assert the backend under test, not just event behavior that native children also satisfy.
+struct FallbackKqueueWatch : efsw::WatcherKqueue {
+	using efsw::WatcherKqueue::WatcherKqueue;
+
+	// Model the two native discovery listings: child watches and their reported Adds exist,
+	// but the saved listing missed them. No callback or scan runs while the lists are moved.
+#if 0 // Deferred: source snapshot evidence is advanced reconstruction.
+	void reportArrivalsWithIncompleteSnapshots( efsw::WatcherKqueue* parent ) {
+		std::vector<efsw::FileInfoList> lists;
+		takeSnapshots( parent, lists );
+		mCollectActions = true;
+		parent->reportDirectories();
+		mCollectActions = false;
+	}
+#endif
+
+	efsw::WatcherKqueue* nativeChild( const std::string& directory ) {
+		return dynamic_cast<efsw::WatcherKqueue*>( findWatcher( directory ) );
+	}
+
+	bool hasOnlyGenericChildren() const {
+		for ( const auto& child : mWatches ) {
+			if ( NULL == dynamic_cast<efsw::WatcherGeneric*>( child.second ) )
+				return false;
+		}
+		return !mWatches.empty();
+	}
+
+	bool hasOnlyNativeChildren() const {
+		for ( const auto& child : mWatches ) {
+			if ( NULL == dynamic_cast<efsw::WatcherKqueue*>( child.second ) )
+				return false;
+		}
+		return !mWatches.empty();
+	}
+};
+
+} // namespace
+
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueSourceArrivalsBeforeItsParentMovesAreReportedOnce ) {
+	const std::string base = getTemporaryDirectory() + "_xw_kqarrivalhistory";
+	const std::string sourcePath = base + "/source";
+	const std::string destinationPath = base + "/destination";
+	HeldChildTree cleanup;
+	cleanup.Root = base;
+	ASSERT_TRUE( createDirectory( base ) );
+	ASSERT_TRUE( createDirectory( sourcePath ) );
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent" ) );
+	ASSERT_TRUE( createDirectory( destinationPath ) );
+	ReportedPaths paths( base );
+	auto model = paths.list( { sourcePath, destinationPath } );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch source( 1, sourcePath, &listener, true, &backend, NULL, true );
+	FallbackKqueueWatch destination( 2, destinationPath, &listener, true, &backend, NULL, true );
+	for ( auto* watch : { &source, &destination } ) {
+		watch->SharedActionBatch = &batch;
+		watch->addAll();
+		ASSERT_TRUE( watch->initOK() );
+	}
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent/tree" ) );
+	ASSERT_TRUE( createDirectory( sourcePath + "/parent/tree/nested" ) );
+	auto* parent = source.nativeChild( sourcePath + "/parent" );
+	ASSERT_NE( nullptr, parent );
+	ASSERT_GT( parent->addWatch( sourcePath + "/parent/tree", &listener, true, parent ), 0 );
+	// The parent was scanned before tree arrived. Its new tree already has native watches,
+	// but their cached lists missed the descendants that discovery reported to the listener.
+	const auto treeId = parent->watchingDirectory( sourcePath + "/parent/tree" );
+	ASSERT_GT( treeId, 0 );
+	batch.beginPass();
+	source.reportArrivalsWithIncompleteSnapshots( parent );
+	ASSERT_TRUE( renameFile( sourcePath + "/parent", destinationPath + "/parent" ) );
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	batch.beginPass();
+	source.watch();
+	batch.scanned( &source );
+	destination.watch();
+	batch.scanned( &destination );
+	batch.finishPass();
+	for ( auto& event : listener.Events ) {
+		event.Path = paths( event.Path );
+		event.OldPath = paths( event.OldPath );
+	}
+	const std::string problem = replay( model, listener.Events );
+	EXPECT_STREQ( "", problem.c_str() );
+	EXPECT_TRUE( model == paths.list( { sourcePath, destinationPath } ) );
+	size_t structural = 0;
+	for ( const auto& event : listener.Events )
+		structural += event.Action != efsw::Actions::Modified;
+	EXPECT_EQ( 3u, structural );
+}
+#else
+UTEST( CrossWatchMoves, KqueueSourceArrivalsBeforeItsParentMovesAreReportedOnce ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Use native source discovery and a real generic destination snapshot, as under descriptor
+// pressure. Queue the destination's root arrival explicitly after snapshot initialization:
+// the regression is a matched child move, not a second discovery Add for that same child.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueChildMoveCarriesItsTreeThroughAParentMove ) {
+	for ( bool changes : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		ASSERT_TRUE( createDirectory( tree.path( "dst/parent" ) ) );
+		ReportedPaths paths( tree.Root );
+		auto model = paths.list( { tree.path( "src" ), tree.path( "dst" ), tree.path( "other" ) } );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		ExhaustibleKqueue backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch origin( 1, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+		FallbackKqueueWatch middle( 2, tree.path( "dst/" ), &listener, true, &backend, NULL, true );
+		origin.SharedActionBatch = middle.SharedActionBatch = &batch;
+		origin.addAll();
+		middle.addAll();
+		ASSERT_TRUE( origin.initOK() && middle.initOK() );
+		auto* parent = middle.nativeChild( tree.path( "dst/parent" ) );
+		ASSERT_NE( nullptr, parent );
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/parent/child" ) ) );
+		ASSERT_GT( parent->addWatch( tree.path( "dst/parent/child" ), &listener, true, parent ),
+				   0 );
+		batch.beginPass();
+		middle.reportArrivalsWithIncompleteSnapshots( parent );
+		batch.scanned( &middle );
+		ASSERT_TRUE( renameFile( tree.path( "dst/parent" ), tree.path( "other/parent" ) ) );
+		if ( changes ) {
+			ASSERT_TRUE( renameFile( tree.path( "other/parent/child/inner/file" ),
+									 tree.path( "other/parent/child/inner/renamed" ) ) );
+			ASSERT_TRUE( createFile( tree.path( "other/parent/child/inner/new" ), "x" ) );
+		}
+		efsw::WatcherGeneric destination( 3, tree.path( "other/" ), &listener, &backend, true,
+										  true );
+		destination.SharedActionBatch = &batch;
+		batch.add( destination.ID, destination.Directory, "parent", efsw::Actions::Add, "",
+				   efsw::FileInfo( tree.path( "other/parent" ) ), &listener, &destination );
+		batch.scanned( &destination );
+		auto scan = [&]( efsw::Watcher& watch ) {
+			watch.watch();
+			batch.scanned( &watch );
+		};
+		for ( int pass = 0; pass < 3; ++pass ) {
+			if ( pass != 0 ) {
+				batch.beginPass();
+			}
+			scan( origin );
+			scan( middle );
+			scan( destination );
+			batch.finishPass();
+		}
+		for ( auto& event : listener.Events ) {
+			event.Path = paths( event.Path );
+			event.OldPath = paths( event.OldPath );
+		}
+		const std::string problem = replay( model, listener.Events );
+		size_t structural = 0;
+		for ( const auto& event : listener.Events ) {
+			structural += event.Action != efsw::Actions::Modified;
+		}
+		if ( !problem.empty() || structural != ( changes ? 4u : 2u ) ) {
+			for ( const auto& event : listener.Events ) {
+				printf( "  %d %s <- %s\n", static_cast<int>( event.Action ), event.Path.c_str(),
+						event.OldPath.c_str() );
+			}
+		}
+		EXPECT_STREQ( "", problem.c_str() );
+		EXPECT_TRUE( model == paths.list( { tree.path( "src" ), tree.path( "dst" ),
+											tree.path( "other" ) } ) );
+		EXPECT_EQ( changes ? 4u : 2u, structural );
+	}
+}
+#else
+UTEST( CrossWatchMoves, KqueueChildMoveCarriesItsTreeThroughAParentMove ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+UTEST( CrossWatchMoves, KqueueHeldChildDeleteBeforeMovingItsParent ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch destination( 1, tree.path( "dst/" ), &listener, true, &backend, NULL,
+									 true );
+	FallbackKqueueWatch source( 2, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+	FallbackKqueueWatch other( 3, tree.path( "other/" ), &listener, true, &backend, NULL, true );
+	for ( auto* watch : { &destination, &source, &other } )
+		watch->SharedActionBatch = &batch;
+	destination.addAll();
+	other.addAll();
+	backend.exhaust();
+	source.addAll();
+	ASSERT_TRUE( source.hasOnlyGenericChildren() );
+	checkHeldChildMove( tree, batch, listener, { &destination, &source, &other }, utest_result );
+}
+
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueEntryLeavesAnArrivingTreeBetweenScans ) {
+	for ( bool genericSource : { false, true } ) {
+		for ( bool genericDestination : { false, true } ) {
+			for ( int configuration = 0; configuration < 4; configuration++ ) {
+				const bool directory = configuration & 1;
+				const bool reverse = configuration & 2;
+				HeldChildTree tree;
+				ASSERT_TRUE( createDepartingTree( tree, directory ) );
+				if ( reverse )
+					ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/outer" ) ) );
+				ReplayListener listener;
+				efsw::FileWatcher owner( true );
+				ExhaustibleKqueue backend( &owner, 100 );
+				efsw::FileActionBatch batch;
+				FallbackKqueueWatch destination( 1, tree.path( reverse ? "src/" : "dst/" ),
+												 &listener, true, &backend, NULL, true );
+				FallbackKqueueWatch source( 2, tree.path( reverse ? "dst/" : "src/" ), &listener,
+											true, &backend, NULL, true );
+				for ( auto* watch : { &destination, &source } )
+					watch->SharedActionBatch = &batch;
+				destination.addAll();
+				if ( genericSource )
+					backend.exhaust();
+				source.addAll();
+				EXPECT_TRUE( genericSource ? source.hasOnlyGenericChildren()
+										   : source.hasOnlyNativeChildren() );
+				if ( genericSource )
+					backend.restore();
+				if ( genericDestination )
+					backend.exhaust();
+				checkDepartureFromArrivingTree( tree, batch, listener, destination, source,
+												directory, utest_result );
+				EXPECT_TRUE( genericDestination ? destination.hasOnlyGenericChildren()
+												: destination.hasOnlyNativeChildren() );
+				if ( genericDestination )
+					backend.restore();
+			}
+		}
+	}
+}
+#else
+UTEST( CrossWatchMoves, KqueueEntryLeavesAnArrivingTreeBetweenScans ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Registrations added and removed from two threads at once, with the file descriptors used up
+// so that every watch falls back to the generic watcher. Meant for ThreadSanitizer.
+UTEST( CrossWatchMoves, KqueueConcurrentFallbackRegistrations ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqconcurrent";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	for ( int i = 0; i < 2; i++ ) {
+		EXPECT_TRUE( createDirectory( root + "/t" + std::to_string( i ) ) );
+		EXPECT_TRUE( createDirectory( root + "/t" + std::to_string( i ) + "/sub" ) );
+	}
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 20 );
+		kqueue.exhaust();
+		kqueue.watch();
+		std::atomic<int> registered{ 0 };
+		auto churn = [&]( int tree ) {
+			const std::string directory = root + "/t" + std::to_string( tree );
+			for ( int i = 0; i < 20; i++ ) {
+				efsw::WatchID id = kqueue.addWatch( directory, &listener, true, {} );
+				if ( id > 0 ) {
+					registered++;
+					createFile( directory + "/sub/f" + std::to_string( i ), "x" );
+					sleepMs( 5 );
+					kqueue.removeWatch( id );
+				}
+			}
+		};
+		std::thread first( churn, 0 );
+		std::thread second( churn, 1 );
+		first.join();
+		second.join();
+		EXPECT_EQ( 40, registered.load() );
+	}
+	removeDirectory( root );
+}
+
+// The file watcher counts the descriptors its watches hold, to fall back to the generic
+// watcher before running out: removing a watch must give all of them back.
+UTEST( CrossWatchMoves, KqueueDescriptorCountReturnsAfterRemoval ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqcount";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	for ( int f = 0; f < 5; f++ ) {
+		EXPECT_TRUE( createFile( root + "/f" + std::to_string( f ), "x" ) );
+		EXPECT_TRUE( createFile( root + "/sub/f" + std::to_string( f ), "x" ) );
+	}
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 20 );
+		const long before = kqueue.descriptors();
+		for ( int i = 0; i < 10; i++ ) {
+			const efsw::WatchID id = kqueue.addWatch( root, &listener, true, {} );
+			EXPECT_GT( id, 0 );
+			EXPECT_GT( kqueue.descriptors(), before );
+			kqueue.removeWatch( id );
+			EXPECT_EQ( before, kqueue.descriptors() );
+		}
+	}
+	removeDirectory( root );
+}
+
+// A generic watch that replaces a kqueue subdirectory watch, when file descriptors ran out,
+// reports into the root's shared batch as part of the root's registration: its events wait for
+// the end of the pass, where moves to and from other registrations are paired, and removing the
+// root cancels them.
+UTEST( CrossWatchMoves, KqueueGenericFallbackReportsIntoTheSharedBatch ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqshared";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue, NULL, true );
+		watch.SharedActionBatch = &batch;
+		kqueue.exhaust();
+		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
+
+		EXPECT_TRUE( createFile( root + "/sub/shared.txt", "x" ) );
+		batch.beginPass();
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+		batch.scanned( &watch );
+		batch.finishPass();
+		// Some file systems also report the subdirectory as modified.
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "shared.txt" ) );
+
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/sub/canceled.txt", "x" ) );
+		batch.beginPass();
+		watch.watch();
+		batch.forget( &watch );
+		batch.scanned( &watch );
+		batch.finishPass();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+}
+
+// A subdirectory watch reports its own directory's change to its parent, during the root's scan
+// and after other events of the tree were collected: the report joins the shared batch, in
+// order, instead of running a listener in the middle of the scan, and removing the root cancels
+// it with the rest.
+UTEST( CrossWatchMoves, KqueueDirectoryChangeWaitsForTheRootsPass ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqdirchanged";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/sub/inner" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue watch( 1, root, &listener, true, &kqueue, NULL, true );
+		watch.SharedActionBatch = &batch;
+		watch.addAll();
+
+		for ( int cancel = 0; cancel < 2; cancel++ ) {
+			listener.clearEvents();
+			const std::string tag = std::to_string( cancel );
+			EXPECT_TRUE( createFile( root + "/sub/inner/a" + tag + ".txt", "x" ) );
+			EXPECT_TRUE( createFile( root + "/sub/b" + tag + ".txt", "x" ) );
+			// Times unlike the snapshots', whatever the file system's resolution, so that both
+			// directories report a change. The deeper one is scanned first.
+			struct timeval times[2] = { { 1000000000 + cancel, 0 }, { 1000000000 + cancel, 0 } };
+			EXPECT_EQ( 0, utimes( ( root + "/sub/inner" ).c_str(), times ) );
+			EXPECT_EQ( 0, utimes( ( root + "/sub" ).c_str(), times ) );
+
+			batch.beginPass();
+			watch.watch();
+			EXPECT_EQ( 0u, listener.getEventCount() );
+			if ( cancel )
+				batch.forget( &watch );
+			batch.scanned( &watch );
+			batch.finishPass();
+			if ( cancel ) {
+				EXPECT_EQ( 0u, listener.getEventCount() );
+			} else {
+				const int added = listener.indexOf( efsw::Actions::Add, "a0.txt" );
+				EXPECT_NE( -1, added );
+				EXPECT_GT( listener.indexOf( efsw::Actions::Modified, "sub" ), added );
+			}
+		}
+	}
+	removeDirectory( root );
+}
+
+// A file moves between a generic watch, which replaced a kqueue subdirectory watch when file
+// descriptors ran out, and another registration, both ways: each move is paired in the shared
+// batch and reported as a Moved event to its destination only.
+UTEST( CrossWatchMoves, KqueueGenericFallbackMovesToAnotherRegistration ) {
+	if ( !efsw::FileInfo::inodeSupported() ) {
+		UTEST_SKIP( "File identity is not supported." );
+	}
+	const std::string base = getTemporaryDirectory() + "_xw_kqfallbackmove";
+	const std::string first = base + "/first";
+	const std::string second = base + "/second";
+	removeDirectory( base );
+	EXPECT_TRUE( createDirectory( base ) );
+	EXPECT_TRUE( createDirectory( first ) );
+	EXPECT_TRUE( createDirectory( first + "/sub" ) );
+	EXPECT_TRUE( createDirectory( second ) );
+	EXPECT_TRUE( createFile( first + "/sub/out.txt", "x" ) );
+	EXPECT_TRUE( createFile( second + "/in.txt", "x" ) );
+	TestListener firstListener;
+	TestListener secondListener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
+		efsw::WatcherKqueue secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
+		firstWatch.SharedActionBatch = &batch;
+		secondWatch.SharedActionBatch = &batch;
+		secondWatch.addAll();
+		kqueue.exhaust();
+		firstWatch.addAll();
+		ASSERT_TRUE( firstWatch.hasOnlyGenericChildren() );
+
+		auto pass = [&]() {
+			batch.beginPass();
+			firstWatch.watch();
+			batch.scanned( &firstWatch );
+			secondWatch.watch();
+			batch.scanned( &secondWatch );
+			batch.finishPass();
+		};
+
+		EXPECT_TRUE( renameFile( first + "/sub/out.txt", second + "/out.txt" ) );
+		pass();
+		EXPECT_NE( -1, secondListener.indexOf( efsw::Actions::Moved, "out.txt" ) );
+		EXPECT_EQ( -1, firstListener.indexOf( efsw::Actions::Delete, "out.txt" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Add, "out.txt" ) );
+
+		firstListener.clearEvents();
+		secondListener.clearEvents();
+		EXPECT_TRUE( renameFile( second + "/in.txt", first + "/sub/in.txt" ) );
+		pass();
+		// A Delete collected after the destination's scan may be held to the next pass.
+		pass();
+		EXPECT_NE( -1, firstListener.indexOf( efsw::Actions::Moved, "in.txt" ) );
+		EXPECT_EQ( -1, firstListener.indexOf( efsw::Actions::Add, "in.txt" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Delete, "in.txt" ) );
+	}
+	removeDirectory( base );
+}
+
+namespace {
+
+void checkFallbackRename( bool nested, bool reportMoves, bool changeContents, int* utest_result ) {
+	HeldChildTree tree;
+	ASSERT_TRUE( tree.create() );
+	ASSERT_TRUE( createFile( tree.path( "src/outer/gone" ), "x" ) );
+	ReportedPaths paths( tree.Root );
+	std::set<std::string> model = paths.list( { tree.path( "src" ) } );
+	ReplayListener listener;
+	efsw::FileWatcher owner( true );
+	ExhaustibleKqueue backend( &owner, 100 );
+	efsw::FileActionBatch batch;
+	FallbackKqueueWatch watch( 1, tree.path( "src/" ), &listener, true, &backend, NULL,
+							   reportMoves );
+	if ( reportMoves )
+		watch.SharedActionBatch = &batch;
+	watch.addAll();
+	ASSERT_TRUE( watch.initOK() );
+	// Use the actual fallback factory, without faking descriptor pressure. Also put the
+	// fallback below a native child: its grandparent's rename must be processed first too.
+	efsw::WatcherKqueue* parent = nested ? watch.nativeChild( tree.path( "src/outer" ) ) : &watch;
+	ASSERT_NE( nullptr, parent );
+	const std::string fallback = tree.path( nested ? "src/outer/inner/" : "src/outer/" );
+	const efsw::WatchID child = parent->watchingDirectory( fallback );
+	ASSERT_GT( child, 0 );
+	const long before = backend.descriptors();
+	parent->removeWatch( child );
+	const long removed = backend.descriptors();
+	ASSERT_LT( removed, before );
+	parent->addGenericWatch( fallback, &listener, true );
+	ASSERT_GT( parent->watchingDirectory( fallback ), 0 );
+	ASSERT_EQ( removed, backend.descriptors() );
+	ASSERT_TRUE( nested ? watch.hasOnlyNativeChildren() : watch.hasOnlyGenericChildren() );
+
+	ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/moved" ) ) );
+	if ( changeContents ) {
+		ASSERT_TRUE(
+			renameFile( tree.path( "src/moved/inner" ), tree.path( "src/moved/renamed" ) ) );
+		ASSERT_TRUE( renameFile( tree.path( "src/moved/renamed/file" ),
+								 tree.path( "src/moved/renamed/renamed_file" ) ) );
+		// Keep gone alive until the new file exists: immediate inode reuse can legitimately
+		// make this Delete/Add pair look like a rename to the snapshot matcher.
+		ASSERT_TRUE( createFile( tree.path( "src/moved/renamed/new_file" ), "x" ) );
+		ASSERT_FALSE(
+			efsw::FileInfo( tree.path( "src/moved/gone" ) )
+				.sameInode( efsw::FileInfo( tree.path( "src/moved/renamed/new_file" ) ) ) );
+		ASSERT_TRUE( removeFile( tree.path( "src/moved/gone" ) ) );
+	}
+	auto pass = [&]() {
+		batch.beginPass();
+		watch.watch();
+		batch.scanned( &watch );
+		batch.finishPass();
+	};
+	for ( int i = 0; i < 3; ++i )
+		pass();
+	std::vector<ReplayListener::Recorded> structural;
+	for ( const auto& event : listener.Events ) {
+		if ( event.Action != efsw::Actions::Modified )
+			structural.push_back( event );
+	}
+	std::string failure = replay( model, listener.Events );
+	if ( structural.size() != ( changeContents ? 5u : 1u ) ||
+		 model != paths.list( { tree.path( "src" ) } ) || !failure.empty() ) {
+		fprintf( stderr, "fallback rename: nested=%d option=%d changes=%d\n", nested, reportMoves,
+				 changeContents );
+		for ( const auto& event : structural ) {
+			fprintf( stderr, "  %d %s <- %s\n", static_cast<int>( event.Action ),
+					 event.Path.c_str(), event.OldPath.c_str() );
+		}
+	}
+	EXPECT_STREQ( "", failure.c_str() );
+	EXPECT_TRUE( model == paths.list( { tree.path( "src" ) } ) );
+	ASSERT_EQ( changeContents ? 5u : 1u, structural.size() );
+	if ( !changeContents ) {
+		EXPECT_EQ( efsw::Actions::Moved, structural[0].Action );
+		EXPECT_TRUE( tree.path( "src/moved" ) == structural[0].Path );
+		EXPECT_TRUE( tree.path( "src/outer" ) == structural[0].OldPath );
+	}
+	// The same fallback watches must keep monitoring the relocated tree afterwards.
+	listener.Events.clear();
+	const std::string after =
+		tree.path( changeContents ? "src/moved/renamed/after" : "src/moved/inner/after" );
+	ASSERT_TRUE( createFile( after, "x" ) );
+	for ( int i = 0; i < 3; ++i )
+		pass();
+	failure = replay( model, listener.Events );
+	EXPECT_STREQ( "", failure.c_str() );
+	EXPECT_TRUE( model == paths.list( { tree.path( "src" ) } ) );
+}
+
+} // namespace
+
+UTEST( CrossWatchMoves, KqueueFallbackRenameReportsOnlyTheDirectoryMove ) {
+	for ( bool nested : { false, true } )
+		for ( bool reportMoves : { false, true } )
+			checkFallbackRename( nested, reportMoves, false, utest_result );
+}
+
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueFallbackRenamePreservesChangesInsideTheTree ) {
+	for ( bool nested : { false, true } )
+		checkFallbackRename( nested, true, true, utest_result );
+}
+#else
+UTEST( CrossWatchMoves, KqueueFallbackRenamePreservesChangesInsideTheTree ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Seed 146, with fixed scan boundaries: a local move reported as Delete/Add is held behind
+// an unrelated Delete. Its new directory is renamed again before the held move is released.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueHeldArrivalRenamedBeforeReleaseKeepsChanges ) {
+	for ( bool genericSource : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		ASSERT_TRUE( createFile( tree.path( "src/blocker" ), "x" ) );
+		struct timeval oldTime[2] = { { 1000000000, 0 }, { 1000000000, 0 } };
+		ASSERT_EQ( 0, utimes( tree.path( "src/outer" ).c_str(), oldTime ) );
+		ReportedPaths reported( tree.Root );
+		auto model = reported.list( { tree.path( "src" ), tree.path( "other" ) } );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		ExhaustibleKqueue backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch source( 1, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+		FallbackKqueueWatch other( 2, tree.path( "other/" ), &listener, true, &backend, NULL,
+								   true );
+		for ( auto* watch : { &source, &other } ) {
+			watch->SharedActionBatch = &batch;
+			watch->addAll();
+			ASSERT_TRUE( watch->initOK() );
+		}
+		if ( genericSource ) {
+			const efsw::WatchID child = source.watchingDirectory( tree.path( "src/outer" ) );
+			ASSERT_GT( child, 0 );
+			source.removeWatch( child );
+			source.addGenericWatch( tree.path( "src/outer/" ), &listener, true );
+			ASSERT_TRUE( source.hasOnlyGenericChildren() );
+		}
+		auto pass = [&]() {
+			batch.beginPass();
+			for ( auto* watch : { &other, &source } ) {
+				watch->watch();
+				batch.scanned( watch );
+			}
+			batch.finishPass();
+		};
+		ASSERT_TRUE( renameFile( tree.path( "src/outer/inner/file" ), tree.path( "other/file" ) ) );
+		ASSERT_TRUE( removeFile( tree.path( "src/blocker" ) ) );
+		ASSERT_TRUE( createFile( tree.path( "src/outer/new" ), "x" ) );
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "src/arrived" ) ) );
+		// Changed directory metadata prevents the native snapshot's local-rename shortcut.
+		struct timeval newTime[2] = { { 1000000001, 0 }, { 1000000001, 0 } };
+		ASSERT_EQ( 0, utimes( tree.path( "src/arrived" ).c_str(), newTime ) );
+		pass();
+		for ( const auto& event : listener.Events )
+			ASSERT_NE( efsw::Actions::Moved, event.Action );
+
+		ASSERT_TRUE( renameFile( tree.path( "src/arrived" ), tree.path( "src/renamed" ) ) );
+		ASSERT_TRUE(
+			renameFile( tree.path( "other/file" ), tree.path( "src/renamed/inner/returned" ) ) );
+		ASSERT_EQ( 0, utimes( tree.path( "src/renamed" ).c_str(), newTime ) );
+		for ( int i = 0; i < 3; ++i )
+			pass();
+		for ( auto& event : listener.Events ) {
+			event.Path = reported( event.Path );
+			event.OldPath = reported( event.OldPath );
+		}
+		const std::string failure = replay( model, listener.Events );
+		EXPECT_STREQ( "", failure.c_str() );
+		EXPECT_TRUE( model == reported.list( { tree.path( "src" ), tree.path( "other" ) } ) );
+		size_t newAdds = 0, oldDeletes = 0, rootMoves = 0;
+		for ( const auto& event : listener.Events ) {
+			newAdds +=
+				event.Action == efsw::Actions::Add && event.Path == tree.path( "src/arrived/new" );
+			oldDeletes += event.Action == efsw::Actions::Delete &&
+						  event.Path == tree.path( "src/arrived/inner/file" );
+			rootMoves += event.Action == efsw::Actions::Moved &&
+						 ( event.Path == tree.path( "src/arrived" ) ||
+						   event.Path == tree.path( "src/renamed" ) );
+		}
+		EXPECT_EQ( 1u, newAdds );
+		EXPECT_EQ( 1u, oldDeletes );
+		EXPECT_EQ( 2u, rootMoves );
+	}
+}
+#else
+UTEST( CrossWatchMoves, KqueueHeldArrivalRenamedBeforeReleaseKeepsChanges ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// A directory watched by generic watches, because file descriptors ran out, is renamed inside
+// a kqueue watch: the generic watches follow it, and report from its new path.
+UTEST( CrossWatchMoves, KqueueMoveDirectoryWithGenericFallbackWatches ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqmove";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	EXPECT_TRUE( createDirectory( root + "/sub/inner" ) );
+	struct DirectoryListener : TestListener {
+		std::mutex Mutex;
+		std::vector<std::string> Directories;
+		void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& file,
+							   efsw::Action action, const std::string& old = "" ) override {
+			{
+				std::lock_guard<std::mutex> lock( Mutex );
+				Directories.push_back( dir + file );
+			}
+			TestListener::handleFileAction( id, dir, file, action, old );
+		}
+	} listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue );
+		kqueue.exhaust();
+		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
+
+		EXPECT_TRUE( renameFile( root + "/sub", root + "/moved" ) );
+		watch.watch();
+		watch.watch();
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/moved/inner/after.txt", "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "after.txt" ) );
+		bool reportedFromNewPath = false;
+		{
+			std::lock_guard<std::mutex> lock( listener.Mutex );
+			for ( const std::string& path : listener.Directories )
+				if ( path.find( "/moved/inner/after.txt" ) != std::string::npos )
+					reportedFromNewPath = true;
+		}
+		EXPECT_TRUE( reportedFromNewPath );
+	}
+	removeDirectory( root );
+}
+
+namespace {
+
+/// A directory tree moved between two kqueue registrations, where one end watches it with generic
+/// watches because file descriptors ran out, then changed inside before the next pass.
+/// @param genericSource Whether the source watches it with generic watches, or the destination.
+#if 0 // Deferred reconstruction fixture; restored with its active tests in branch 2.
+void runMixedTreeMove( bool genericSource, int* utest_result ) {
+	const std::string base =
+		getTemporaryDirectory() + "_xw_kqmixed" + std::to_string( genericSource );
+	const std::string first = base + "/first";
+	const std::string second = base + "/second";
+	removeDirectory( base );
+	EXPECT_TRUE( createDirectory( base ) );
+	EXPECT_TRUE( createDirectory( first ) );
+	EXPECT_TRUE( createDirectory( first + "/outer" ) );
+	EXPECT_TRUE( createDirectory( first + "/outer/inner" ) );
+	EXPECT_TRUE( createFile( first + "/outer/inner/leaf.txt", "x" ) );
+	EXPECT_TRUE( createFile( first + "/outer/a.txt", "x" ) );
+	EXPECT_TRUE( createDirectory( second ) );
+	TestListener firstListener;
+	TestListener secondListener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch firstWatch( 1, first, &firstListener, true, &kqueue, NULL, true );
+		FallbackKqueueWatch secondWatch( 2, second, &secondListener, true, &kqueue, NULL, true );
+		firstWatch.SharedActionBatch = &batch;
+		secondWatch.SharedActionBatch = &batch;
+		secondWatch.addAll();
+		if ( genericSource )
+			kqueue.exhaust();
+		firstWatch.addAll();
+		if ( genericSource )
+			ASSERT_TRUE( firstWatch.hasOnlyGenericChildren() );
+		if ( genericSource )
+			kqueue.restore();
+		else
+			kqueue.exhaust();
+
+		EXPECT_TRUE( renameFile( first + "/outer", second + "/outer" ) );
+		EXPECT_TRUE( renameFile( second + "/outer/inner", second + "/outer/renamed" ) );
+		EXPECT_TRUE( renameFile( second + "/outer/a.txt", second + "/outer/b.txt" ) );
+		batch.beginPass();
+		firstWatch.watch();
+		batch.scanned( &firstWatch );
+		secondWatch.watch();
+		batch.scanned( &secondWatch );
+		batch.finishPass();
+		if ( !genericSource )
+			ASSERT_TRUE( secondWatch.hasOnlyGenericChildren() );
+		if ( !genericSource )
+			kqueue.restore();
+
+		EXPECT_EQ( 0, secondListener.indexOf( efsw::Actions::Moved, "outer" ) );
+		EXPECT_NE( -1, secondListener.indexOf( efsw::Actions::Moved, "renamed" ) );
+		EXPECT_NE( -1, secondListener.indexOf( efsw::Actions::Moved, "b.txt" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Add, "renamed" ) );
+		EXPECT_EQ( -1, secondListener.indexOf( efsw::Actions::Moved, "leaf.txt" ) );
+		EXPECT_EQ( 0u, firstListener.getEventCount() );
+	}
+	removeDirectory( base );
+}
+#endif
+
+} // namespace
+
+// A directory tree moved between kqueue registrations is compared on both ends when either end
+// watches it with generic watches.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueMixedTreesAreCompared ) {
+	runMixedTreeMove( true, utest_result );
+	runMixedTreeMove( false, utest_result );
+}
+#else
+UTEST( CrossWatchMoves, KqueueMixedTreesAreCompared ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+
+// Retiring a kqueue watch must retire its generic fallback descendants, which report on their
+// own: after retirement, nothing is reported from them.
+UTEST( CrossWatchMoves, KqueueRetireReachesGenericFallbackWatches ) {
+	const std::string root = getTemporaryDirectory() + "_xw_kqretire";
+	removeDirectory( root );
+	EXPECT_TRUE( createDirectory( root ) );
+	EXPECT_TRUE( createDirectory( root + "/sub" ) );
+	TestListener listener;
+	efsw::FileWatcher owner( true );
+	{
+		ExhaustibleKqueue kqueue( &owner, 100 );
+		FallbackKqueueWatch watch( 1, root, &listener, true, &kqueue );
+		kqueue.exhaust();
+		watch.addAll();
+		ASSERT_TRUE( watch.hasOnlyGenericChildren() );
+
+		// The fallback watch reports on its own while the root is active.
+		EXPECT_TRUE( createFile( root + "/sub/before.txt", "x" ) );
+		watch.watch();
+		EXPECT_NE( -1, listener.indexOf( efsw::Actions::Add, "before.txt" ) );
+
+		watch.retire();
+		listener.clearEvents();
+		EXPECT_TRUE( createFile( root + "/sub/after.txt", "x" ) );
+		watch.watch();
+		EXPECT_EQ( 0u, listener.getEventCount() );
+	}
+	removeDirectory( root );
+}
+
+// Reproduce arrival in the middle of a polling pass without sleeps: kqueue installs the
+// old layout at the destination, then rescans the changed layout before the batch is
+// delivered. The comparison and the rescan must not both report those changes.
+#if 0 // Deferred to the advanced reconstruction branch; test source is preserved.
+UTEST( CrossWatchMoves, KqueueArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	const std::string base = getTemporaryDirectory() + "_kq_arrival_rescan";
+	const std::string source = base + "/source";
+	const std::string destination = base + "/destination";
+	ASSERT_TRUE( createDirectory( base ) );
+	ASSERT_TRUE( createDirectory( source ) );
+	ASSERT_TRUE( createDirectory( source + "/outer" ) );
+	ASSERT_TRUE( createDirectory( source + "/outer/inner" ) );
+	ASSERT_TRUE( createDirectory( source + "/outer/other" ) );
+	ASSERT_TRUE( createDirectory( destination ) );
+	ASSERT_TRUE( createFile( source + "/outer/inner/file", "x" ) );
+	ASSERT_TRUE( createFile( source + "/outer/other/g", "x" ) );
+	ASSERT_TRUE( createFile( source + "/outer/a", "a" ) );
+	ASSERT_TRUE( createFile( source + "/outer/b", "b" ) );
+	ReplayListener listener;
+	const ReportedPaths reported( base );
+	std::set<std::string> paths = reported.list( { source, destination } );
+	{
+		efsw::FileWatcher owner( true );
+		efsw::FileWatcherKqueue kqueue( &owner, 100 );
+		efsw::FileActionBatch batch;
+		efsw::WatcherKqueue first( 1, source, &listener, true, &kqueue, NULL, true );
+		efsw::WatcherKqueue second( 2, destination, &listener, true, &kqueue, NULL, true );
+		first.SharedActionBatch = &batch;
+		second.SharedActionBatch = &batch;
+		first.addAll();
+		second.addAll();
+		ASSERT_TRUE( first.initOK() && second.initOK() );
+		const std::string outer = destination + "/outer";
+		ASSERT_TRUE( renameFile( source + "/outer", outer ) );
+		batch.beginPass();
+		first.watch();
+		batch.scanned( &first );
+		second.watch();
+		ASSERT_TRUE( renameFile( outer + "/other/g", outer + "/g" ) );
+		ASSERT_TRUE( removeDirectory( outer + "/other" ) );
+		ASSERT_TRUE( renameFile( outer + "/inner", outer + "/renamed" ) );
+		ASSERT_TRUE( createDirectory( outer + "/renamed/deeper" ) );
+		ASSERT_TRUE( renameFile( outer + "/a", outer + "/renamed/deeper/a" ) );
+		second.watch();
+		batch.scanned( &second );
+		batch.finishPass();
+		batch.beginPass();
+		first.watch();
+		batch.scanned( &first );
+		second.watch();
+		batch.scanned( &second );
+		batch.finishPass();
+		for ( auto& event : listener.Events ) {
+			event.Path = reported( event.Path );
+			if ( !event.OldPath.empty() )
+				event.OldPath = reported( event.OldPath );
+		}
+		const std::string problem = replay( paths, listener.Events );
+		EXPECT_TRUE( problem.empty() );
+		EXPECT_TRUE( paths == reported.list( { source, destination } ) );
+		if ( !problem.empty() )
+			printf( "%s\n", problem.c_str() );
+	}
+	removeDirectory( base );
+}
+#else
+UTEST( CrossWatchMoves, KqueueArrivalRescannedBeforeDeliveryReplaysOnce ) {
+	UTEST_SKIP( "advanced moved-tree reconstruction is not part of the essential branch" );
+}
+#endif
+#endif

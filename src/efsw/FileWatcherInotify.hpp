@@ -5,6 +5,7 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
 
+#include <cstdint>
 #include <efsw/WatcherInotify.hpp>
 #include <unordered_map>
 #include <vector>
@@ -17,6 +18,7 @@ class FileWatcherInotify : public FileWatcherImpl {
   public:
 	/// type for a map from WatchID to WatchStruct pointer
 	typedef std::unordered_map<WatchID, WatcherInotify*> WatchMap;
+	typedef std::unordered_map<int, std::vector<WatcherInotify*>> NativeWatchMap;
 
 	FileWatcherInotify( FileWatcher* parent );
 
@@ -44,13 +46,22 @@ class FileWatcherInotify : public FileWatcherImpl {
 	std::vector<std::string> directories() override;
 
   protected:
-	/// Map of WatchID to WatchStruct pointers
-	WatchMap mWatches;
+	/// The event queue overflowed and events were lost: tells every registration once.
+	void reportOverflow();
 
-	/// User added watches
+	/// Logical watches by native inotify descriptor. A native descriptor watches one physical
+	/// directory, and normally has one owner. It has several owners when registrations overlap
+	/// after a topology change, for example when a directory holding an explicit registration
+	/// is moved into a recursive one: inotify returns the existing descriptor for an inode that
+	/// is already watched, so both registrations must share it. Events of a descriptor are
+	/// delivered to each owner, and the descriptor is removed with its last owner.
+	NativeWatchMap mWatches;
+
+	/// User added watches, by WatchID
 	WatchMap mRealWatches;
 
-	std::unordered_map<std::string, WatchID> mWatchesRef;
+	/// Logical watches by directory, one entry per owner
+	std::unordered_multimap<std::string, WatcherInotify*> mWatchesRef;
 
 	/// inotify file descriptor
 	int mFD;
@@ -85,14 +96,73 @@ class FileWatcherInotify : public FileWatcherImpl {
 
 	void run();
 
+	/// Reports a move between two watches as Moved; mask is the event's, for its IN_ISDIR bit.
 	void emitCrossDirectoryMove( Watcher* src, const std::string& srcFile, Watcher* dst,
-								 const std::string& dstFile );
+								 const std::string& dstFile, uint32_t mask );
 
-	void removeWatchLocked( WatchID watchid, bool skipInotifyRemove = false );
+	/// Reports a directory moved between two registered roots as one Moved event. The source
+	/// registration's watches of the moved subtree are handed over to a recursive destination,
+	/// or removed for a non-recursive one. Other registrations inside the subtree keep their
+	/// native watches, which a recursive destination then shares.
+	/// @return false, doing nothing, when either registration was removed: the caller then
+	/// reports the move as unpaired.
+	bool moveDirectoryBetweenRoots( WatcherInotify* src, const std::string& srcFile,
+									WatcherInotify* dst, const std::string& dstFile );
 
-	void checkForNewWatcher( Watcher* watch, std::string fpath );
+	/// Adds a logical watch to mWatches and mWatchesRef. mWatchesLock must be held.
+	void registerWatchLocked( WatcherInotify* watch );
 
-	Watcher* watcherContainsDirectory( std::string dir );
+	/// Moves a logical watch under another parent watch, or none. mWatchesLock must be held.
+	void setParentLocked( WatcherInotify* watch, WatcherInotify* parent );
+
+	/// Removes the mWatchesRef entry of a logical watch. mWatchesLock must be held.
+	void unindexWatchLocked( WatcherInotify* watch );
+
+	/// Unregisters a logical watch, and every watch of its tree when it is a recursive root.
+	/// The native descriptor is removed with its last owner. mWatchesLock must be held.
+	void removeWatchLocked( WatcherInotify* watch, bool skipInotifyRemove = false );
+
+	/// Unregisters one logical watch, without its descendants. The native descriptor is removed
+	/// with its last owner, and the watch is deleted after the current event batch.
+	/// mWatchesLock must be held.
+	void unregisterWatchLocked( WatcherInotify* watch, bool skipInotifyRemove );
+
+	/// @return The watch of the registration for the directory, or NULL. mWatchesLock must be
+	/// held.
+	WatcherInotify* findWatchLocked( const std::string& directory, WatchID registration );
+
+	/// Copies the current owners of a native descriptor. mWatchesLock must be held.
+	void ownersLocked( int wd, std::vector<WatcherInotify*>& owners ) const;
+
+	/// A watched directory moved: every logical watch at or below oldPath, whatever its
+	/// registration, now lives below newPath. mWatchesLock must be held.
+	void renameWatchedDirectoriesLocked( const std::string& oldPath, const std::string& newPath );
+
+	/// Installs recursive coverage of a directory that arrived in a watched one.
+	/// @param arrived The directory's name in watch, when an event reported it: if it no longer
+	/// exists, it is kept pending until its parent is relocated.
+	void checkForNewWatcher( Watcher* watch, std::string fpath, const std::string* arrived = NULL );
+
+	/// The directories that had moved on when their arrival was handled, by their parent's watch:
+	/// a later event that relocates the parent, in this batch or another, brings them back.
+	/// Dropped when the parent reports them deleted or moved away, or when the parent's watch is
+	/// deleted. Only used by the event thread.
+	std::unordered_multimap<WatcherInotify*, std::string> mPendingCoverage;
+	/// The watches with pending directories that renameWatchedDirectoriesLocked() relocated.
+	std::vector<WatcherInotify*> mRelocated;
+	/// Installs the coverage of the pending directories of the relocated watches that exist
+	/// where their parents are now. mWatchesLock must not be held.
+	void coverRelocated();
+
+	/// Calls the listener of a watch, unless the watch was removed. mInitLock must be held:
+	/// removeWatch() takes it, so a registration cannot be removed, and its listener destroyed,
+	/// between the check and the call. Checked before each call, since a listener may remove
+	/// its own registration between two events of one action.
+	void notify( Watcher* watch, const std::string& filename, Action action,
+				 const std::string& oldFilename = "" );
+
+	/// @return The watch of the registration for the parent directory of dir, or NULL.
+	Watcher* watcherContainsDirectory( std::string dir, WatchID registration );
 };
 
 } // namespace efsw

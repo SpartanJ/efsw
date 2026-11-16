@@ -1,7 +1,9 @@
 #ifndef EFSW_FILEWATCHEROSX_HPP
 #define EFSW_FILEWATCHEROSX_HPP
 
+#include <atomic>
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/RetiringWatches.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
@@ -56,13 +58,17 @@ class FileWatcherKqueue : public FileWatcherImpl {
 
 	std::vector<WatchID> mRemoveList;
 
-	long mFileDescriptorCount;
-
-	bool mAddingWatcher;
+	/// Changed by addWatch(), from any thread, and by the polling thread's rescans.
+	std::atomic<long> mFileDescriptorCount;
 
 	unsigned int mPollingFreq{ 500 };
+	/// Events of every watch that enabled Options::ReportCrossDirectoryMoves, collected during
+	/// one polling pass so moves between those watches can be paired.
+	FileActionBatch mSharedActions;
+	RetiringWatches mRetiring;
 
-	bool isAddingWatcher() const;
+	/// @return The batch a new watch must collect into, or NULL.
+	FileActionBatch* sharedActionsFor( bool reportCrossDirectoryMoves );
 
 	bool pathInWatches( const std::string& path ) override;
 

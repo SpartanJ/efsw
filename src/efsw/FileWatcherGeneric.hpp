@@ -3,6 +3,7 @@
 
 #include <efsw/DirWatcherGeneric.hpp>
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/RetiringWatches.hpp>
 #include <efsw/WatcherGeneric.hpp>
 #include <vector>
 
@@ -49,6 +50,8 @@ class FileWatcherGeneric : public FileWatcherImpl {
 
 	/// Map of WatchID to WatchStruct pointers
 	WatchList mWatches;
+	FileActionBatch mSharedActions;
+	RetiringWatches mRetiring;
 
 	Mutex mWatchesLock;
 
@@ -58,6 +61,9 @@ class FileWatcherGeneric : public FileWatcherImpl {
 
   private:
 	void run();
+
+	/// Removes and deletes a watch. mWatchesLock must be held.
+	void eraseWatchLocked( WatchList::iterator it );
 };
 
 } // namespace efsw

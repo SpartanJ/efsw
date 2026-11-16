@@ -13,7 +13,10 @@
 		byte[payload_size]
 
 	Strings are encoded as uint32 byte_length followed by that many UTF-8 bytes (no terminator).
-	Paths always use '/' as separator; event paths are relative to the watched directory.
+	Paths always use '/' as separator; event paths are relative to the watched directory. The one
+	exception is the old_path of a move into the watched directory from another watch of the agent
+	that also has WatchReportCrossDirectoryMoves: it is the absolute source path, since it is not
+	inside the watched directory. EventPath::isAbsolute() tells both forms apart.
 
 	Messages (client -> agent: C, agent -> client: A):
 
@@ -45,6 +48,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace efsw { namespace agent {
@@ -267,7 +271,59 @@ class FrameParser {
 struct WatchEventRecord {
 	uint8_t action;
 	std::string path;
+	/** Relative like path, or absolute for a move from another watch (see the header). */
 	std::string oldPath;
+};
+
+/** The path forms of EVENT_BATCH records. */
+struct EventPath {
+	/** @return True for an absolute path: rooted at '/', or starting with a drive ("C:/"). */
+	static bool isAbsolute( const std::string& path ) {
+		return !path.empty() && ( path[0] == '/' || ( path.size() > 1 && path[1] == ':' ) );
+	}
+
+	/**
+		@return The path of an event: relative to the watched directory when inside it, else
+		unchanged. root, and realRoot when not empty, are the watched directory, ending with '/';
+		realRoot is root with its symlinks resolved, as some backends report it. path uses '/'.
+	*/
+	static std::string fromRoot( const std::string& root, const std::string& realRoot,
+								 std::string path ) {
+		const std::string& prefix =
+			!realRoot.empty() && path.compare( 0, realRoot.size(), realRoot ) == 0 ? realRoot
+																				  : root;
+		if ( path.compare( 0, prefix.size(), prefix ) == 0 )
+			path.erase( 0, prefix.size() );
+		while ( !path.empty() && path[path.size() - 1] == '/' )
+			path.erase( path.size() - 1 );
+		return path;
+	}
+};
+
+/** EVENT_BATCH payloads: the agent writes them, clients read them. */
+struct EventBatch {
+	/** Writes the records [begin, end) of one watch. */
+	static void write( Writer& w, uint32_t watchId, const std::vector<WatchEventRecord>& records,
+					   size_t begin, size_t end ) {
+		w.u32( watchId ).u32( static_cast<uint32_t>( end - begin ) );
+		for ( size_t i = begin; i < end; ++i )
+			w.u8( records[i].action ).str( records[i].path ).str( records[i].oldPath );
+	}
+
+	/** @return False when the payload is malformed. */
+	static bool read( Reader& r, uint32_t& watchId, std::vector<WatchEventRecord>& records ) {
+		watchId = r.u32();
+		uint32_t count = r.u32();
+		records.clear();
+		for ( uint32_t i = 0; i < count && r.ok(); ++i ) {
+			WatchEventRecord record;
+			record.action = r.u8();
+			record.path = r.str();
+			record.oldPath = r.str();
+			records.push_back( std::move( record ) );
+		}
+		return r.ok() && r.atEnd();
+	}
 };
 
 }} // namespace efsw::agent

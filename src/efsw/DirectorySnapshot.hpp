@@ -2,6 +2,7 @@
 #define EFSW_DIRECTORYSNAPSHOT_HPP
 
 #include <efsw/DirectorySnapshotDiff.hpp>
+#include <vector>
 
 namespace efsw {
 
@@ -25,6 +26,10 @@ class DirectorySnapshot {
 
 	DirectorySnapshotDiff scan();
 
+	/// A generic or native parent resolves its directory moving or disappearing. Keep the
+	/// entries while that path is missing, for relocation or source-tree evidence.
+	DirectorySnapshotDiff scan( bool keepMissingDirectory );
+
 	FileInfoList::iterator nodeInFiles( const FileInfo& fi, const FileInfoList& currentFiles );
 
 	void addFile( std::string path );
@@ -34,6 +39,9 @@ class DirectorySnapshot {
 	void moveFile( std::string oldPath, std::string newPath );
 
 	void updateFile( std::string path );
+
+	/// @return True when the snapshot lists a file with one of the identities.
+	bool hasAny( const std::vector<FileIdentity>& identities ) const;
 
   protected:
 	void initFiles();

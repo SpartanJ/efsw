@@ -7,6 +7,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <atomic>
 #include <efsw/FileInfo.hpp>
 #include <efsw/WatcherGeneric.hpp>
 #include <unordered_set>
@@ -48,6 +49,9 @@ class FSEvent {
 	long Flags{ 0 };
 	Uint64 Id{ 0 };
 	Uint64 inode{ 0 };
+	/// Set only on records routed to the destination of a move between two registrations:
+	/// the absolute source path. The record is then reported as one Moved event.
+	std::string MovedFrom;
 };
 
 class WatcherFSEvents : public Watcher {
@@ -58,6 +62,9 @@ class WatcherFSEvents : public Watcher {
 
 	bool init();
 	bool handlesPath( const std::string& path ) const;
+	/// @return True when events for the path are reported by this watch, which excludes
+	/// paths below direct children for non-recursive watches.
+	bool reportsPath( const std::string& path ) const;
 
 	void handleActions( std::vector<FSEvent>& events );
 	void handleActions( std::vector<FSEvent>& events, size_t eventCount );
@@ -68,6 +75,11 @@ class WatcherFSEvents : public Watcher {
 	Uint64 ModifiedFlags{ efswFSEventsModified };
 	bool SanitizeEvents{ false };
 	bool ReportCrossDirectoryMoves{ false };
+	/// Set when the watch is removed. A callback running on the dispatch queue keeps its
+	/// snapshot of the watches, which may still hold this one when its own listener removed it:
+	/// nothing more is sent to the listener. A removal from another thread waits for the
+	/// running callback instead (see FileWatcherFSEvents::releaseStreamAfterCallbacks).
+	std::atomic<bool> Removed{ false };
 	std::vector<FSEvent> EventBuffer;
 	CFStringRef DirectoryRef{ NULL };
 

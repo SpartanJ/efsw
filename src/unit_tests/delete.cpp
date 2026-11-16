@@ -17,7 +17,7 @@ UTEST( Delete, SingleFile ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
@@ -43,7 +43,7 @@ UTEST( Delete, MultipleFiles ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testDir + "/file1.txt" ) );
@@ -74,11 +74,43 @@ UTEST( Delete, Subdirectory ) {
 
 	fileWatcher.watch();
 
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	EXPECT_TRUE( removeFile( testFile ) );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "nested_file.txt" ) );
+
+	fileWatcher.removeWatch( testDir );
+	removeDirectory( testDir );
+}
+
+// Files deleted one after another, the first by name first: each Delete is reported. kqueue
+// keeps a sorted list of its files' descriptors, which a removal left unsorted, so that a later
+// one could no longer be found, and its Delete was never reported.
+UTEST( Delete, FilesInTurn ) {
+	std::string testDir = getTemporaryDirectory();
+	EXPECT_TRUE( createDirectory( testDir ) );
+	EXPECT_TRUE( createFile( testDir + "/a.txt", "a" ) );
+	EXPECT_TRUE( createFile( testDir + "/b.txt", "b" ) );
+	EXPECT_TRUE( createFile( testDir + "/c.txt", "c" ) );
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+
+	efsw::WatchID watchId = fileWatcher.addWatch( testDir, &listener, true );
+	EXPECT_TRUE( watchId > 0 );
+
+	fileWatcher.watch();
+
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
+	listener.clearEvents();
+
+	EXPECT_TRUE( removeFile( testDir + "/a.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "a.txt" ) );
+	EXPECT_TRUE( removeFile( testDir + "/c.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "c.txt" ) );
+	EXPECT_TRUE( removeFile( testDir + "/b.txt" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "b.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );

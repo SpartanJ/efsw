@@ -163,10 +163,10 @@ enum Option {
 	/// files in the new directory watched. This might have the unintended consequence of sending
 	/// duplicated created events due to the system also emitting this event.
 	LinuxProduceSyntheticEvents = 5,
-	/// When enabled, efsw attempts to report a move between directories inside the same recursive
-	/// watch as a single Moved event instead of Delete + Add. oldFilename contains the absolute
-	/// source path. This is best-effort: moves into or out of the watched tree and incomplete or
-	/// dropped native events retain the normal Add/Delete behavior.
+	/// When enabled on both source and destination watches, efsw attempts to report a move
+	/// between their directories as one Moved event instead of Delete + Add. This also applies
+	/// within one recursive watch. oldFilename contains the absolute source path. Correlation
+	/// is best-effort when native events or stable file identity are unavailable.
 	ReportCrossDirectoryMoves = 6,
 };
 }

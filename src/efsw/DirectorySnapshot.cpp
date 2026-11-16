@@ -42,6 +42,15 @@ void removeUnsupportedFiles( FileInfoList& files ) {
 
 DirectorySnapshot::DirectorySnapshot() {}
 
+bool DirectorySnapshot::hasAny( const std::vector<FileIdentity>& identities ) const {
+	for ( const FileInfo& file : Files ) {
+		if ( file.Inode != 0 &&
+			 std::binary_search( identities.begin(), identities.end(), file.identity() ) )
+			return true;
+	}
+	return false;
+}
+
 DirectorySnapshot::DirectorySnapshot( std::string directory ) {
 	init( directory );
 }
@@ -84,11 +93,19 @@ void DirectorySnapshot::initFiles() {
 }
 
 DirectorySnapshotDiff DirectorySnapshot::scan() {
+	return scan( false );
+}
+
+DirectorySnapshotDiff DirectorySnapshot::scan( bool keepMissingDirectory ) {
 	DirectorySnapshotDiff Diff;
 
 	Diff.clear();
 
 	FileInfo curFI( DirectoryInfo.Filepath );
+
+	Diff.DirMissing = !curFI.isDirectory();
+	if ( keepMissingDirectory && Diff.DirMissing )
+		return Diff;
 
 	Diff.DirChanged = DirectoryInfo != curFI;
 
@@ -97,7 +114,7 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 	}
 
 	/// If the directory was erased, create the events for files and directories deletion
-	if ( !curFI.exists() ) {
+	if ( !keepMissingDirectory && !curFI.exists() ) {
 		deleteAll( Diff );
 
 		return Diff;
@@ -106,15 +123,32 @@ DirectorySnapshotDiff DirectorySnapshot::scan() {
 	FileInfoList files = FileSystem::filesInfoFromPath( DirectoryInfo.Filepath );
 	removeUnsupportedFiles( files );
 
+	// For a fallback, move the existing second path check after listing: a parent may
+	// have moved during the listing too. No part of its old tree is discarded in that case.
+	if ( keepMissingDirectory && !curFI.exists() ) {
+		Diff.DirMissing = true;
+		return Diff;
+	}
+
 	if ( files.empty() && Files.empty() ) {
 		return Diff;
 	}
 
-	for ( const auto& file : files ) {
+	for ( auto& file : files ) {
 		/// File existed before?
 		auto fiIt = findFile( Files, file.Filepath );
 
 		if ( fiIt != Files.end() ) {
+			// On Windows the identity is read after the directory is listed, apart from the
+			// rest of the entry's information: an entry renamed in between is listed, but its
+			// identity cannot be read. It keeps the identity it had, so it is not reported as
+			// modified, and its Delete can still be paired into a move. On POSIX one stat()
+			// reads everything, and an entry it fails for is dropped as unsupported instead.
+			if ( 0 == file.Inode && 0 != fiIt->Inode ) {
+				file.Device = fiIt->Device;
+				file.Inode = fiIt->Inode;
+			}
+
 			/// File changed?
 			if ( *fiIt != file ) {
 				/// handle modified event

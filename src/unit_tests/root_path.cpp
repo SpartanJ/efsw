@@ -79,7 +79,6 @@ UTEST( RootPath, CanBeWatched ) {
 	const efsw::WatchID id = fileWatcher.addWatch( root, &listener, false );
 	ASSERT_GT( id, 0 );
 	fileWatcher.watch();
-	sleepMs( 200 );
 
 #if defined( _WIN32 )
 	const std::string name = "efsw_root_test_" + std::to_string( _getpid() ) + ".txt";

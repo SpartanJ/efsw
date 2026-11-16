@@ -1,0 +1,547 @@
+#include "test_util.hpp"
+#include "utest.h"
+
+#include <efsw/base.hpp>
+
+#if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY
+
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <dirent.h>
+#include <efsw/FileWatcherInotify.hpp>
+#include <efsw/Lock.hpp>
+#include <fstream>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <vector>
+
+using namespace efsw_test;
+
+namespace {
+
+/// Polls a condition until it holds or two seconds pass.
+bool pollUntil( const std::function<bool()>& condition ) {
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( 2 );
+	while ( !condition() ) {
+		if ( std::chrono::steady_clock::now() > deadline )
+			return false;
+		std::this_thread::yield();
+	}
+	return true;
+}
+
+/// An inotify watcher whose action lock the test can hold, to keep the event thread waiting.
+class LockableWatcher : public efsw::FileWatcherInotify {
+  public:
+	LockableWatcher( efsw::FileWatcher* parent = nullptr ) : FileWatcherInotify( parent ) {}
+
+	// The event thread makes virtual calls: it stops before this class is destroyed.
+	~LockableWatcher() override { stop(); }
+
+	void stop() {
+		mInitOK = false;
+		efSAFE_DELETE( mThread );
+	}
+
+	efsw::Mutex& actionLock() { return mInitLock; }
+
+	/// Waits until the event thread has read every queued event, then until it waits for the
+	/// action lock, which the caller holds.
+	bool waitUntilBlocked() {
+		if ( !pollUntil( [this] {
+				 int pending = 0;
+				 return ioctl( mFD, FIONREAD, &pending ) == 0 && pending == 0;
+			 } ) )
+			return false;
+		return pollUntil( [] { return anotherThreadWaitsOnALock(); } );
+	}
+
+  private:
+	/// Whether a thread of the process, other than the caller, sleeps on a futex: the event
+	/// thread, the only other one, waiting for the lock. Where the kernel does not tell, assumed.
+	static bool anotherThreadWaitsOnALock() {
+		const long self = syscall( SYS_gettid );
+		DIR* tasks = opendir( "/proc/self/task" );
+		if ( !tasks )
+			return true;
+		bool waits = false;
+		bool known = false;
+		while ( dirent* task = readdir( tasks ) ) {
+			if ( task->d_name[0] == '.' || atol( task->d_name ) == self )
+				continue;
+			std::ifstream file( std::string( "/proc/self/task/" ) + task->d_name + "/wchan" );
+			std::string channel;
+			std::getline( file, channel );
+			if ( !channel.empty() && channel != "0" )
+				known = true;
+			if ( channel.find( "futex" ) != std::string::npos )
+				waits = true;
+		}
+		closedir( tasks );
+		return waits || !known;
+	}
+};
+
+// Join before a derived test watcher's destructor changes its vtable or destroys its members.
+// Kept outside the watcher itself so this also runs when an assertion returns from the test.
+struct StopBeforeDestruction {
+	LockableWatcher& Watch;
+	~StopBeforeDestruction() { Watch.stop(); }
+};
+
+/// Records each event with its registration and full path.
+class PathListener : public efsw::FileWatchListener {
+  public:
+	struct Event {
+		efsw::WatchID ID;
+		efsw::Action Action;
+		std::string Path;
+	};
+
+	void handleFileAction( efsw::WatchID id, const std::string& dir, const std::string& filename,
+						   efsw::Action action, const std::string& ) override {
+		std::lock_guard<std::mutex> lock( mLock );
+		mEvents.push_back( { id, action, dir + filename } );
+		mChanged.notify_all();
+	}
+
+	std::vector<Event> events() {
+		std::lock_guard<std::mutex> lock( mLock );
+		return mEvents;
+	}
+
+	/// Waits for an event of the action on the path.
+	bool waitFor( efsw::Action action, const std::string& path ) {
+		std::unique_lock<std::mutex> lock( mLock );
+		return mChanged.wait_for( lock, std::chrono::seconds( 2 ), [&] {
+			for ( const Event& event : mEvents )
+				if ( event.Action == action && event.Path == path )
+					return true;
+			return false;
+		} );
+	}
+
+	/// Creates a file in a watched directory and waits for its Add: the events queued before it
+	/// were handled, since inotify reports them in order.
+	bool settle( const std::string& directory ) {
+		const std::string marker = directory + "/marker" + std::to_string( mMarkers++ );
+		return createFile( marker, "" ) && waitFor( efsw::Actions::Add, marker );
+	}
+
+  private:
+	std::mutex mLock;
+	std::condition_variable mChanged;
+	std::vector<Event> mEvents;
+	int mMarkers{ 0 };
+};
+
+const std::vector<efsw::WatcherOption> crossMoves = {
+	{ efsw::Options::ReportCrossDirectoryMoves, 1 } };
+
+} // namespace
+
+// A directory moved between two registrations while the destination is being removed: the event
+// thread found the destination still registered, then waited for the removal to finish. The
+// moved directory's watches must not be handed over to the removed registration, which would
+// keep reporting to its listener after removeWatch() returned.
+UTEST( InotifyMovedDirectories, NoHandoverToARemovedRegistration ) {
+	const std::string root = getTemporaryDirectory() + "_handover";
+	const std::string source = root + "/a";
+	const std::string destination = root + "/c";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	ASSERT_TRUE( createDirectory( source ) );
+	ASSERT_TRUE( createDirectory( source + "/d" ) );
+	ASSERT_TRUE( createDirectory( source + "/d/s" ) );
+	ASSERT_TRUE( createDirectory( destination ) );
+	PathListener listener;
+	{
+		LockableWatcher watcher;
+		ASSERT_GT( watcher.addWatch( source, &listener, true, crossMoves ), 0 );
+		const efsw::WatchID c = watcher.addWatch( destination, &listener, true, crossMoves );
+		ASSERT_GT( c, 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_EQ( 0,
+					   std::rename( ( source + "/d" ).c_str(), ( destination + "/d" ).c_str() ) );
+			// The event thread reads the move, finds both registrations, and waits for the lock.
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			watcher.removeWatch( c );
+		}
+		// The source registration lost the directory.
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Delete, source + "/d" ) );
+		ASSERT_TRUE( createFile( destination + "/d/s/late.txt", "x" ) );
+		ASSERT_TRUE( listener.settle( source ) );
+	}
+	// Neither registration watches the directory any more.
+	for ( const PathListener::Event& event : listener.events() )
+		EXPECT_EQ( std::string::npos, event.Path.find( "late.txt" ) );
+	removeDirectory( root );
+}
+
+// A directory renamed, then moved to another registration before the rename was handled: its
+// watch must follow it to where the rename put it, so the move takes it away from the first
+// registration, which no longer reports what happens inside it.
+UTEST( InotifyMovedDirectories, RenamedThenMovedAway ) {
+	const std::string root = getTemporaryDirectory() + "_renamed_moved";
+	const std::string first = root + "/a";
+	const std::string second = root + "/b";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	ASSERT_TRUE( createDirectory( first ) );
+	ASSERT_TRUE( createDirectory( second ) );
+	PathListener listener;
+	efsw::WatchID a = 0;
+	{
+		LockableWatcher watcher;
+		a = watcher.addWatch( first, &listener, true, {} );
+		ASSERT_GT( a, 0 );
+		ASSERT_GT( watcher.addWatch( second, &listener, true, {} ), 0 );
+		watcher.watch();
+		// Reported once its watch is installed.
+		ASSERT_TRUE( createDirectory( first + "/d" ) );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, first + "/d" ) );
+		{
+			// The event thread waits for the lock to report an Add, while both moves are queued
+			// behind it, to be read together. One event, so it has nothing left to read.
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( first + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_EQ( 0, std::rename( ( first + "/d" ).c_str(), ( first + "/e" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( first + "/e" ).c_str(), ( second + "/e" ).c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( second ) );
+		ASSERT_TRUE( createFile( second + "/e/x.txt", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, second + "/e/x.txt" ) );
+		ASSERT_TRUE( listener.settle( first ) );
+	}
+	// The first registration reports nothing inside the directory that left it.
+	for ( const PathListener::Event& event : listener.events() )
+		if ( event.ID == a )
+			EXPECT_EQ( std::string::npos, event.Path.find( "x.txt" ) );
+	removeDirectory( root );
+}
+
+// A directory that arrives from outside the watched directories holds one moved in from another
+// registration, which holds one moved in from a third, all in one batch. The coverage installed
+// for the first already watches the third: its watch is not handed over too, which would report
+// each of its events twice.
+UTEST( InotifyMovedDirectories, HandoverIntoCoveredDirectory ) {
+	const std::string root = getTemporaryDirectory() + "_covered_handover";
+	const std::string outside = root + "/out";
+	const std::string destination = root + "/w1";
+	const std::string middle = root + "/w2";
+	const std::string source = root + "/w0";
+	removeDirectory( root );
+	for ( const std::string& dir : { root, outside, destination, middle, source } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	ASSERT_TRUE( createDirectory( outside + "/carrier" ) );
+	ASSERT_TRUE( createDirectory( middle + "/m" ) );
+	ASSERT_TRUE( createDirectory( source + "/d" ) );
+	PathListener listener;
+	efsw::WatchID w1 = 0;
+	const std::string inner = destination + "/carrier/m/d";
+	{
+		LockableWatcher watcher;
+		w1 = watcher.addWatch( destination, &listener, true, crossMoves );
+		ASSERT_GT( w1, 0 );
+		ASSERT_GT( watcher.addWatch( middle, &listener, true, crossMoves ), 0 );
+		ASSERT_GT( watcher.addWatch( source, &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( source + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_EQ( 0, std::rename( ( outside + "/carrier" ).c_str(),
+									   ( destination + "/carrier" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( middle + "/m" ).c_str(),
+									   ( destination + "/carrier/m" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( source + "/d" ).c_str(), inner.c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( destination ) );
+		ASSERT_TRUE( createFile( inner + "/x.txt", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, inner + "/x.txt" ) );
+		ASSERT_TRUE( listener.settle( destination ) );
+	}
+	size_t adds = 0;
+	for ( const PathListener::Event& event : listener.events() )
+		if ( event.ID == w1 && event.Action == efsw::Actions::Add &&
+			 event.Path == inner + "/x.txt" )
+			adds++;
+	EXPECT_EQ( 1u, adds );
+	removeDirectory( root );
+}
+
+// A directory created, then renamed before its creation was handled: the creation no longer
+// finds it, and the rename reports it moved from a path the registration never watched. It is
+// covered where the rename put it, so what happens inside it is reported.
+UTEST( InotifyMovedDirectories, NewDirectoryRenamedBeforeItsCreationWasHandled ) {
+	const std::string root = getTemporaryDirectory() + "_new_renamed";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	PathListener listener;
+	{
+		LockableWatcher watcher;
+		ASSERT_GT( watcher.addWatch( root, &listener, true, {} ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( root + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_TRUE( createDirectory( root + "/s" ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/s" ).c_str(), ( root + "/t" ).c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( root ) );
+		ASSERT_TRUE( createFile( root + "/t/x.txt", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/t/x.txt" ) );
+	}
+	removeDirectory( root );
+}
+
+// A directory created, then its parent moved, before the creation was handled: the watch of the
+// new directory is installed where the move put it, within the registration or in the one the
+// parent moved to, so what happens inside it is reported. The move may be read with the
+// creation, or in a later batch of events.
+UTEST( InotifyMovedDirectories, NewDirectoryWhoseParentMovedOn ) {
+	for ( int variant = 0; variant < 4; variant++ ) {
+		const bool toOtherRegistration = variant & 1;
+		const bool laterBatch = variant & 2;
+		const std::string root = getTemporaryDirectory() + "_parent_moved";
+		const std::string first = root + "/a";
+		const std::string second = root + "/b";
+		removeDirectory( root );
+		ASSERT_TRUE( createDirectory( root ) );
+		ASSERT_TRUE( createDirectory( first ) );
+		ASSERT_TRUE( createDirectory( second ) );
+		ASSERT_TRUE( createDirectory( first + "/p" ) );
+		const std::string moved = toOtherRegistration ? second + "/q" : first + "/q";
+		PathListener listener;
+		{
+			LockableWatcher watcher;
+			ASSERT_GT( watcher.addWatch( first, &listener, true, crossMoves ), 0 );
+			ASSERT_GT( watcher.addWatch( second, &listener, true, crossMoves ), 0 );
+			watcher.watch();
+			{
+				efsw::Lock lock( watcher.actionLock() );
+				if ( laterBatch ) {
+					// The creation is read alone, and waits for the lock to be handled: the
+					// move comes in the next batch.
+					ASSERT_TRUE( createDirectory( first + "/p/d" ) );
+					ASSERT_TRUE( watcher.waitUntilBlocked() );
+				} else {
+					// The thread waits for the lock to report the wake-up, while the creation
+					// and the move are queued behind it, to be read together.
+					ASSERT_TRUE( createDirectory( first + "/wake" ) );
+					ASSERT_TRUE( watcher.waitUntilBlocked() );
+					ASSERT_TRUE( createDirectory( first + "/p/d" ) );
+				}
+				ASSERT_EQ( 0, std::rename( ( first + "/p" ).c_str(), moved.c_str() ) );
+			}
+			ASSERT_TRUE( listener.settle( first ) );
+			ASSERT_TRUE( listener.settle( second ) );
+			ASSERT_TRUE( createFile( moved + "/d/x.txt", "x" ) );
+			EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, moved + "/d/x.txt" ) );
+		}
+		removeDirectory( root );
+	}
+}
+
+// A directory created, moved into another directory of the registration, and that directory
+// renamed, before any of it was handled: when the move is handled the directory moved on with
+// its new parent, and it waits for the parent's rename to be watched where it ended.
+UTEST( InotifyMovedDirectories, NewDirectoryMovedThenItsParentRenamed ) {
+	const std::string root = getTemporaryDirectory() + "_moved_parent_renamed";
+	removeDirectory( root );
+	ASSERT_TRUE( createDirectory( root ) );
+	ASSERT_TRUE( createDirectory( root + "/p" ) );
+	PathListener listener;
+	{
+		LockableWatcher watcher;
+		ASSERT_GT( watcher.addWatch( root, &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		{
+			efsw::Lock lock( watcher.actionLock() );
+			ASSERT_TRUE( createDirectory( root + "/wake" ) );
+			ASSERT_TRUE( watcher.waitUntilBlocked() );
+			ASSERT_TRUE( createDirectory( root + "/x" ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/x" ).c_str(), ( root + "/p/y" ).c_str() ) );
+			ASSERT_EQ( 0, std::rename( ( root + "/p" ).c_str(), ( root + "/q" ).c_str() ) );
+		}
+		ASSERT_TRUE( listener.settle( root ) );
+		ASSERT_TRUE( createFile( root + "/q/y/f", "x" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/q/y/f" ) );
+	}
+	removeDirectory( root );
+}
+
+// The arrival's native watch exists before discovery descends into its children. Moving its
+// parent during a synthetic callback makes those child paths stale, but the native watches
+// already installed still follow the parent and must recover the rest of their coverage.
+UTEST( InotifyMovedDirectories, ParentMovesDuringArrivalDiscovery ) {
+	const std::string root = getTemporaryDirectory() + "_parent_moves_during_discovery";
+	removeDirectory( root );
+	for ( const std::string& dir : { root, root + "/a", root + "/b", root + "/b/p",
+									 root + "/outside", root + "/outside/child" } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	ASSERT_TRUE( createFile( root + "/outside/trigger" ) );
+	class MovingListener : public PathListener {
+	  public:
+		std::string Root;
+		bool Moved{ false };
+		void handleFileAction( efsw::WatchID id, const std::string& dir,
+							   const std::string& filename, efsw::Action action,
+							   const std::string& oldFilename ) override {
+			if ( !Moved && action == efsw::Actions::Add &&
+				 dir + filename == Root + "/b/p/tree/trigger" ) {
+				Moved = renameFile( Root + "/b/p", Root + "/a/p" );
+			}
+			PathListener::handleFileAction( id, dir, filename, action, oldFilename );
+		}
+	} listener;
+	listener.Root = root;
+	{
+		LockableWatcher watcher;
+		auto options = crossMoves;
+		options.emplace_back( efsw::Options::LinuxProduceSyntheticEvents, 1 );
+		ASSERT_GT( watcher.addWatch( root + "/a", &listener, true, options ), 0 );
+		ASSERT_GT( watcher.addWatch( root + "/b", &listener, true, options ), 0 );
+		watcher.watch();
+		ASSERT_TRUE( renameFile( root + "/outside", root + "/b/p/tree" ) );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Moved, root + "/a/p" ) );
+		ASSERT_TRUE( listener.settle( root + "/a" ) );
+		ASSERT_TRUE( createFile( root + "/a/p/tree/child/late" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/a/p/tree/child/late" ) );
+	}
+	removeDirectory( root );
+}
+
+// File move-outs need no subtree cleanup. Directory move-outs still remove their native tree,
+// although their old paths no longer exist. Unpaired moves between registrations retain the
+// source's Delete before the destination's Add, with neither option or only the source opted in.
+UTEST( InotifyMovedDirectories, UnpairedMovesKeepOrderAndDirectoryCoverage ) {
+	for ( bool directory : { false, true } ) {
+		for ( int route = 0; route < 3; route++ ) {
+			const std::string root = getTemporaryDirectory() + "_unpaired_move_coverage";
+			const std::string source = root + "/source", destination = root + "/destination";
+			removeDirectory( root );
+			for ( const auto& dir : { root, source, destination, source + "/keep" } )
+				ASSERT_TRUE( createDirectory( dir ) );
+			if ( directory ) {
+				ASSERT_TRUE( createDirectory( source + "/entry" ) );
+				ASSERT_TRUE( createDirectory( source + "/entry/child" ) );
+			} else {
+				ASSERT_TRUE( createFile( source + "/entry" ) );
+			}
+			PathListener listener;
+			efsw::WatchID sourceID = 0, destinationID = 0;
+			{
+				LockableWatcher watcher;
+				sourceID = watcher.addWatch( source, &listener, true,
+											 route == 1 ? std::vector<efsw::WatcherOption>{}
+														: crossMoves );
+				ASSERT_GT( sourceID, 0 );
+				if ( route != 0 ) {
+					destinationID = watcher.addWatch( destination, &listener, true, {} );
+					ASSERT_GT( destinationID, 0 );
+				}
+				watcher.watch();
+				ASSERT_TRUE( renameFile( source + "/entry", destination + "/entry" ) );
+				ASSERT_TRUE( listener.waitFor( efsw::Actions::Delete, source + "/entry" ) );
+				if ( route != 0 )
+					ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, destination + "/entry" ) );
+				ASSERT_TRUE( createFile( source + "/keep/retained" ) );
+				ASSERT_TRUE( listener.waitFor( efsw::Actions::Add, source + "/keep/retained" ) );
+				if ( directory ) {
+					ASSERT_TRUE( createFile( destination + "/entry/child/late" ) );
+					if ( route != 0 ) {
+						ASSERT_TRUE( listener.waitFor( efsw::Actions::Add,
+													   destination + "/entry/child/late" ) );
+					}
+				}
+				ASSERT_TRUE( listener.settle( source ) );
+			}
+			const auto events = listener.events();
+			int removed = -1, childRemoved = -1, added = -1;
+			int deletes = 0, adds = 0;
+			for ( size_t i = 0; i < events.size(); i++ ) {
+				const auto& event = events[i];
+				if ( event.Action == efsw::Actions::Delete && event.Path == source + "/entry" ) {
+					EXPECT_EQ( sourceID, event.ID );
+					removed = static_cast<int>( i );
+					deletes++;
+				}
+				if ( event.Action == efsw::Actions::Delete &&
+					 event.Path == source + "/entry/child" )
+					childRemoved = static_cast<int>( i );
+				if ( event.Action == efsw::Actions::Add && event.Path == destination + "/entry" ) {
+					EXPECT_EQ( destinationID, event.ID );
+					added = static_cast<int>( i );
+					adds++;
+				}
+				EXPECT_NE( efsw::Actions::Moved, event.Action );
+				if ( event.Path.find( "/late" ) != std::string::npos )
+					EXPECT_NE( sourceID, event.ID );
+			}
+			EXPECT_EQ( 1, deletes );
+			EXPECT_EQ( route == 0 ? 0 : 1, adds );
+			if ( route != 0 )
+				EXPECT_LT( removed, added );
+			if ( directory ) {
+				EXPECT_GE( childRemoved, 0 );
+				EXPECT_LT( childRemoved, removed );
+			}
+			removeDirectory( root );
+		}
+	}
+}
+
+// linkAllowed() runs after the arrival was found to be a directory, before its native watch
+// is created. Move its parent there, so registration fails on the stale path deterministically.
+UTEST( InotifyMovedDirectories, ParentMovesBetweenArrivalCheckAndRegistration ) {
+	const std::string root = getTemporaryDirectory() + "_parent_moves_before_registration";
+	removeDirectory( root );
+	for ( const std::string& dir :
+		  { root, root + "/a", root + "/b", root + "/b/p", root + "/b/p/target" } )
+		ASSERT_TRUE( createDirectory( dir ) );
+	PathListener listener;
+	{
+		efsw::FileWatcher owner( true );
+		owner.followSymlinks( true );
+		class MovingWatcher : public LockableWatcher {
+		  public:
+			std::string Root;
+			bool Moved{ false };
+			MovingWatcher( efsw::FileWatcher* owner ) : LockableWatcher( owner ) {}
+
+			bool linkAllowed( const std::string&, const std::string& ) override {
+				if ( !Moved ) {
+					// Leave the target's coverage to the arriving link, so an existing native
+					// watch does not mask the failed registration that this test exercises.
+					removeWatch( Root + "/b/p/target" );
+					Moved = renameFile( Root + "/b/p", Root + "/a/p" );
+				}
+				return true;
+			}
+		} watcher( &owner );
+		StopBeforeDestruction stop{ watcher };
+		watcher.Root = root;
+		ASSERT_GT( watcher.addWatch( root + "/a", &listener, true, crossMoves ), 0 );
+		ASSERT_GT( watcher.addWatch( root + "/b", &listener, true, crossMoves ), 0 );
+		watcher.watch();
+		ASSERT_EQ( 0, symlink( "target", ( root + "/b/p/link" ).c_str() ) );
+		ASSERT_TRUE( listener.waitFor( efsw::Actions::Moved, root + "/a/p" ) );
+		ASSERT_TRUE( listener.settle( root + "/a" ) );
+		ASSERT_TRUE( createFile( root + "/a/p/target/late" ) );
+		EXPECT_TRUE( listener.waitFor( efsw::Actions::Add, root + "/a/p/target/late" ) );
+	}
+	removeDirectory( root );
+}
+
+#endif

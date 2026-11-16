@@ -23,8 +23,14 @@ WatcherGeneric::~WatcherGeneric() {
 }
 
 void WatcherGeneric::watch() {
-	// Recursive scans must finish updating the complete watcher tree before callbacks are delivered.
-	// A listener may immediately mutate a directory after receiving an event.
+	if ( SharedActionBatch ) {
+		mCollectActions = true;
+		DirWatch->watch();
+		mCollectActions = false;
+		return;
+	}
+	// Recursive scans must finish updating the complete watcher tree before callbacks are
+	// delivered. A listener may immediately mutate a directory after receiving an event.
 	mCollectActions = Recursive;
 	if ( mCollectActions )
 		mActionBatch.clear();
@@ -32,8 +38,7 @@ void WatcherGeneric::watch() {
 	DirWatch->watch();
 
 	if ( mCollectActions ) {
-		mActionBatch.dispatch( Listener,
-						   ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
+		mActionBatch.dispatch( Listener, ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
 		mCollectActions = false;
 	}
 }
@@ -45,17 +50,39 @@ void WatcherGeneric::watchDir( std::string dir ) {
 		DirWatch->watchDir( dir );
 }
 
+bool WatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
+	return DirWatch->snapshotHasAny( identities );
+}
+
 bool WatcherGeneric::pathInWatches( std::string path ) {
 	return DirWatch->pathInWatches( path );
+}
+
+void WatcherGeneric::moveDirectory( const std::string& directory ) {
+	Directory = directory;
+	FileSystem::dirAddSlashAtEnd( Directory );
+	DirWatch->resetDirectory( Directory );
+}
+
+void WatcherGeneric::retire() {
+	Watcher::retire();
+	mActionBatch.cancel();
 }
 
 void WatcherGeneric::handleAction( const std::string& directory, const std::string& filename,
 								   Action action, const std::string& oldFilename,
 								   const FileInfo& fileInfo ) {
+	if ( Retired )
+		return;
+	// A kqueue fallback watch reports with its registration's ID, which addWatch() returned.
+	const WatchID id = SharedActionOwner ? SharedActionOwner->ID : ID;
 	if ( mCollectActions ) {
-		mActionBatch.add( ID, directory, filename, action, oldFilename, fileInfo );
+		FileActionBatch* batch = SharedActionBatch ? SharedActionBatch : &mActionBatch;
+		batch->add( id, directory, filename, action, oldFilename, fileInfo,
+					SharedActionBatch ? Listener : NULL,
+					SharedActionBatch ? ( SharedActionOwner ? SharedActionOwner : this ) : NULL );
 	} else {
-		Listener->handleFileAction( ID, directory, filename, action, oldFilename );
+		Listener->handleFileAction( id, directory, filename, action, oldFilename );
 	}
 }
 

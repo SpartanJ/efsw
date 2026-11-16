@@ -24,7 +24,6 @@ FileWatcherKqueue::FileWatcherKqueue( FileWatcher* parent, unsigned int pollingF
 	mLastWatchID( 0 ),
 	mThread( NULL ),
 	mFileDescriptorCount( 1 ),
-	mAddingWatcher( false ),
 	mPollingFreq( pollingFreq ) {
 	mTimeOut.tv_sec = 0;
 	mTimeOut.tv_nsec = 0;
@@ -47,8 +46,6 @@ FileWatcherKqueue::~FileWatcherKqueue() {
 
 WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
 									 bool recursive, const std::vector<WatcherOption>& options ) {
-	static bool s_ug = false;
-
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -59,7 +56,9 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( pathInWatches( dir ) ) {
+	}
+
+	if ( pathInWatches( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRepeated, directory );
 	}
 
@@ -76,20 +75,25 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		}
 	}
 
+	WatchID id;
+	{
+		Lock lock( mWatchesLock );
+		id = ++mLastWatchID;
+	}
+
+	// The watch is built without the lock, which would pause the polling of every other watch
+	// while addAll() opens a descriptor per file; its lookups of the other watches take the
+	// lock themselves. It is registered once complete, so the polling thread never polls it
+	// half built.
 	/// Check first if are enough file descriptors available to create another kqueue watcher,
 	/// otherwise it creates a generic watcher
 	bool reportCrossDirectoryMoves =
 		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
+	Watcher* added = NULL;
 	if ( availablesFD() ) {
-		mAddingWatcher = true;
-
-		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, this,
-												  NULL, reportCrossDirectoryMoves );
-
-		{
-			Lock lock( mWatchesLock );
-			mWatches.insert( std::make_pair( mLastWatchID, watch ) );
-		}
+		WatcherKqueue* watch = new WatcherKqueue( id, dir, watcher, recursive, this, NULL,
+												  reportCrossDirectoryMoves );
+		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
 
 		watch->addAll();
 
@@ -97,40 +101,39 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		if ( !watch->initOK() ) {
 			int le = watch->lastErrno();
 
-			mWatches.erase( watch->ID );
-
 			efSAFE_DELETE( watch );
-
-			mLastWatchID--;
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
 				WatcherGeneric* genericWatch = new WatcherGeneric(
-					++mLastWatchID, dir, watcher, this, recursive, reportCrossDirectoryMoves );
-
-				Lock lock( mWatchesLock );
-				mWatches.insert( std::make_pair( mLastWatchID, genericWatch ) );
+					id, dir, watcher, this, recursive, reportCrossDirectoryMoves );
+				genericWatch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
+				added = genericWatch;
 			} else {
 				return Errors::Log::createLastError( Errors::Unspecified, link );
 			}
+		} else {
+			added = watch;
 		}
-
-		mAddingWatcher = false;
 	} else {
-		if ( !s_ug ) {
-			efDEBUG( "Started using generic watcher, file descriptor limit reached: %ld\n",
-					 mFileDescriptorCount );
-			s_ug = true;
-		}
+		efDEBUG( "Using a generic watcher, file descriptor limit reached: %ld\n",
+				 mFileDescriptorCount.load() );
 
-		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, this, recursive,
+		WatcherGeneric* watch = new WatcherGeneric( id, dir, watcher, this, recursive,
 													reportCrossDirectoryMoves );
-
-		Lock lock( mWatchesLock );
-		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
+		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
+		added = watch;
 	}
 
-	return mLastWatchID;
+	Lock lock( mWatchesLock );
+	// Another thread may have registered the directory meanwhile.
+	if ( pathInWatches( added->Directory ) ) {
+		delete added;
+		return Errors::Log::createLastError( Errors::FileRepeated, directory );
+	}
+	mWatches.insert( std::make_pair( id, added ) );
+
+	return id;
 }
 
 void FileWatcherKqueue::removeWatch( const std::string& directory ) {
@@ -160,12 +163,12 @@ void FileWatcherKqueue::removeWatch( WatchID watchid ) {
 	Watcher* watch = iter->second;
 
 	mWatches.erase( iter );
-
-	efSAFE_DELETE( watch );
+	mSharedActions.forget( watch );
+	mRetiring.release( watch );
 }
 
-bool FileWatcherKqueue::isAddingWatcher() const {
-	return mAddingWatcher;
+FileActionBatch* FileWatcherKqueue::sharedActionsFor( bool reportCrossDirectoryMoves ) {
+	return reportCrossDirectoryMoves && FileInfo::inodeSupported() ? &mSharedActions : NULL;
 }
 
 void FileWatcherKqueue::watch() {
@@ -180,9 +183,19 @@ void FileWatcherKqueue::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-				it->second->watch();
+			// Events of opted-in watches are collected during the scans, and dispatched after.
+			std::vector<Watcher*>& scanned = mRetiring.beginPass();
+			for ( const auto& entry : mWatches )
+				scanned.push_back( entry.second );
+			mSharedActions.beginPass();
+			for ( Watcher* watch : scanned ) {
+				if ( watch->Retired )
+					continue;
+				watch->watch();
+				mSharedActions.scanned( watch );
 			}
+			mSharedActions.finishPass();
+			mRetiring.endPass();
 		}
 
 		System::sleep( mPollingFreq );
@@ -209,6 +222,8 @@ std::vector<std::string> FileWatcherKqueue::directories() {
 }
 
 bool FileWatcherKqueue::pathInWatches( const std::string& path ) {
+	// Watches are added and removed from other threads, and from callbacks.
+	Lock lock( mWatchesLock );
 	WatchMap::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); ++it ) {
