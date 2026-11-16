@@ -148,6 +148,7 @@ static bool metadataMatches( const FileInfo& source, const FileInfo& destination
 }
 
 void FileActionBatch::beginPass() {
+	resetSourceIndex();
 	mSegments.clear();
 	mHeld.erase( std::remove_if( mHeld.begin(), mHeld.end(),
 								 []( const Event& event ) { return event.Canceled; } ),
@@ -197,11 +198,14 @@ void FileActionBatch::forget( Watcher* watcher ) {
 }
 
 void FileActionBatch::addSourceTree( const FileInfo& directory, std::vector<FileInfoList> lists ) {
-	if ( directory.Inode != 0 )
+	if ( directory.Inode != 0 ) {
+		resetSourceIndex();
 		mSourceTrees[directory.identity()] = std::move( lists );
+	}
 }
 
 void FileActionBatch::pruneSourceTrees() {
+	resetSourceIndex();
 	if ( mSourceTrees.empty() )
 		return;
 	std::unordered_map<FileIdentity, std::vector<FileInfoList>, FileIdentityHash> kept;
@@ -1071,6 +1075,26 @@ bool FileActionBatch::matchMoves( Moves& moves ) {
 			 !metadataMatches( source.Info, destination.Info ) || sourceTaken( deleted, created ) )
 			continue;
 
+		if ( enclosingDestination != Moves::None && !comparedTrees.empty() &&
+			 comparedTrees[enclosingDestination] &&
+			 destination.Owner == mEvents[enclosingDestination].Owner ) {
+			// The enclosing move carries an entry already in its source snapshot. Its Add
+			// may have been reported in a previous pass, before this source Delete arrived:
+			// pairing that Delete now would move onto the already-reported arrival.
+			const Event& parentSource = mEvents[moves.SourceOf[enclosingDestination]];
+			FileIdentity tree = parentSource.Info.identity();
+			if ( !mSourceTrees.count( tree ) ) {
+				tree = enclosingRoot( roots, parentSource.Info.Filepath, noIdentity );
+			}
+			const FileInfo* known = sourceEntryAt( tree, parentSource.Info.Filepath,
+												   mEvents[enclosingDestination].Info.Filepath,
+												   destination.Info.Filepath );
+			if ( known && known->sameInode( destination.Info ) &&
+				 ( known->Permissions & S_IFMT ) == ( destination.Info.Permissions & S_IFMT ) ) {
+				continue;
+			}
+		}
+
 		moves.MoveOf[deleted] = created;
 		moves.MoveOf[created] = created;
 		moves.SourceOf[created] = deleted;
@@ -1381,12 +1405,86 @@ struct SlotHash {
 
 } // namespace
 
+std::string FileActionBatch::TreeChanges::pathFor( const TreeChange& change ) const {
+	if ( !change.Path.empty() ) {
+		return change.Path;
+	}
+	return change.ActionType == Actions::Delete
+			   ? DestinationRoot + change.Entry->Filepath.substr( SourceLength )
+			   : change.Entry->Filepath;
+}
+
+std::string FileActionBatch::TreeChanges::oldPathFor( const TreeChange& change ) const {
+	return !change.OldPath.empty() || NULL == change.Source
+			   ? change.OldPath
+			   : DestinationRoot + change.Source->Filepath.substr( SourceLength );
+}
+
 // Earlier callbacks describe the listener's source tree more recently than incomplete
 // snapshots can. Replay just those touched paths. Parent/name links let a directory rename
 // move all known descendants without walking or copying them for every rename.
 class FileActionBatch::SourceHistory {
   public:
 	ListsByPosition<size_t> Events;
+
+	void resetIndex() {
+		mIndexPositions.clear();
+		mIndexesUsed = 0;
+	}
+
+	const std::vector<const FileInfo*>& index( const FileIdentity& identity,
+											   const std::vector<FileInfoList>& lists ) {
+		if ( const size_t* known = mIndexPositions.find( identity ) ) {
+			return mIndexes[*known];
+		}
+		const size_t position = mIndexesUsed++;
+		if ( position == mIndexes.size() ) {
+			mIndexes.emplace_back();
+			mIndexCapacity++;
+		}
+		std::vector<const FileInfo*>& entries = mIndexes[position];
+		const size_t capacity = entries.capacity();
+		entries.clear();
+		for ( const auto& list : lists ) {
+			for ( const auto& entry : list ) {
+				entries.push_back( &entry );
+			}
+		}
+		std::sort( entries.begin(), entries.end(), []( const FileInfo* a, const FileInfo* b ) {
+			return a->Filepath < b->Filepath;
+		} );
+		mIndexPositions[identity] = position;
+		mIndexCapacity += entries.capacity() - capacity;
+		// Count the index itself too: many empty snapshots must not retain an unbounded pool.
+		mIndexedEntries += entries.size() + 1;
+		return entries;
+	}
+
+	const FileInfo* entryAt( const std::vector<const FileInfo*>& entries,
+							 const std::string& sourceRoot, const std::string& destinationRoot,
+							 const std::string& destinationPath ) {
+		const size_t rootLength = directoryLength( destinationRoot );
+		const size_t end = directoryLength( destinationPath );
+		if ( end <= rootLength || destinationPath[rootLength] != FileSystem::getOSSlash() ||
+			 destinationPath.compare( 0, rootLength, destinationRoot, 0, rootLength ) != 0 ) {
+			return NULL;
+		}
+		mLookupPath.assign( sourceRoot, 0, directoryLength( sourceRoot ) );
+		mLookupPath.append( destinationPath, rootLength, end - rootLength );
+		for ( int trailing = 0; trailing < 2; ++trailing ) {
+			auto found = std::lower_bound( entries.begin(), entries.end(), mLookupPath,
+										   []( const FileInfo* entry, const std::string& path ) {
+											   return entry->Filepath < path;
+										   } );
+			if ( found != entries.end() && ( *found )->Filepath == mLookupPath ) {
+				return *found;
+			}
+			// Native directory metadata may have a final separator. Look up that form
+			// separately: prefix siblings such as dir-x sort before dir/ in the index.
+			mLookupPath += FileSystem::getOSSlash();
+		}
+		return NULL;
+	}
 
 	void reset( const std::string& root ) {
 		clear();
@@ -1417,6 +1515,13 @@ class FileActionBatch::SourceHistory {
 			std::vector<int>().swap( mStack );
 		}
 		mUsedNodes = 0;
+		if ( mIndexCapacity > RetainedEvents && 4 * mIndexedEntries < mIndexCapacity ) {
+			decltype( mIndexes )().swap( mIndexes );
+			mIndexPositions = IdentityTable<size_t>();
+			mIndexCapacity = 0;
+		}
+		mIndexedEntries = 0;
+		resetIndex();
 		Events.reset( 0 );
 	}
 
@@ -1432,16 +1537,73 @@ class FileActionBatch::SourceHistory {
 				!event.OldFilename.empty() && event.OldFilename[0] == FileSystem::getOSSlash()
 					? event.OldFilename
 					: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
-			const int node = find( from, directoryLength( from ), false );
-			if ( node <= 0 ) {
-				add( event.Info );
-				return;
+			move( event.Info, from, false );
+		}
+	}
+
+	/// Unlike an ordinary rename's temporary old path, from belongs to a stable event.
+	void applyMove( const FileInfo& info, const std::string& from ) { move( info, from, true ); }
+
+	/// Contents carried by an earlier move, unless a callback already changed that slot.
+	void mergeTree( const std::string& from, const std::string& to,
+					const std::vector<const FileInfo*>& entries, std::deque<FileInfo>& copies,
+					bool sorted = false ) {
+		const size_t length = directoryLength( from );
+		auto begin = entries.begin();
+		if ( sorted ) {
+			mLookupPath.assign( from, 0, length );
+			mLookupPath += FileSystem::getOSSlash();
+			begin = std::lower_bound( begin, entries.end(), mLookupPath,
+									  []( const FileInfo* entry, const std::string& path ) {
+										  return entry->Filepath < path;
+									  } );
+		}
+		for ( auto current = begin; current != entries.end(); ++current ) {
+			const FileInfo* entry = *current;
+			if ( entry->Filepath.size() <= length ||
+				 entry->Filepath[length] != FileSystem::getOSSlash() ||
+				 entry->Filepath.compare( 0, length, from, 0, length ) != 0 ) {
+				if ( sorted ) {
+					break;
+				}
+				continue;
 			}
-			const Slot old{ mNodes[node].Parent, mNodes[node].Name };
-			mSlots.find( old )->second = Removed;
-			mNodes[node].Present = false;
-			if ( contains( event.Info.Filepath ) )
-				place( node, event.Info );
+			if ( entry->Filepath.size() == length + 1 ) {
+				continue;
+			}
+			mLookupPath.assign( to, 0, directoryLength( to ) );
+			mLookupPath.append( entry->Filepath, length, std::string::npos );
+			const int node = find( mLookupPath, directoryLength( mLookupPath ), false );
+			if ( node == Removed || ( node >= 0 && mNodes[node].Info ) ) {
+				continue;
+			}
+			if ( mLookupPath == entry->Filepath ) {
+				add( *entry );
+			} else {
+				copies.push_back( *entry );
+				copies.back().Filepath = mLookupPath;
+				add( copies.back() );
+			}
+		}
+	}
+
+	void apply( const TreeChanges& changes, std::deque<FileInfo>& copies ) {
+		for ( const TreeChange& change : changes.Changes ) {
+			const std::string* from = NULL;
+			if ( change.ActionType == Actions::Moved ) {
+				copies.emplace_back();
+				copies.back().Filepath = changes.oldPathFor( change );
+				from = &copies.back().Filepath;
+			}
+			copies.push_back( *change.Entry );
+			copies.back().Filepath = changes.pathFor( change );
+			if ( change.ActionType == Actions::Delete ) {
+				erase( copies.back().Filepath );
+			} else if ( from ) {
+				applyMove( copies.back(), *from );
+			} else {
+				add( copies.back() );
+			}
 		}
 	}
 
@@ -1508,11 +1670,34 @@ class FileActionBatch::SourceHistory {
 	const std::string* mRoot{ NULL };
 	std::string mRootPath;
 	size_t mUsedNodes{ 0 };
+	IdentityTable<size_t> mIndexPositions;
+	std::vector<std::vector<const FileInfo*>> mIndexes;
+	size_t mIndexesUsed{ 0 };
+	size_t mIndexedEntries{ 0 };
+	size_t mIndexCapacity{ 0 };
+	std::string mLookupPath;
 
 	bool contains( const std::string& path ) const {
 		const size_t length = directoryLength( *mRoot );
 		return directoryLength( path ) > length && path[length] == FileSystem::getOSSlash() &&
 			   path.compare( 0, length, *mRoot, 0, length ) == 0;
+	}
+
+	void move( const FileInfo& info, const std::string& from, bool stableSource ) {
+		const int node = find( from, directoryLength( from ), false );
+		if ( node <= 0 ) {
+			if ( stableSource ) {
+				erase( from );
+			}
+			add( info );
+			return;
+		}
+		const Slot old{ mNodes[node].Parent, mNodes[node].Name };
+		mSlots.find( old )->second = Removed;
+		mNodes[node].Present = false;
+		if ( contains( info.Filepath ) ) {
+			place( node, info );
+		}
 	}
 
 	int find( const std::string& path, size_t end, bool create ) {
@@ -1631,6 +1816,34 @@ FileActionBatch::Scratch::Scratch() = default;
 FileActionBatch::Scratch::~Scratch() = default;
 FileActionBatch::Scratch::Scratch( Scratch&& ) = default;
 FileActionBatch::Scratch& FileActionBatch::Scratch::operator=( Scratch&& ) = default;
+
+const std::vector<const FileInfo*>*
+FileActionBatch::indexedSourceTree( const FileIdentity& identity ) {
+	auto tree = mSourceTrees.find( identity );
+	if ( tree == mSourceTrees.end() ) {
+		return NULL;
+	}
+	if ( !mScratch.PriorSource ) {
+		mScratch.PriorSource.reset( new SourceHistory );
+	}
+	return &mScratch.PriorSource->index( identity, tree->second );
+}
+
+const FileInfo* FileActionBatch::sourceEntryAt( const FileIdentity& identity,
+												const std::string& sourceRoot,
+												const std::string& destinationRoot,
+												const std::string& destinationPath ) {
+	const std::vector<const FileInfo*>* entries = indexedSourceTree( identity );
+	return entries ? mScratch.PriorSource->entryAt( *entries, sourceRoot, destinationRoot,
+													destinationPath )
+				   : NULL;
+}
+
+void FileActionBatch::resetSourceIndex() {
+	if ( mScratch.PriorSource ) {
+		mScratch.PriorSource->resetIndex();
+	}
+}
 
 /// Orders the changes that turn the tree before a directory move, as its Moved event leaves it
 /// at the destination, into the tree the destination found, so that a listener can apply them
@@ -1982,24 +2195,6 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 	if ( moves.Reconciled.empty() )
 		return;
 	const std::unordered_map<std::string, FileIdentity> roots = evidenceRoots();
-	// The evidence of a tree by path, built once for the directories that left it.
-	std::unordered_map<FileIdentity, std::vector<const FileInfo*>, FileIdentityHash> indexes;
-	auto indexedEvidence =
-		[&indexes]( const std::unordered_map<FileIdentity, std::vector<FileInfoList>,
-											 FileIdentityHash>::const_iterator& tree )
-		-> const std::vector<const FileInfo*>& {
-		auto found = indexes.find( tree->first );
-		if ( found != indexes.end() )
-			return found->second;
-		std::vector<const FileInfo*>& index = indexes[tree->first];
-		for ( const FileInfoList& list : tree->second )
-			for ( const FileInfo& entry : list )
-				index.push_back( &entry );
-		std::sort( index.begin(), index.end(), []( const FileInfo* a, const FileInfo* b ) {
-			return a->Filepath < b->Filepath;
-		} );
-		return index;
-	};
 	// The entries that are halves of moves of their own. An identity may have passed through
 	// another registration before reaching a tree's snapshot: only the paths actually reported
 	// by its own move are excluded from the comparison.
@@ -2018,19 +2213,23 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		const std::string& destination = mEvents[move].Info.Filepath;
 		sourceRoots[source.substr( 0, directoryLength( source ) )] = move;
 		destinationRoots[destination.substr( 0, directoryLength( destination ) )] = move;
-		lastComparedMove = std::max( lastComparedMove, move );
+		lastComparedMove = std::max( lastComparedMove, moves.SourceOf[move] );
 	}
 	// Most comparisons have no earlier source arrival. Do not allocate history storage or
 	// rebuild source state for those passes. Index relevant callbacks once, not per tree.
-	// Later events cannot update a source before its move: they must not pay path lookups.
+	// Source order matters even when the destination was scanned first: stop at the last
+	// departure, not the last arrival. Later events must not pay path lookups.
 	SourceHistory* history = NULL;
+	std::vector<size_t>& arrivedBefore = mScratch.Remapped;
+	arrivedBefore.clear();
 	for ( size_t i = 0; i < lastComparedMove; ++i ) {
 		const Event& event = mEvents[i];
-		if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+		if ( ( moves.MoveOf[i] != Moves::None && moves.MoveOf[i] != i ) || event.Canceled ||
+			 event.Superseded ||
 			 ( event.ActionType != Actions::Add && event.ActionType != Actions::Moved ) )
 			continue;
 		const size_t source = enclosingRoot( sourceRoots, event.Info.Filepath, Moves::None );
-		if ( source != Moves::None && i < source &&
+		if ( source != Moves::None && i < moves.SourceOf[source] &&
 			 event.Owner == mEvents[moves.SourceOf[source]].Owner ) {
 			if ( !mScratch.PriorSource )
 				mScratch.PriorSource.reset( new SourceHistory );
@@ -2047,11 +2246,12 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 		priorSources.assign( mEvents.size(), false );
 		for ( size_t i = 0; i < lastComparedMove; ++i ) {
 			const Event& event = mEvents[i];
-			if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+			if ( ( moves.MoveOf[i] != Moves::None && moves.MoveOf[i] != i ) || event.Canceled ||
+				 event.Superseded ||
 				 ( event.ActionType != Actions::Add && event.ActionType != Actions::Moved ) )
 				continue;
 			const size_t source = sources.of( event.Info.Filepath );
-			if ( source != Moves::None && i < source &&
+			if ( source != Moves::None && i < moves.SourceOf[source] &&
 				 event.Owner == mEvents[moves.SourceOf[source]].Owner )
 				priorSources[source] = true;
 		}
@@ -2059,32 +2259,95 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 			const Event& event = mEvents[i];
 			const size_t claimed = moves.MoveOf[i];
 			if ( event.ActionType == Actions::Delete && claimed != Moves::None &&
-				 priorSources[claimed] && i < claimed && i < moves.SourceOf[claimed] &&
+				 priorSources[claimed] && i < moves.SourceOf[claimed] &&
 				 event.Owner == mEvents[moves.SourceOf[claimed]].Owner ) {
 				// A source change collected before the parent's own departure must precede
 				// later source Adds too. Do not hide that Delete in the parent's comparison.
 				moves.MoveOf[i] = Moves::None;
 			}
-			if ( moves.MoveOf[i] != Moves::None || event.Canceled || event.Superseded ||
+			if ( ( moves.MoveOf[i] != Moves::None && moves.MoveOf[i] != i ) || event.Canceled ||
+				 event.Superseded ||
 				 ( event.ActionType != Actions::Add && event.ActionType != Actions::Delete &&
 				   event.ActionType != Actions::Moved ) )
 				continue;
-			auto index = [&]( const std::string& path, size_t already ) {
+			auto index = [&]( const std::string& path, Watcher* owner, size_t already ) {
 				const size_t source = sources.of( path );
 				if ( source != already && source != Moves::None && priorSources[source] &&
-					 i < source && event.Owner == mEvents[moves.SourceOf[source]].Owner ) {
+					 i < moves.SourceOf[source] &&
+					 owner == mEvents[moves.SourceOf[source]].Owner ) {
 					history->Events.append( source, i );
+					return source;
 				}
-				return source;
+				return Moves::None;
 			};
-			const size_t at = index( event.Info.Filepath, Moves::None );
-			if ( event.ActionType == Actions::Moved && !event.OldFilename.empty() ) {
+			const size_t at = index( event.Info.Filepath, event.Owner, Moves::None );
+			if ( moves.MoveOf[i] == i ) {
+				if ( at != Moves::None ) {
+					if ( arrivedBefore.empty() ) {
+						arrivedBefore.assign( mEvents.size(), Moves::None );
+					}
+					arrivedBefore[i] = at;
+				}
+				const Event& source = mEvents[moves.SourceOf[i]];
+				index( source.Info.Filepath, source.Owner, at );
+			} else if ( event.ActionType == Actions::Moved && !event.OldFilename.empty() ) {
 				const std::string from =
 					event.OldFilename[0] == FileSystem::getOSSlash()
 						? event.OldFilename
 						: FileSystem::pathRemoveFileName( event.Info.Filepath ) + event.OldFilename;
-				index( from, at );
+				index( from, event.Owner, at );
 			}
+		}
+		// The changes reported by a child move are part of the source state seen by a
+		// later parent move. Plan those child comparisons first, in dependency order.
+		priorSources.assign( mEvents.size(), false );
+		for ( size_t move : moves.Reconciled ) {
+			priorSources[move] = true;
+		}
+		bool hasDependencies = false;
+		std::vector<size_t>& remaining = mScratch.After;
+		ListsByPosition<size_t>& parents = mScratch.Skipped;
+		for ( size_t move : moves.Reconciled ) {
+			history->Events.forEach( move, [&]( size_t child ) {
+				if ( arrivedBefore.empty() || arrivedBefore[child] != move || !priorSources[child] ) {
+					return;
+				}
+				if ( !hasDependencies ) {
+					remaining.assign( mEvents.size(), 0 );
+					parents.reset( mEvents.size() );
+					hasDependencies = true;
+				}
+				remaining[move]++;
+				parents.append( child, move );
+			} );
+		}
+		if ( hasDependencies ) {
+			std::vector<size_t>& ready = mScratch.Stack;
+			std::vector<size_t>& order = mScratch.Order;
+			ready.clear();
+			order.clear();
+			for ( size_t move : moves.Reconciled ) {
+				if ( remaining[move] == 0 ) {
+					ready.push_back( move );
+				}
+			}
+			for ( size_t next = 0; next < ready.size(); ++next ) {
+				const size_t move = ready[next];
+				order.push_back( move );
+				parents.forEach( move, [&]( size_t parent ) {
+					if ( --remaining[parent] == 0 ) {
+						ready.push_back( parent );
+					}
+				} );
+			}
+			// Cyclic source histories are broken conservatively during delivery. Keep
+			// their original planning order; no uncomputed child's changes are imported.
+			for ( size_t move : moves.Reconciled ) {
+				if ( remaining[move] != 0 ) {
+					order.push_back( move );
+				}
+			}
+			moves.Reconciled.assign( order.begin(), order.end() );
 		}
 	}
 	// The tree whose root contains the path, if any.
@@ -2145,9 +2408,16 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 	// The Deletes each compared move claimed, found once.
 	std::unordered_map<size_t, std::vector<size_t>> claimed;
 	{
-		std::vector<bool> compared( mEvents.size(), false );
-		for ( size_t move : moves.Reconciled )
+		std::vector<bool>& compared = mScratch.Converted;
+		compared.assign( mEvents.size(), false );
+		for ( size_t move : moves.Reconciled ) {
 			compared[move] = true;
+		}
+		for ( size_t i = 0; i < arrivedBefore.size(); ++i ) {
+			if ( arrivedBefore[i] != Moves::None && mEvents[i].Info.isDirectory() ) {
+				compared[i] = true;
+			}
+		}
 		for ( size_t i = 0; i < mEvents.size(); i++ ) {
 			const size_t move = moves.MoveOf[i];
 			if ( mEvents[i].ActionType == Actions::Delete && Moves::None != move &&
@@ -2188,6 +2458,11 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 			if ( own == movedOnTheirOwn.end() ||
 				 entry.isDirectory() != mEvents[own->second].Info.isDirectory() )
 				return false;
+			if ( !arrivedBefore.empty() && arrivedBefore[own->second] == move ) {
+				// Already delivered into this source: the parent carries it, and its own
+				// contents remain part of the parent's comparison at both ends.
+				return false;
+			}
 			const size_t length = directoryLength( entry.Filepath );
 			auto matches = [&]( const std::string& path ) {
 				const size_t end = directoryLength( path );
@@ -2263,7 +2538,7 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				for ( const FileInfo& entry : list )
 					addBefore( entry );
 		} else {
-			const std::vector<const FileInfo*>& index = indexedEvidence( tree );
+			const std::vector<const FileInfo*>& index = *indexedSourceTree( tree->first );
 			const std::string below =
 				sourceRoot.substr( 0, before.RootLength ) + FileSystem::getOSSlash();
 			for ( auto entry =
@@ -2309,8 +2584,43 @@ void FileActionBatch::reconcileTrees( Moves& moves ) {
 				before.indexPaths();
 				after.indexPaths();
 				history->reset( sourceRoot );
-				history->Events.forEach(
-					move, [&]( size_t position ) { history->apply( mEvents[position] ); } );
+				history->Events.forEach( move, [&]( size_t position ) {
+					if ( moves.MoveOf[position] != position ) {
+						history->apply( mEvents[position] );
+						return;
+					}
+					const Event& arrived = mEvents[position];
+					const Event& from = mEvents[moves.SourceOf[position]];
+					history->applyMove( arrived.Info, from.Info.Filepath );
+					if ( !arrived.Info.isDirectory() ||
+						 !inside( arrived.Info, sourceRoot, before.RootLength ) ) {
+						return;
+					}
+					FileIdentity identity = from.Info.identity();
+					const std::vector<const FileInfo*>* contents = indexedSourceTree( identity );
+					if ( !contents ) {
+						identity = enclosingRoot( roots, from.Info.Filepath, FileIdentity( 0, 0 ) );
+						contents = indexedSourceTree( identity );
+					}
+					if ( contents ) {
+						history->mergeTree( from.Info.Filepath, arrived.Info.Filepath, *contents,
+											mScratch.RenamedAtHold, true );
+					}
+					auto claimedChild = claimed.find( position );
+					if ( claimedChild != claimed.end() ) {
+						std::vector<const FileInfo*>& entries = mScratch.Arrived;
+						entries.clear();
+						for ( size_t child : claimedChild->second ) {
+							entries.push_back( &mEvents[child].Info );
+						}
+						history->mergeTree( from.Info.Filepath, arrived.Info.Filepath, entries,
+											mScratch.RenamedAtHold );
+					}
+					auto changes = moves.Followers.find( position );
+					if ( changes != moves.Followers.end() ) {
+						history->apply( changes->second, mScratch.RenamedAtHold );
+					}
+				} );
 				std::vector<const FileInfo*>& known = mScratch.Arrived;
 				history->collect( before, after, known, mScratch.RenamedAtHold );
 				before.ById.erase( std::remove_if( before.ById.begin(), before.ById.end(),
@@ -2879,18 +3189,8 @@ void FileActionBatch::deliver( FileWatchListener* listener, const Moves* moves )
 								change.Entry->Filepath.substr(
 									0, directoryLength( change.Entry->Filepath ) ) +
 								FileSystem::getOSSlash() );
-						// Where the directory's Moved event put an entry of the source.
-						auto rebased = [&changes]( const FileInfo* entry ) {
-							return changes.DestinationRoot +
-								   entry->Filepath.substr( changes.SourceLength );
-						};
-						const std::string path = !change.Path.empty() ? change.Path
-												 : Actions::Delete == change.ActionType
-													 ? rebased( change.Entry )
-													 : change.Entry->Filepath;
-						const std::string oldPath = !change.OldPath.empty() || NULL == change.Source
-														? change.OldPath
-														: rebased( change.Source );
+						const std::string path = changes.pathFor( change );
+						const std::string oldPath = changes.oldPathFor( change );
 						target->handleFileAction(
 							destination.Watch, FileSystem::pathRemoveFileName( path ),
 							FileSystem::fileNameFromPath( path ), change.ActionType, oldPath );

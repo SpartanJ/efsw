@@ -304,6 +304,10 @@ class FileActionBatch {
 		/// The length of the directory's path at the source, without a final separator.
 		size_t SourceLength;
 		std::vector<TreeChange> Changes;
+
+		std::string pathFor( const TreeChange& change ) const;
+
+		std::string oldPathFor( const TreeChange& change ) const;
 	};
 
 	/// The moves found in the batch, by position.
@@ -445,6 +449,15 @@ class FileActionBatch {
 	/// evidence, with their identities: a directory inside one has evidence of its own tree, the
 	/// part below it.
 	std::unordered_map<std::string, FileIdentity> evidenceRoots() const;
+
+	/// Source evidence sorted by path, cached until its snapshot lists change.
+	const std::vector<const FileInfo*>* indexedSourceTree( const FileIdentity& identity );
+
+	const FileInfo* sourceEntryAt( const FileIdentity& identity, const std::string& sourceRoot,
+								   const std::string& destinationRoot,
+								   const std::string& destinationPath );
+
+	void resetSourceIndex();
 
 	/// Delivers the events, as Moved events for moves when given. Clears the batch.
 	void deliver( FileWatchListener* listener, const Moves* moves );

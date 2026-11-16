@@ -2162,6 +2162,179 @@ efsw::FileIdentity id( unsigned long inode ) {
 
 enum class RemovalBeforeChildDelete { None, Source, Destination };
 
+// Seed 146: a child arrives before its parent leaves. Its move already carried its tree,
+// even when its new native snapshot is missing when the parent is compared.
+void checkChildArrivalBeforeParentMove(
+	bool earlierPass, const std::array<int, 3>& order, int* utest_result, int variant = 0,
+	RemovalBeforeChildDelete removal = RemovalBeforeChildDelete::None ) {
+	efsw::FileActionBatch batch;
+	struct Listener : PathListener {
+		efsw::FileActionBatch* Batch;
+		efsw::Watcher* Remove{ NULL };
+		bool Removed{ false };
+		int CallsAfterRemoval{ 0 };
+
+		void handleFileAction( efsw::WatchID id, const std::string& directory,
+							   const std::string& filename, efsw::Action action,
+							   const std::string& old ) override {
+			if ( Removed && id == Remove->ID ) {
+				CallsAfterRemoval++;
+			}
+			PathListener::handleFileAction( id, directory, filename, action, old );
+			if ( Remove && !Removed && action == efsw::Actions::Moved && filename == "child" ) {
+				Removed = true;
+				Batch->forget( Remove );
+			}
+		}
+	} listener;
+	listener.Batch = &batch;
+	FakeWatch origin( 1, batch, &listener ), parent( 2, batch, &listener ),
+		destination( 3, batch, &listener );
+	listener.Remove = removal == RemovalBeforeChildDelete::Source		 ? &parent
+					  : removal == RemovalBeforeChildDelete::Destination ? &destination
+																		 : NULL;
+	const std::vector<FakeWatch*> watches{ &origin, &parent, &destination };
+	const std::vector<FakeWatch*> scans{ watches[order[0]], watches[order[1]], watches[order[2]] };
+	const auto outer = synthetic( at( { "middle", "parent" } ), id( 1 ), true );
+	const auto child = synthetic( at( { "origin", "child" } ), id( 2 ), true );
+	const auto leaf = synthetic( child.Filepath + at( { "file" } ), id( 3 ), false );
+	const auto gone = synthetic( child.Filepath + at( { "gone" } ), id( 4 ), false );
+	const auto added = synthetic( child.Filepath + at( { "new" } ), id( 5 ), false );
+	const auto later = synthetic( child.Filepath + at( { "later" } ), id( 6 ), false );
+	const auto arrived = at( child, at( { "middle", "parent", "child" } ) );
+	const auto moved = at( child, at( { "destination", "parent", "child" } ) );
+	auto priorEntry = child;
+	if ( variant == 4 ) {
+		priorEntry.Permissions = 0100644;
+	}
+	parent.report( at( { "middle", "parent" } ) + ReplayTree::slash(), "child", efsw::Actions::Add,
+				   priorEntry );
+	if ( earlierPass ) {
+		runPass( batch, scans );
+		ASSERT_EQ( 1u, listener.Events.size() );
+	}
+	origin.report( at( { "origin" } ) + ReplayTree::slash(), "child", efsw::Actions::Delete,
+				   child );
+	efsw::FileInfoList contents;
+	if ( !earlierPass ) {
+		contents.push_back( leaf );
+		if ( variant != 0 ) {
+			contents.push_back( gone );
+		}
+	}
+	if ( variant == 2 ) {
+		// Generic fallback children may have emptied their snapshots into collected Deletes.
+		for ( const auto& entry : contents ) {
+			origin.report( efsw::FileSystem::pathRemoveFileName( entry.Filepath ),
+						   efsw::FileSystem::fileNameFromPath( entry.Filepath ),
+						   efsw::Actions::Delete, entry );
+		}
+		origin.GiveUp.emplace_back( child, std::vector<efsw::FileInfoList>{ {} } );
+	} else if ( variant == 5 ) {
+		// Native children can inherit their evidence from one enclosing tree. Its sorted
+		// range includes a slash-terminated child root, but must exclude prefix siblings.
+		contents.push_back( at( child, child.Filepath + ReplayTree::slash() ) );
+		contents.push_back( synthetic( at( { "origin", "child-x" } ), id( 31 ), true ) );
+		contents.push_back( synthetic( at( { "origin", "child.txt" } ), id( 32 ), false ) );
+		const auto sourceRoot = synthetic( at( { "origin" } ), id( 30 ), true );
+		origin.report( ReplayTree::slash(), "origin", efsw::Actions::Delete, sourceRoot );
+		origin.GiveUp.emplace_back( sourceRoot, std::vector<efsw::FileInfoList>{ contents } );
+	} else {
+		origin.GiveUp.emplace_back( child, std::vector<efsw::FileInfoList>{ contents } );
+	}
+	if ( variant != 3 ) {
+		parent.MissingTrees.insert( arrived.Filepath );
+	} else {
+		// This child has a comparison of its own. Its reported changes precede the
+		// parent's move, and only the later file is new to the parent's comparison.
+		parent.Tree = { at( leaf, arrived.Filepath + at( { "renamed" } ) ),
+						at( added, arrived.Filepath + at( { "new" } ) ) };
+	}
+	parent.report( at( { "middle" } ) + ReplayTree::slash(), "parent", efsw::Actions::Delete,
+				   outer );
+	parent.GiveUp.emplace_back(
+		outer, std::vector<efsw::FileInfoList>{ { at( priorEntry, arrived.Filepath ) } } );
+	destination.Tree = { moved };
+	if ( !earlierPass ) {
+		destination.Tree.push_back(
+			at( leaf, moved.Filepath + at( { variant == 0 ? "file" : "renamed" } ) ) );
+		if ( variant != 0 ) {
+			destination.Tree.push_back( at( added, moved.Filepath + at( { "new" } ) ) );
+		}
+		if ( variant == 3 ) {
+			destination.Tree.push_back( at( later, moved.Filepath + at( { "later" } ) ) );
+		}
+	}
+	destination.report( at( { "destination" } ) + ReplayTree::slash(), "parent", efsw::Actions::Add,
+						outer );
+	if ( earlierPass ) {
+		destination.report(
+			moved.Filepath.substr( 0, moved.Filepath.rfind( ReplayTree::slash() ) + 1 ), "child",
+			efsw::Actions::Add, child );
+	}
+	runPass( batch, scans );
+	runPass( batch, scans );
+	ReplayTree replay;
+	for ( const auto& root : { at( { "origin" } ), at( { "middle" } ), at( { "destination" } ) } )
+		replay.Entries[root] = Unknown;
+	replay.Entries[outer.Filepath] = outer.identity();
+	replay.Entries[child.Filepath] = child.identity();
+	if ( !earlierPass ) {
+		replay.Entries[leaf.Filepath] = leaf.identity();
+		if ( variant != 0 ) {
+			replay.Entries[gone.Filepath] = gone.identity();
+		}
+	}
+	if ( variant == 5 ) {
+		replay.Entries[at( { "origin", "child-x" } )] = id( 31 );
+		replay.Entries[at( { "origin", "child.txt" } )] = id( 32 );
+	}
+	std::string problem;
+	for ( const auto& event : listener.Events ) {
+		problem = replay.apply( event );
+		if ( !problem.empty() ) {
+			break;
+		}
+	}
+	if ( !problem.empty() ) {
+		printf( "earlier pass=%d variant=%d scan=%d%d%d: %s\n", earlierPass, variant, order[0],
+				order[1], order[2], problem.c_str() );
+		for ( const auto& event : listener.Events ) {
+			printf( "  %d %s <- %s\n", static_cast<int>( event.Action ), event.Path.c_str(),
+					event.OldPath.c_str() );
+		}
+	}
+	EXPECT_STREQ( "", problem.c_str() );
+	EXPECT_EQ( 0, listener.CallsAfterRemoval );
+	if ( removal == RemovalBeforeChildDelete::Destination ) {
+		EXPECT_TRUE( listener.Removed );
+		EXPECT_EQ( 2u, listener.Events.size() );
+		EXPECT_EQ( 3u, replay.Entries.size() );
+		return;
+	}
+	if ( removal == RemovalBeforeChildDelete::Source ) {
+		EXPECT_TRUE( listener.Removed );
+	}
+	if ( !earlierPass ) {
+		EXPECT_EQ( variant == 0 ? 2u : variant == 3 || variant == 5 ? 6u : 5u,
+				   listener.Events.size() );
+		for ( const auto& entry : destination.Tree ) {
+			EXPECT_EQ( 1u, replay.Entries.count( entry.Filepath ) );
+		}
+		EXPECT_EQ( destination.Tree.size() + ( variant == 5 ? 3u : 4u ), replay.Entries.size() );
+	} else {
+		// The earlier directory Add already reported its root. Its delayed source Delete
+		// must not become a move onto the root that the parent just carried.
+		bool childMoved = false;
+		for ( const auto& event : listener.Events ) {
+			childMoved |= event.Action == efsw::Actions::Moved && event.Path == moved.Filepath;
+		}
+		EXPECT_EQ( variant == 4, childMoved );
+		EXPECT_EQ( variant == 4 ? 4u : 3u, listener.Events.size() );
+		EXPECT_EQ( 5u, replay.Entries.size() );
+	}
+}
+
 // Seed 146, round 3: discovery reports descendants before their parent moves, but the
 // parent's source snapshots are incomplete. Those earlier Adds are already known to the
 // listener and must not be synthesized again at the parent's destination.
@@ -2344,6 +2517,71 @@ void checkReleasedChildDelete( bool queuedMove, RemovalBeforeChildDelete removal
 }
 
 } // namespace
+
+UTEST( FileActionBatch, EarlierChildMoveCarriesItsContentsThroughAParentMove ) {
+	std::array<int, 3> order{ { 0, 1, 2 } };
+	do {
+		checkChildArrivalBeforeParentMove( false, order, utest_result );
+	} while ( std::next_permutation( order.begin(), order.end() ) );
+}
+
+UTEST( FileActionBatch, DelayedSourceDoesNotMoveOntoAnArrivalCarriedByItsParent ) {
+	std::array<int, 3> order{ { 0, 1, 2 } };
+	do {
+		checkChildArrivalBeforeParentMove( true, order, utest_result );
+	} while ( std::next_permutation( order.begin(), order.end() ) );
+}
+
+UTEST( FileActionBatch, AnEntryOfAnotherKindDoesNotHideAChildMove ) {
+	std::array<int, 3> order{ { 0, 1, 2 } };
+	do {
+		checkChildArrivalBeforeParentMove( true, order, utest_result, 4 );
+	} while ( std::next_permutation( order.begin(), order.end() ) );
+}
+
+UTEST( FileActionBatch, EarlierChildMovePreservesChangesInsideItsTree ) {
+	for ( int variant : { 1, 2, 3, 5 } ) {
+		std::array<int, 3> order{ { 0, 1, 2 } };
+		do {
+			checkChildArrivalBeforeParentMove( false, order, utest_result, variant );
+		} while ( std::next_permutation( order.begin(), order.end() ) );
+	}
+}
+
+UTEST( FileActionBatch, RemovalDuringAChildMoveCancelsItsParentsPendingEvents ) {
+	for ( auto removal :
+		  { RemovalBeforeChildDelete::Source, RemovalBeforeChildDelete::Destination } ) {
+		std::array<int, 3> order{ { 0, 1, 2 } };
+		do {
+			checkChildArrivalBeforeParentMove( false, order, utest_result, 0, removal );
+		} while ( std::next_permutation( order.begin(), order.end() ) );
+	}
+}
+
+UTEST( FileActionBatch, SourceEvidenceIndexHandlesSeparatorsAndReplacement ) {
+	struct Batch : efsw::FileActionBatch {
+		using efsw::FileActionBatch::sourceEntryAt;
+	} batch;
+	const auto parent = synthetic( at( { "src", "parent" } ), id( 1 ), true );
+	auto child =
+		synthetic( parent.Filepath + at( { "child" } ) + ReplayTree::slash(), id( 2 ), true );
+	batch.addSourceTree(
+		parent, { { child, synthetic( parent.Filepath + at( { "child-x" } ), id( 3 ), true ),
+					synthetic( parent.Filepath + at( { "child.txt" } ), id( 4 ), false ) } } );
+	const auto destination = at( { "dst", "parent" } );
+	const auto path = destination + at( { "child" } );
+	const auto* found =
+		batch.sourceEntryAt( parent.identity(), parent.Filepath, destination, path );
+	ASSERT_NE( nullptr, found );
+	EXPECT_TRUE( found->identity() == child.identity() );
+	child.Inode = 5;
+	batch.addSourceTree( parent, { { child } } );
+	found = batch.sourceEntryAt( parent.identity(), parent.Filepath, destination, path );
+	ASSERT_NE( nullptr, found );
+	EXPECT_TRUE( found->identity() == child.identity() );
+	EXPECT_EQ( nullptr, batch.sourceEntryAt( parent.identity(), parent.Filepath, destination,
+											 at( { "dst", "parent2", "child" } ) ) );
+}
 
 UTEST( FileActionBatch, ArrivalsBeforeMovingAParentAreNotReportedAgain ) {
 	for ( int scenario = 0; scenario < 7; ++scenario )

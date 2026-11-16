@@ -1687,6 +1687,81 @@ UTEST( CrossWatchMoves, KqueueSourceArrivalsBeforeItsParentMovesAreReportedOnce 
 	EXPECT_EQ( 3u, structural );
 }
 
+// Use native source discovery and a real generic destination snapshot, as under descriptor
+// pressure. Queue the destination's root arrival explicitly after snapshot initialization:
+// the regression is a matched child move, not a second discovery Add for that same child.
+UTEST( CrossWatchMoves, KqueueChildMoveCarriesItsTreeThroughAParentMove ) {
+	for ( bool changes : { false, true } ) {
+		HeldChildTree tree;
+		ASSERT_TRUE( tree.create() );
+		ASSERT_TRUE( createDirectory( tree.path( "dst/parent" ) ) );
+		ReportedPaths paths( tree.Root );
+		auto model = paths.list( { tree.path( "src" ), tree.path( "dst" ), tree.path( "other" ) } );
+		ReplayListener listener;
+		efsw::FileWatcher owner( true );
+		ExhaustibleKqueue backend( &owner, 100 );
+		efsw::FileActionBatch batch;
+		FallbackKqueueWatch origin( 1, tree.path( "src/" ), &listener, true, &backend, NULL, true );
+		FallbackKqueueWatch middle( 2, tree.path( "dst/" ), &listener, true, &backend, NULL, true );
+		origin.SharedActionBatch = middle.SharedActionBatch = &batch;
+		origin.addAll();
+		middle.addAll();
+		ASSERT_TRUE( origin.initOK() && middle.initOK() );
+		auto* parent = middle.nativeChild( tree.path( "dst/parent" ) );
+		ASSERT_NE( nullptr, parent );
+		ASSERT_TRUE( renameFile( tree.path( "src/outer" ), tree.path( "dst/parent/child" ) ) );
+		ASSERT_GT( parent->addWatch( tree.path( "dst/parent/child" ), &listener, true, parent ),
+				   0 );
+		batch.beginPass();
+		middle.reportArrivalsWithIncompleteSnapshots( parent );
+		batch.scanned( &middle );
+		ASSERT_TRUE( renameFile( tree.path( "dst/parent" ), tree.path( "other/parent" ) ) );
+		if ( changes ) {
+			ASSERT_TRUE( renameFile( tree.path( "other/parent/child/inner/file" ),
+									 tree.path( "other/parent/child/inner/renamed" ) ) );
+			ASSERT_TRUE( createFile( tree.path( "other/parent/child/inner/new" ), "x" ) );
+		}
+		efsw::WatcherGeneric destination( 3, tree.path( "other/" ), &listener, &backend, true,
+										  true );
+		destination.SharedActionBatch = &batch;
+		batch.add( destination.ID, destination.Directory, "parent", efsw::Actions::Add, "",
+				   efsw::FileInfo( tree.path( "other/parent" ) ), &listener, &destination );
+		batch.scanned( &destination );
+		auto scan = [&]( efsw::Watcher& watch ) {
+			watch.watch();
+			batch.scanned( &watch );
+		};
+		for ( int pass = 0; pass < 3; ++pass ) {
+			if ( pass != 0 ) {
+				batch.beginPass();
+			}
+			scan( origin );
+			scan( middle );
+			scan( destination );
+			batch.finishPass();
+		}
+		for ( auto& event : listener.Events ) {
+			event.Path = paths( event.Path );
+			event.OldPath = paths( event.OldPath );
+		}
+		const std::string problem = replay( model, listener.Events );
+		size_t structural = 0;
+		for ( const auto& event : listener.Events ) {
+			structural += event.Action != efsw::Actions::Modified;
+		}
+		if ( !problem.empty() || structural != ( changes ? 4u : 2u ) ) {
+			for ( const auto& event : listener.Events ) {
+				printf( "  %d %s <- %s\n", static_cast<int>( event.Action ), event.Path.c_str(),
+						event.OldPath.c_str() );
+			}
+		}
+		EXPECT_STREQ( "", problem.c_str() );
+		EXPECT_TRUE( model == paths.list( { tree.path( "src" ), tree.path( "dst" ),
+											tree.path( "other" ) } ) );
+		EXPECT_EQ( changes ? 4u : 2u, structural );
+	}
+}
+
 UTEST( CrossWatchMoves, KqueueHeldChildDeleteBeforeMovingItsParent ) {
 	HeldChildTree tree;
 	ASSERT_TRUE( tree.create() );
