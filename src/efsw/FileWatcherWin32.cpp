@@ -324,9 +324,12 @@ void FileWatcherWin32::holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD ac
 				} else {
 					std::string folder = FileSystem::pathRemoveFileName( destinationPath );
 					FileSystem::dirAddSlashAtEnd( folder );
-					// Flushing the older halves may have run a listener that removed it.
-					if ( destination->StopNow )
+					// Flushing may remove the destination after the match was consumed. The
+					// surviving source still needs its Delete; handleAction skips it if stopped.
+					if ( destination->StopNow ) {
+						handleAction( source, sourceName, FILE_ACTION_REMOVED );
 						return;
+					}
 					destination->Listener->handleFileAction(
 						destination->ID, folder, FileSystem::fileNameFromPath( destinationPath ),
 						Actions::Moved, FileSystem::canonicalSourcePath( sourcePath ) );
