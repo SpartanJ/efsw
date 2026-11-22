@@ -23,6 +23,16 @@ UTEST( LocalVsCrossMove, CompareSameDirVsCrossDir ) {
 	EXPECT_TRUE( watchId1 > 0 );
 	EXPECT_TRUE( watchId2 > 0 );
 
+#if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+	if ( !useGeneric ) {
+		// FSEvents creates its stream in watch(), starting at SinceNow. A rename before
+		// that point is not guaranteed to be observed. Confirm both registrations first.
+		fileWatcher.watch();
+		ASSERT_TRUE( waitForPending( listener, watchedDir1 ) );
+		ASSERT_TRUE( waitForPending( listener, watchedDir2 ) );
+	}
+#endif
+
 	std::string fileRenamed = watchedDir1 + "/file_renamed.txt";
 	// Queue the complete local rename before reading inotify. Moved correlation
 	// is intentionally limited to one read batch so callbacks never need to be
