@@ -134,9 +134,9 @@ Community has been kind and contributed the recipes for different popular packag
   and `allowOutOfScopeLinks()`.
 * The generic watcher, kqueue, and FSEvents before macOS 10.7, whose events only name the changed
   directories, keep a cache of the watched directory trees to detect changes, which costs memory.
-* The generic watcher detects renames and moves by filesystem identity: device and inode on POSIX,
-  volume serial number and file index on Windows. Without a stable, unambiguous identity, it
-  reports `Delete` and `Add` events instead.
+* The generic watcher detects same-directory renames by filesystem identity: device and inode on
+  POSIX, volume serial number and file index on Windows. Without a stable, unambiguous identity,
+  it reports `Delete` and `Add` events instead.
 
 ### Linux (inotify)
 
@@ -153,8 +153,7 @@ Community has been kind and contributed the recipes for different popular packag
 * The native backend needs Windows 10 version 1709 or newer and NTFS for the extended file
   identifiers of `ReadDirectoryChangesExW`. Without them it falls back to `ReadDirectoryChangesW`:
   watching works, but cross-directory moves are reported as `Delete` and `Add`. The generic watcher
-  does not need `ReadDirectoryChangesExW`, and correlates moves on older Windows versions when the
-  filesystem gives stable volume and file identifiers.
+  does not need `ReadDirectoryChangesExW`, but ignores `ReportCrossDirectoryMoves`.
 
 ### macOS
 
@@ -177,34 +176,32 @@ Community has been kind and contributed the recipes for different popular packag
 Setting `Options::ReportCrossDirectoryMoves` reports a move between directories as one `Moved`
 event, whose `oldFilename` is the absolute source path. It works within a recursive watch, and
 between separately registered watches of one `FileWatcher` when both enable the option. It is
-best-effort, and supported by the inotify, Windows, FSEvents, kqueue and generic backends. Below,
-the polling backends are the generic watcher and kqueue.
+best-effort, and supported only by native inotify, Windows extended notifications and granular
+FSEvents (macOS 10.7 and later).
+
+The generic watcher and kqueue ignore this option entirely, both between separate registrations
+and between directories within one recursive watch. This also applies when generic polling is
+forced, selected as a fallback, or used by legacy directory-level FSEvents. Those paths retain
+their ordinary Add/Delete behavior for cross-directory moves. Same-directory renames can still
+produce `Moved` events independently of this option. Polling cross-directory correlation is
+deferred to the separate implementation branch.
 
 A move is still reported as `Delete` and/or `Add` when:
 
 * the option is not enabled on both watches;
 * it goes into or out of the watched directories;
 * its native event pair is incomplete, or its filesystem identity ambiguous;
-* on the polling backends, its halves are seen in different polling passes within one recursive
-  watch. Between two watches, a move that happens between their scans is still paired;
 * registrations are nested and a watch covers only one of its paths: that watch gets its half,
   while the watch covering both paths reports the move.
 
 A directory moved as a whole is reported by its own `Moved` event only: the entries inside it, whose
-paths relative to it are unchanged, are not reported individually. The polling backends correlate
-the changes their scans observe; they do not reconstruct edits made inside a directory while it
-moves between scans. Such concurrent edits may not all be reported. Monitoring continues at the
-destination, but applications needing a complete view of an arriving tree should rescan it.
+paths relative to it are unchanged, are not reported individually. Filesystem notifications are
+not an atomic history of concurrent edits; applications needing a complete view of an arriving
+tree should rescan it.
 
 To find the other half of a move, events can be delayed. The order of the events of one watch is
 kept, but events of watches with the option can be delivered after later events of other watches.
 
-* Polling backends, with the option: `Add` and `Delete` events wait until the end of the polling
-  pass. A `Delete` in a watch scanned after another watch with the option waits one more pass, with
-  the later events of its watch, including the moves into it, since that other watch may only see
-  the destination on its next scan. A complete move follows its destination's delivery, so its
-  source may wait with a destination held to a later pass. Polling notifications do not provide
-  an atomic history of changes across registrations.
 * Windows, with the option: `Add` and `Delete` events wait up to 100 ms.
 * inotify, with or without the option: the kernel queues the two halves of a rename one after the
   other, so efsw can read the source before its destination is queued. A batch of events holding a

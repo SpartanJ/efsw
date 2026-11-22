@@ -45,7 +45,7 @@ FileWatcherKqueue::~FileWatcherKqueue() {
 }
 
 WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
-									 bool recursive, const std::vector<WatcherOption>& options ) {
+									 bool recursive, const std::vector<WatcherOption>& /*options*/ ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -87,13 +87,11 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 	// half built.
 	/// Check first if are enough file descriptors available to create another kqueue watcher,
 	/// otherwise it creates a generic watcher
-	bool reportCrossDirectoryMoves =
-		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
+	// Ignore ReportCrossDirectoryMoves for both native kqueue and its generic fallbacks,
+	// including moves between directories of one recursive registration.
 	Watcher* added = NULL;
 	if ( availablesFD() ) {
-		WatcherKqueue* watch = new WatcherKqueue( id, dir, watcher, recursive, this, NULL,
-												  reportCrossDirectoryMoves );
-		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
+		WatcherKqueue* watch = new WatcherKqueue( id, dir, watcher, recursive, this );
 
 		watch->addAll();
 
@@ -105,9 +103,7 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
-				WatcherGeneric* genericWatch = new WatcherGeneric(
-					id, dir, watcher, this, recursive, reportCrossDirectoryMoves );
-				genericWatch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
+				WatcherGeneric* genericWatch = new WatcherGeneric( id, dir, watcher, this, recursive );
 				added = genericWatch;
 			} else {
 				return Errors::Log::createLastError( Errors::Unspecified, link );
@@ -119,9 +115,7 @@ WatchID FileWatcherKqueue::addWatch( const std::string& directory, FileWatchList
 		efDEBUG( "Using a generic watcher, file descriptor limit reached: %ld\n",
 				 mFileDescriptorCount.load() );
 
-		WatcherGeneric* watch = new WatcherGeneric( id, dir, watcher, this, recursive,
-													reportCrossDirectoryMoves );
-		watch->SharedActionBatch = sharedActionsFor( reportCrossDirectoryMoves );
+		WatcherGeneric* watch = new WatcherGeneric( id, dir, watcher, this, recursive );
 		added = watch;
 	}
 
@@ -163,12 +157,7 @@ void FileWatcherKqueue::removeWatch( WatchID watchid ) {
 	Watcher* watch = iter->second;
 
 	mWatches.erase( iter );
-	mSharedActions.forget( watch );
 	mRetiring.release( watch );
-}
-
-FileActionBatch* FileWatcherKqueue::sharedActionsFor( bool reportCrossDirectoryMoves ) {
-	return reportCrossDirectoryMoves && FileInfo::inodeSupported() ? &mSharedActions : NULL;
 }
 
 void FileWatcherKqueue::watch() {
@@ -183,18 +172,15 @@ void FileWatcherKqueue::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			// Events of opted-in watches are collected during the scans, and dispatched after.
+			// A callback can remove registrations while this pass is scanning them.
 			std::vector<Watcher*>& scanned = mRetiring.beginPass();
 			for ( const auto& entry : mWatches )
 				scanned.push_back( entry.second );
-			mSharedActions.beginPass();
 			for ( Watcher* watch : scanned ) {
 				if ( watch->Retired )
 					continue;
 				watch->watch();
-				mSharedActions.scanned( watch );
 			}
-			mSharedActions.finishPass();
 			mRetiring.endPass();
 		}
 

@@ -59,6 +59,15 @@ struct TwoWatches {
 		return ready;
 	}
 
+	/// Waits for a native move, or the ordinary polling Delete/Add pair.
+	bool waitForMove( const std::string& name ) {
+		if ( nativeCrossDirectoryMoves() ) {
+			return DestinationListener.waitForActions( efsw::Actions::Moved, name );
+		}
+		return SourceListener.waitForActions( efsw::Actions::Delete, name ) &&
+			   DestinationListener.waitForActions( efsw::Actions::Add, name );
+	}
+
 	/// Waits until both registrations delivered the events of the changes made so far.
 	bool waitForPending() {
 		return efsw_test::waitForPending( SourceListener, Source ) &&
@@ -87,8 +96,14 @@ bool reportsEveryCreate() {
 
 // A coalesced move must not also be reported through the Delete + Add fallback.
 void expectSingleMove( TwoWatches& watches, const std::string& name, int* utest_result ) {
-	EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, name ) );
-	EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, name ) );
+	if ( nativeCrossDirectoryMoves() ) {
+		EXPECT_EQ( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, name ) );
+		EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, name ) );
+	} else {
+		EXPECT_NE( -1, watches.SourceListener.indexOf( efsw::Actions::Delete, name ) );
+		EXPECT_NE( -1, watches.DestinationListener.indexOf( efsw::Actions::Add, name ) );
+		EXPECT_EQ( -1, watches.DestinationListener.indexOf( efsw::Actions::Moved, name ) );
+	}
 }
 
 } // namespace
@@ -184,9 +199,11 @@ UTEST( CrossWatchMoves, DirectoryMoveHandsSubtreeToDestination ) {
 	const std::string canonicalSource = efsw::FileSystem::getRealPath( watches.Source + "/sub" );
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
-	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
-	EXPECT_TRUE(
-		watches.DestinationListener.checkEvent( efsw::Actions::Moved, "sub", canonicalSource ) );
+	EXPECT_TRUE( watches.waitForMove( "sub" ) );
+	if ( nativeCrossDirectoryMoves() ) {
+		EXPECT_TRUE(
+			watches.DestinationListener.checkEvent( efsw::Actions::Moved, "sub", canonicalSource ) );
+	}
 	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
@@ -383,6 +400,9 @@ UTEST( CrossWatchMoves, WithoutTheOptionTreesAreNotCompared ) {
 // efsw-agent forwards a cross-watch Moved with an absolute old_path: the real event, converted
 // as the agent does, is absolute and names the source.
 UTEST( CrossWatchMoves, AgentKeepsAbsoluteSourceOfMoveFromAnotherWatch ) {
+	if ( !nativeCrossDirectoryMoves() ) {
+		UTEST_SKIP( "polling ignores ReportCrossDirectoryMoves" );
+	}
 	TwoWatches watches;
 	EXPECT_TRUE( createFile( watches.Source + "/agent.txt", "content" ) );
 	ASSERT_TRUE( watches.start( true, true ) );
@@ -444,7 +464,7 @@ UTEST( CrossWatchMoves, RemovingDestinationRemovesMovedSubtree ) {
 	ASSERT_TRUE( watches.start( true, true ) );
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
-	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( watches.waitForMove( "sub" ) );
 	EXPECT_TRUE( createFile( watches.Destination + "/sub/deep/before.txt", "x" ) );
 	EXPECT_TRUE(
 		watches.DestinationListener.waitForActions( efsw::Actions::Add, "before.txt" ) );
@@ -926,7 +946,7 @@ UTEST( CrossWatchMoves, DirectoryMoveFromNonRecursiveAddsCoverage ) {
 	ASSERT_TRUE( watches.start( false, true ) );
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
-	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( watches.waitForMove( "sub" ) );
 	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
@@ -942,7 +962,7 @@ UTEST( CrossWatchMoves, DirectoryMoveToNonRecursiveStopsSourceReports ) {
 	ASSERT_TRUE( watches.start( true, false ) );
 
 	EXPECT_TRUE( renameFile( watches.Source + "/sub", watches.Destination + "/sub" ) );
-	EXPECT_TRUE( watches.DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) );
+	EXPECT_TRUE( watches.waitForMove( "sub" ) );
 	EXPECT_TRUE( watches.waitForPending() );
 	expectSingleMove( watches, "sub", utest_result );
 
@@ -985,7 +1005,8 @@ UTEST( CrossWatchMoves, MoveIntoNewDirectoryFollowsItsAdd ) {
 	EXPECT_TRUE( watches.waitForPending() );
 
 	const int parent = watches.DestinationListener.indexOf( efsw::Actions::Add, "newparent" );
-	int moved = watches.DestinationListener.indexOf( efsw::Actions::Moved, "moved" );
+	int moved = watches.DestinationListener.indexOf(
+		nativeCrossDirectoryMoves() ? efsw::Actions::Moved : efsw::Actions::Add, "moved" );
 	if ( moved == -1 )
 		moved = watches.DestinationListener.indexOf( efsw::Actions::Add, "moved" );
 	if ( pollsSnapshots() )
@@ -1069,14 +1090,16 @@ struct NestedRegistrationMove {
 		// Windows refuses to rename a directory while a directory inside it is open.
 		if ( !renameFile( Source + "/sub", Destination + "/sub" ) )
 			return MoveRefused;
-		if ( !DestinationListener.waitForActions( efsw::Actions::Moved, "sub" ) )
+		if ( !DestinationListener.waitForActions(
+				 nativeCrossDirectoryMoves() ? efsw::Actions::Moved : efsw::Actions::Add, "sub" ) )
 			return Failed;
 		if ( !waitForPending( SourceListener, Source ) ||
 			 !waitForPending( DestinationListener, Destination ) )
 			return Failed;
 		// The move must be reported once, not also through the Delete + Add fallback.
-		if ( -1 != SourceListener.indexOf( efsw::Actions::Delete, "sub" ) ||
-			 -1 != DestinationListener.indexOf( efsw::Actions::Add, "sub" ) )
+		if ( nativeCrossDirectoryMoves() &&
+			 ( -1 != SourceListener.indexOf( efsw::Actions::Delete, "sub" ) ||
+			   -1 != DestinationListener.indexOf( efsw::Actions::Add, "sub" ) ) )
 			return Failed;
 		SourceListener.clearEvents();
 		NestedListener.clearEvents();

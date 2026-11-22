@@ -167,6 +167,8 @@ enum Option {
 	/// between their directories as one Moved event instead of Delete + Add. This also applies
 	/// within one recursive watch. oldFilename contains the absolute source path. Correlation
 	/// is best-effort when native events or stable file identity are unavailable.
+	/// Supported by native inotify, Windows and granular FSEvents only. Ignored by generic
+	/// polling, kqueue and polling fallbacks, including within a recursive watch.
 	ReportCrossDirectoryMoves = 6,
 };
 }

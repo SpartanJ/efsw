@@ -5,6 +5,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <efsw/efsw.hpp>
+#include <efsw/base.hpp>
+#if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+#include <efsw/FileWatcherFSEvents.hpp>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -224,6 +228,16 @@ struct MarkerWatch {
 };
 
 extern bool useGeneric;
+
+inline bool nativeCrossDirectoryMoves() {
+#if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
+	return !useGeneric && efsw::FileWatcherFSEvents::isGranular();
+#elif EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_WIN32
+	return !useGeneric;
+#else
+	return false;
+#endif
+}
 
 } // namespace efsw_test
 

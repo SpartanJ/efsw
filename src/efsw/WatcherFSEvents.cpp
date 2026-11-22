@@ -27,8 +27,8 @@ bool WatcherFSEvents::init() {
 		return false;
 
 	if ( !FileWatcherFSEvents::isGranular() ) {
-		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive,
-										 ReportCrossDirectoryMoves );
+		// Legacy directory-level FSEvents uses polling, which ignores cross-directory moves.
+		WatcherGen = new WatcherGeneric( ID, Directory, Listener, FWatcher.load(), Recursive );
 	}
 
 	return true;

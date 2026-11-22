@@ -214,13 +214,16 @@ UTEST( CrossDirMove, ReportsMovedEventWithOptionRecursive ) {
 	std::string dstFile = dataDir + "/config.json";
 	EXPECT_TRUE( renameFile( srcFile, dstFile ) );
 
-	// Expect a single Moved event for the destination filename
-	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "config.json" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "config.json", canonicalSrcFile ) );
-
-	// There must be no Delete or Add events for these filenames
-	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Delete, "upload.tmp" ) );
-	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Add, "config.json" ) );
+	if ( nativeCrossDirectoryMoves() ) {
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "config.json" ) );
+		EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "config.json", canonicalSrcFile ) );
+		EXPECT_FALSE( listener.checkEvent( efsw::Actions::Delete, "upload.tmp" ) );
+		EXPECT_FALSE( listener.checkEvent( efsw::Actions::Add, "config.json" ) );
+	} else {
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "upload.tmp" ) );
+		EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "config.json" ) );
+		EXPECT_EQ( -1, listener.indexOf( efsw::Actions::Moved, "config.json" ) );
+	}
 
 	fileWatcher.removeWatch( rootDir );
 	removeDirectory( rootDir );

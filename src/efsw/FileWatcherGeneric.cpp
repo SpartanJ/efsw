@@ -30,7 +30,7 @@ FileWatcherGeneric::~FileWatcherGeneric() {
 }
 
 WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption>& options ) {
+									  bool recursive, const std::vector<WatcherOption>& /*options*/ ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -69,13 +69,9 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 	// Built without the lock, which would pause the polling of every other watch while the
 	// directory tree is read; its lookups of the other watches take the lock themselves. It
 	// is registered once complete, so the polling thread never sees it half built.
-	bool reportCrossDirectoryMoves =
-		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
-	WatcherGeneric* pWatch =
-		new WatcherGeneric( id, dir, watcher, this, recursive, reportCrossDirectoryMoves );
-	// Watches that opted in share one batch, so a move between two of them is paired.
-	if ( reportCrossDirectoryMoves && FileInfo::inodeSupported() )
-		pWatch->SharedActionBatch = &mSharedActions;
+	// Cross-directory move correlation is not enabled for polling in this branch, including
+	// moves inside a recursive registration. Keep the ordinary snapshot Add/Delete behavior.
+	WatcherGeneric* pWatch = new WatcherGeneric( id, dir, watcher, this, recursive );
 
 	Lock lock( mWatchesLock );
 	// Another thread may have registered the directory meanwhile.
@@ -114,7 +110,6 @@ void FileWatcherGeneric::removeWatch( WatchID watchid ) {
 void FileWatcherGeneric::eraseWatchLocked( WatchList::iterator it ) {
 	WatcherGeneric* watch = *it;
 	mWatches.erase( it );
-	mSharedActions.forget( watch );
 	mRetiring.release( watch );
 }
 
@@ -130,17 +125,14 @@ void FileWatcherGeneric::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			// Events of opted-in watches are collected during the scans, and dispatched after.
+			// A callback can remove registrations while this pass is scanning them.
 			std::vector<Watcher*>& scanned = mRetiring.beginPass();
 			scanned.assign( mWatches.begin(), mWatches.end() );
-			mSharedActions.beginPass();
 			for ( Watcher* watch : scanned ) {
 				if ( watch->Retired )
 					continue;
 				watch->watch();
-				mSharedActions.scanned( watch );
 			}
-			mSharedActions.finishPass();
 			mRetiring.endPass();
 		}
 
