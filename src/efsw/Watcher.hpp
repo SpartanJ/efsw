@@ -1,9 +1,8 @@
 #ifndef EFSW_WATCHERIMPL_HPP
 #define EFSW_WATCHERIMPL_HPP
 
-#include <efsw/FileInfo.hpp>
+#include <efsw/base.hpp>
 #include <efsw/efsw.hpp>
-#include <vector>
 
 namespace efsw {
 
@@ -17,15 +16,6 @@ class Watcher {
 	virtual ~Watcher() {}
 
 	virtual void watch() {}
-
-	/// @return True when the watch collects its events into the file watcher's shared batch,
-	/// to pair moves with other watches. Only polling backends use a shared batch.
-	virtual bool collectsSharedActions() const { return false; }
-
-	/// Polling backends: whether the watch's last snapshot lists a file with one of these
-	/// identities, given sorted, meaning that the watch has not yet seen that the file moved
-	/// away. This is a lookup in memory, without file system access.
-	virtual bool snapshotHasAny( const std::vector<FileIdentity>& ) const { return false; }
 
 	/// Polling backends: the watch was removed while its polling pass is running, possibly
 	/// from one of its own callbacks. It must not report anything more; it is deleted once the

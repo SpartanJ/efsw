@@ -20,15 +20,6 @@ struct PollingGeneric : efsw::FileWatcherGeneric {
 			watch->watch();
 		}
 	}
-
-	bool ignoresMoveOption() const {
-		for ( const auto* watch : mWatches ) {
-			if ( watch->ReportCrossDirectoryMoves || watch->SharedActionBatch ) {
-				return false;
-			}
-		}
-		return true;
-	}
 };
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE
@@ -39,19 +30,6 @@ struct PollingKqueue : efsw::FileWatcherKqueue {
 		for ( const auto& entry : mWatches ) {
 			entry.second->watch();
 		}
-	}
-
-	bool ignoresMoveOption() const {
-		for ( const auto& entry : mWatches ) {
-			if ( entry.second->collectsSharedActions() ) {
-				return false;
-			}
-			const auto* generic = dynamic_cast<const efsw::WatcherGeneric*>( entry.second );
-			if ( generic && generic->ReportCrossDirectoryMoves ) {
-				return false;
-			}
-		}
-		return true;
 	}
 };
 
@@ -95,7 +73,6 @@ void checkPollingMove( bool separateWatches, bool recursive, bool directory, boo
 	} else {
 		ASSERT_GT( backend.addWatch( root, &listener, true, options ), 0 );
 	}
-	ASSERT_TRUE( backend.ignoresMoveOption() );
 	ASSERT_TRUE( renameFile( source + "/entry", destination + "/entry" ) );
 	for ( int pass = 0; pass < 3; ++pass ) {
 		backend.poll();

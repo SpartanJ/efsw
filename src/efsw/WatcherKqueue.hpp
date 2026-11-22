@@ -6,7 +6,6 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
 #include <efsw/DirectorySnapshot.hpp>
-#include <efsw/FileActionBatch.hpp>
 #include <sys/event.h>
 #include <sys/types.h>
 #include <unordered_map>
@@ -25,8 +24,7 @@ typedef std::unordered_map<WatchID, Watcher*> WatchMap;
 class WatcherKqueue : public Watcher {
   public:
 	WatcherKqueue( WatchID watchid, const std::string& dirname, FileWatchListener* listener,
-				   bool recursive, FileWatcherKqueue* watcher, WatcherKqueue* parent = NULL,
-				   bool reportCrossDirectoryMoves = false );
+				   bool recursive, FileWatcherKqueue* watcher, WatcherKqueue* parent = NULL );
 
 	virtual ~WatcherKqueue();
 
@@ -72,14 +70,6 @@ class WatcherKqueue : public Watcher {
 
 	bool initOK();
 
-	/// Root watches only. When set, events are collected into this batch, owned by the file
-	/// watcher, which dispatches it after polling every watch. Set once at creation.
-	FileActionBatch* SharedActionBatch{ NULL };
-
-	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
-
-	bool snapshotHasAny( const std::vector<FileIdentity>& identities ) const override;
-
 	void retire() override;
 
 	int lastErrno();
@@ -105,11 +95,7 @@ class WatcherKqueue : public Watcher {
 
 	bool mInitOK;
 	int mErrno;
-	bool mReportCrossDirectoryMoves;
-	bool mCollectActions;
-	bool mNeedsRecursiveRescan;
 	bool mFilesNeedReopen{ false };
-	FileActionBatch mActionBatch;
 
 	bool pathInWatches( const std::string& path );
 
@@ -123,8 +109,6 @@ class WatcherKqueue : public Watcher {
 	void sendDirChanged();
 
 	WatcherKqueue* root();
-
-	void rescanTree();
 
 	KEvent* findFile( const std::string& name );
 

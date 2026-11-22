@@ -41,8 +41,7 @@ int comparator( const void* ke1, const void* ke2 ) {
 
 WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 							  FileWatchListener* listener, bool recursive,
-							  FileWatcherKqueue* watcher, WatcherKqueue* parent,
-							  bool reportCrossDirectoryMoves ) :
+							  FileWatcherKqueue* watcher, WatcherKqueue* parent ) :
 	Watcher( watchid, dirname, listener, recursive ),
 	mLastWatchID( 0 ),
 	mChangeListCount( 0 ),
@@ -50,10 +49,7 @@ WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 	mWatcher( watcher ),
 	mParent( parent ),
 	mInitOK( true ),
-	mErrno( 0 ),
-	mReportCrossDirectoryMoves( reportCrossDirectoryMoves ),
-	mCollectActions( false ),
-	mNeedsRecursiveRescan( false ) {
+	mErrno( 0 ) {
 	if ( -1 == mKqueue ) {
 		efDEBUG(
 			"kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n",
@@ -420,7 +416,6 @@ WatchID WatcherKqueue::watchingDirectory( std::string dir ) {
 
 void WatcherKqueue::retire() {
 	Watcher::retire();
-	mActionBatch.cancel();
 	// Native descendants check the root, but generic ones, created when file descriptors run
 	// out, report on their own: the whole tree is retired.
 	for ( const auto& child : mWatches )
@@ -428,23 +423,14 @@ void WatcherKqueue::retire() {
 }
 
 void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action,
-								  const std::string& oldFilename, const FileInfo& fileInfo ) {
+								  const std::string& oldFilename, const FileInfo& ) {
 	WatcherKqueue* rootWatch = root();
 	if ( rootWatch->Retired )
 		return;
-	if ( rootWatch->mCollectActions ) {
-		FileActionBatch* shared = rootWatch->SharedActionBatch;
-		FileActionBatch* batch = shared ? shared : &rootWatch->mActionBatch;
-		// With the registration's ID, which addWatch() returned: each directory of it has its
-		// own ID, numbered within the registration, which means nothing to the listener.
-		batch->add( rootWatch->ID, Directory, FileSystem::fileNameFromPath( filename ), action,
-					FileSystem::fileNameFromPath( oldFilename ), fileInfo,
-					shared ? Listener : NULL, shared ? rootWatch : NULL );
-	} else {
-		Listener->handleFileAction( rootWatch->ID, Directory,
-									FileSystem::fileNameFromPath( filename ), action,
-									FileSystem::fileNameFromPath( oldFilename ) );
-	}
+	// Each native child has its own internal ID; callbacks use the registration's ID.
+	Listener->handleFileAction( rootWatch->ID, Directory,
+							   FileSystem::fileNameFromPath( filename ), action,
+							   FileSystem::fileNameFromPath( oldFilename ) );
 }
 
 void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action action,
@@ -455,8 +441,7 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 }
 
 void WatcherKqueue::sendDirChanged() {
-	// Reported by the parent like its other entries: collected while the root collects, so
-	// that no listener runs in the middle of the root's scan.
+	// Reported by the parent like its other entries, with the registration's ID.
 	if ( NULL != mParent )
 		mParent->handleFolderAction( Directory, Actions::Modified, "", mDirSnap.DirectoryInfo );
 }
@@ -464,13 +449,6 @@ void WatcherKqueue::sendDirChanged() {
 void WatcherKqueue::watch() {
 	if ( -1 == mKqueue ) {
 		return;
-	}
-	bool isRootWatch = NULL == mParent;
-	if ( isRootWatch && ( SharedActionBatch || ( mReportCrossDirectoryMoves && Recursive ) ) ) {
-		if ( !SharedActionBatch )
-			mActionBatch.clear();
-		mCollectActions = true;
-		mNeedsRecursiveRescan = false;
 	}
 	if ( mFilesNeedReopen || mDirSnap.DirectoryInfo.identity() != mDirectoryIdentity )
 		rescan();
@@ -517,9 +495,8 @@ void WatcherKqueue::watch() {
 					FileInfo fi( entry->Filepath );
 
 					if ( fi.Inode == 0 && !FileInfo::exists( entry->Filepath ) ) {
-						// Gone from its path since: moved with its directory, or deleted. Its
-						// entry is kept, as the evidence of its directory's tree, and the
-						// directory's scan reports what happened.
+						// Gone from its path since: moved with its directory, or deleted.
+						// Keep the entry until the directory's scan reports what happened.
 						needScan = true;
 					} else if ( fi != *entry ) {
 						if ( entry->sameInode( fi ) )
@@ -542,30 +519,8 @@ void WatcherKqueue::watch() {
 		}
 	}
 
-	if ( needScan ) {
+	if ( needScan )
 		rescan();
-		WatcherKqueue* rootWatch = root();
-		if ( rootWatch->mCollectActions )
-			rootWatch->mNeedsRecursiveRescan = true;
-	}
-
-	if ( isRootWatch && mCollectActions ) {
-		if ( mNeedsRecursiveRescan )
-			rescanTree();
-		if ( !SharedActionBatch )
-			mActionBatch.dispatch( Listener );
-		mCollectActions = false;
-	}
-}
-
-bool WatcherKqueue::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
-	if ( mDirSnap.hasAny( identities ) )
-		return true;
-	for ( const auto& child : mWatches ) {
-		if ( child.second->snapshotHasAny( identities ) )
-			return true;
-	}
-	return false;
 }
 
 void WatcherKqueue::reportDirectories() {
@@ -587,17 +542,6 @@ WatcherKqueue* WatcherKqueue::root() {
 	while ( watch->mParent )
 		watch = watch->mParent;
 	return watch;
-}
-
-void WatcherKqueue::rescanTree() {
-	rescan();
-	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-		WatcherKqueue* watch = dynamic_cast<WatcherKqueue*>( it->second );
-		if ( NULL != watch )
-			watch->rescanTree();
-		else
-			it->second->watch();
-	}
 }
 
 Watcher* WatcherKqueue::findWatcher( std::string path ) {
@@ -703,7 +647,7 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 	if ( mWatcher->availablesFD() ) {
 		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher,
-												  parent, mReportCrossDirectoryMoves );
+												  parent );
 
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 
@@ -738,13 +682,9 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 void WatcherKqueue::addGenericWatch( const std::string& dir, FileWatchListener* watcher,
 									 bool recursive ) {
-	WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive,
-												mReportCrossDirectoryMoves );
-	// It reports like the rest of its tree: into the root's shared batch, as part of the root's
-	// registration, so that its moves to and from other registrations are paired.
-	WatcherKqueue* rootWatch = root();
-	watch->SharedActionBatch = rootWatch->SharedActionBatch;
-	watch->SharedActionOwner = rootWatch;
+	WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+	// A fallback descendant belongs to the same logical registration as the native tree.
+	watch->SharedActionOwner = root();
 	mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 }
 

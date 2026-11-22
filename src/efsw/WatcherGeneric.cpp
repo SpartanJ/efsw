@@ -5,12 +5,10 @@
 namespace efsw {
 
 WatcherGeneric::WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
-								FileWatcherImpl* fw, bool recursive,
-								bool reportCrossDirectoryMoves ) :
+								FileWatcherImpl* fw, bool recursive ) :
 	Watcher( id, directory, fwl, recursive ),
 	WatcherImpl( fw ),
-	DirWatch( NULL ),
-	ReportCrossDirectoryMoves( reportCrossDirectoryMoves ) {
+	DirWatch( NULL ) {
 	FileSystem::dirAddSlashAtEnd( Directory );
 
 	DirWatch = new DirWatcherGeneric( NULL, this, directory, recursive, false );
@@ -23,12 +21,6 @@ WatcherGeneric::~WatcherGeneric() {
 }
 
 void WatcherGeneric::watch() {
-	if ( SharedActionBatch ) {
-		mCollectActions = true;
-		DirWatch->watch();
-		mCollectActions = false;
-		return;
-	}
 	// Recursive scans must finish updating the complete watcher tree before callbacks are
 	// delivered. A listener may immediately mutate a directory after receiving an event.
 	mCollectActions = Recursive;
@@ -38,20 +30,13 @@ void WatcherGeneric::watch() {
 	DirWatch->watch();
 
 	if ( mCollectActions ) {
-		mActionBatch.dispatch( Listener, ReportCrossDirectoryMoves && FileInfo::inodeSupported() );
+		mActionBatch.dispatch( Listener );
 		mCollectActions = false;
 	}
 }
 
 void WatcherGeneric::watchDir( std::string dir ) {
-	if ( ReportCrossDirectoryMoves && Recursive )
-		watch();
-	else
-		DirWatch->watchDir( dir );
-}
-
-bool WatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
-	return DirWatch->snapshotHasAny( identities );
+	DirWatch->watchDir( dir );
 }
 
 bool WatcherGeneric::pathInWatches( std::string path ) {
@@ -71,16 +56,13 @@ void WatcherGeneric::retire() {
 
 void WatcherGeneric::handleAction( const std::string& directory, const std::string& filename,
 								   Action action, const std::string& oldFilename,
-								   const FileInfo& fileInfo ) {
+								   const FileInfo& ) {
 	if ( Retired )
 		return;
 	// A kqueue fallback watch reports with its registration's ID, which addWatch() returned.
 	const WatchID id = SharedActionOwner ? SharedActionOwner->ID : ID;
 	if ( mCollectActions ) {
-		FileActionBatch* batch = SharedActionBatch ? SharedActionBatch : &mActionBatch;
-		batch->add( id, directory, filename, action, oldFilename, fileInfo,
-					SharedActionBatch ? Listener : NULL,
-					SharedActionBatch ? ( SharedActionOwner ? SharedActionOwner : this ) : NULL );
+		mActionBatch.add( id, directory, filename, action, oldFilename );
 	} else {
 		Listener->handleFileAction( id, directory, filename, action, oldFilename );
 	}

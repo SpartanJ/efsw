@@ -396,16 +396,6 @@ void DirWatcherGeneric::moveDirectory( std::string oldDir, std::string newDir ) 
 	}
 }
 
-bool DirWatcherGeneric::snapshotHasAny( const std::vector<FileIdentity>& identities ) const {
-	if ( DirSnap.hasAny( identities ) )
-		return true;
-	for ( const auto& directory : Directories ) {
-		if ( directory.second->snapshotHasAny( identities ) )
-			return true;
-	}
-	return false;
-}
-
 bool DirWatcherGeneric::pathInWatches( std::string path ) {
 	if ( DirSnap.DirectoryInfo.Filepath == path ) {
 		return true;

@@ -7,22 +7,15 @@
 namespace efsw {
 
 class DirWatcherGeneric;
+class FileInfo;
 
 class WatcherGeneric : public Watcher {
   public:
 	FileWatcherImpl* WatcherImpl;
 	DirWatcherGeneric* DirWatch;
-	bool ReportCrossDirectoryMoves;
-	/// When set, scans collect events into this batch, owned by the file watcher, which
-	/// dispatches it after scanning every watch. Set once when the watch is created.
-	FileActionBatch* SharedActionBatch{ NULL };
-	/// The registration that owns the events collected into SharedActionBatch: this watch,
-	/// or the kqueue watch it is a fallback descendant of. Set once when the watch is created.
+	/// The kqueue registration owning this fallback descendant. Supplies the public watch ID
+	/// and preserves its snapshots until the native parent resolves a directory relocation.
 	Watcher* SharedActionOwner{ NULL };
-
-	bool collectsSharedActions() const override { return NULL != SharedActionBatch; }
-
-	bool snapshotHasAny( const std::vector<FileIdentity>& identities ) const override;
 
 	void retire() override;
 
@@ -30,7 +23,7 @@ class WatcherGeneric : public Watcher {
 	void moveDirectory( const std::string& directory );
 
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
-					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );
+					FileWatcherImpl* fw, bool recursive );
 
 	~WatcherGeneric();
 
