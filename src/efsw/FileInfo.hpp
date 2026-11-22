@@ -3,9 +3,13 @@
 
 #include <efsw/base.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace efsw {
+
+/// Device and inode of a file.
+typedef std::pair<Uint64, Uint64> FileIdentity;
 
 class FileInfo {
   public:
@@ -25,8 +29,6 @@ class FileInfo {
 
 	bool operator!=( const FileInfo& Other ) const;
 
-	FileInfo& operator=( const FileInfo& Other );
-
 	bool isDirectory() const;
 
 	bool isRegularFile() const;
@@ -34,6 +36,8 @@ class FileInfo {
 	bool isReadable() const;
 
 	bool sameInode( const FileInfo& Other ) const;
+
+	FileIdentity identity() const { return FileIdentity( Device, Inode ); }
 
 	bool isLink() const;
 

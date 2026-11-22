@@ -41,8 +41,7 @@ int comparator( const void* ke1, const void* ke2 ) {
 
 WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 							  FileWatchListener* listener, bool recursive,
-							  FileWatcherKqueue* watcher, WatcherKqueue* parent,
-							  bool reportCrossDirectoryMoves ) :
+							  FileWatcherKqueue* watcher, WatcherKqueue* parent ) :
 	Watcher( watchid, dirname, listener, recursive ),
 	mLastWatchID( 0 ),
 	mChangeListCount( 0 ),
@@ -50,14 +49,11 @@ WatcherKqueue::WatcherKqueue( WatchID watchid, const std::string& dirname,
 	mWatcher( watcher ),
 	mParent( parent ),
 	mInitOK( true ),
-	mErrno( 0 ),
-	mReportCrossDirectoryMoves( reportCrossDirectoryMoves ),
-	mCollectActions( false ),
-	mNeedsRecursiveRescan( false ) {
+	mErrno( 0 ) {
 	if ( -1 == mKqueue ) {
 		efDEBUG(
 			"kqueue() returned invalid descriptor for directory %s. File descriptors count: %ld\n",
-			Directory.c_str(), mWatcher->mFileDescriptorCount );
+			Directory.c_str(), mWatcher->mFileDescriptorCount.load() );
 
 		mInitOK = false;
 		mErrno = errno;
@@ -70,17 +66,22 @@ WatcherKqueue::~WatcherKqueue() {
 	// Remove the children watchers ( sub-folders watches )
 	removeAll();
 
-	for ( size_t i = 0; i < mChangeListCount; i++ ) {
-		if ( NULL != mChangeList[i].udata ) {
+	// The change list holds the directory at index 0, once addAll() opened it, and the files
+	// at 1 to mChangeListCount. Each holds a descriptor, which closing the kqueue does not
+	// close, and each file its FileInfo.
+	if ( !mChangeList.empty() ) {
+		for ( size_t i = 0; i <= mChangeListCount; i++ ) {
 			FileInfo* fi = reinterpret_cast<FileInfo*>( mChangeList[i].udata );
-
 			efSAFE_DELETE( fi );
+			close( static_cast<int>( mChangeList[i].ident ) );
+			mWatcher->removeFD();
 		}
 	}
 
-	close( mKqueue );
-
-	mWatcher->removeFD();
+	if ( -1 != mKqueue ) {
+		close( mKqueue );
+		mWatcher->removeFD();
+	}
 }
 
 void WatcherKqueue::addAll() {
@@ -110,6 +111,9 @@ void WatcherKqueue::addAll() {
 
 	mDirSnap.setDirectoryInfo( Directory );
 	mDirSnap.scan();
+	struct stat directoryInfo;
+	if ( fstat( fd, &directoryInfo ) == 0 )
+		mDirectoryIdentity = FileIdentity( directoryInfo.st_dev, directoryInfo.st_ino );
 
 	mChangeList.resize( KEVENT_RESERVE_VALUE );
 
@@ -130,13 +134,9 @@ void WatcherKqueue::addAll() {
 			// Add the regular files kevent
 			addFile( fi.Filepath, false );
 		} else if ( Recursive && fi.isDirectory() && fi.isReadable() ) {
-			// Create another watcher for the subfolders ( if recursive )
-			WatchID id = addWatch( fi.Filepath, Listener, Recursive, this );
-
-			// If the watcher is not adding the watcher means that the directory was created
-			if ( id > 0 && !mWatcher->isAddingWatcher() ) {
-				handleFolderAction( fi.Filepath, Actions::Add, "", fi );
-			}
+			// Create another watcher for the subfolders ( if recursive ). A created directory
+			// reports them with reportDirectories(), once every watch of its tree exists.
+			addWatch( fi.Filepath, Listener, Recursive, this );
 		}
 	}
 }
@@ -157,25 +157,27 @@ void WatcherKqueue::removeAll() {
 	}
 }
 
-void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
+bool WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	efDEBUG( "addFile(): Added: %s\n", name.c_str() );
 
 	// Open the file to get the file descriptor
 	int fd = open( name.c_str(), O_EVTONLY );
 
 	if ( fd == -1 ) {
+		const int error = errno;
 		efDEBUG( "addFile(): Could open file descriptor for %s. File descriptor count: %ld\n",
-				 name.c_str(), mWatcher->mFileDescriptorCount );
+				 name.c_str(), mWatcher->mFileDescriptorCount.load() );
 
 		Errors::Log::createLastError( Errors::FileNotReadable, name );
 
-		if ( EACCES != errno ) {
+		// A file removed or renamed since the directory was listed is not a watcher failure.
+		if ( EACCES != error && ENOENT != error ) {
 			mInitOK = false;
 		}
 
-		mErrno = errno;
+		mErrno = error;
 
-		return;
+		return false;
 	}
 
 	mWatcher->addFD();
@@ -209,28 +211,72 @@ void WatcherKqueue::addFile( const std::string& name, bool emitEvents ) {
 	if ( emitEvents ) {
 		handleAction( name, Actions::Add, "", *entry );
 	}
+	return true;
 }
 
-void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
-	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
+bool WatcherKqueue::reopen( KEvent& change, const FileInfo& info ) {
+	int fd = open( info.Filepath.c_str(), O_EVTONLY );
+	if ( -1 == fd )
+		return false;
+	// The path may have changed again since the snapshot. Only commit coverage of the entry
+	// that snapshot describes; otherwise the next poll scans and retries it.
+	struct stat opened;
+	if ( fstat( fd, &opened ) != 0 ||
+		 FileIdentity( opened.st_dev, opened.st_ino ) != info.identity() ) {
+		close( fd );
+		return false;
+	}
+	KEvent replacement;
+	EV_SET( &replacement, fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_ONESHOT,
+			NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB | NOTE_RENAME, 0, change.udata );
+	struct timespec timeout = { 0, 0 };
+	if ( kevent( mKqueue, &replacement, 1, NULL, 0, &timeout ) == -1 ) {
+		close( fd );
+		return false;
+	}
+	close( static_cast<int>( change.ident ) );
+	change = replacement;
+	return true;
+}
 
-	// bsearch
+bool WatcherKqueue::reopenDirectory() {
+	if ( mChangeList.empty() || !reopen( mChangeList[0], mDirSnap.DirectoryInfo ) )
+		return false;
+	mDirectoryIdentity = mDirSnap.DirectoryInfo.identity();
+	return true;
+}
+
+KEvent* WatcherKqueue::findFile( const std::string& name ) {
+	if ( mChangeList.empty() )
+		return NULL;
 	KEvent target;
-
-	// Create a temporary file info to search the kevent ( searching the directory )
-	FileInfo tempEntry( name );
-
+	FileInfo tempEntry;
+	tempEntry.Filepath = name;
 	target.udata = &tempEntry;
+	return static_cast<KEvent*>( bsearch( &target, &mChangeList[1], mChangeListCount,
+										 sizeof( KEvent ), comparator ) );
+}
 
-	// Search the kevent
-	KEvent* ke = (KEvent*)bsearch( &target, &mChangeList[1], mChangeListCount, sizeof( KEvent ),
-								   comparator );
+bool WatcherKqueue::refreshFile( const FileInfo& info ) {
+	KEvent* tracked = findFile( info.Filepath );
+	if ( NULL == tracked )
+		return true;
+	FileInfo* entry = static_cast<FileInfo*>( tracked->udata );
+	if ( !entry->sameInode( info ) && !reopen( *tracked, info ) )
+		return false;
+	*entry = info;
+	return true;
+}
+
+bool WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
+	efDEBUG( "removeFile(): Trying to remove file: %s\n", name.c_str() );
+	KEvent* ke = findFile( name );
 
 	// Trying to remove a non-existing file?
 	if ( !ke ) {
 		Errors::Log::createLastError( Errors::FileNotFound, name );
 		efDEBUG( "File not removed\n" );
-		return;
+		return false;
 	}
 
 	efDEBUG( "File removed\n" );
@@ -250,12 +296,14 @@ void WatcherKqueue::removeFile( const std::string& name, bool emitEvents ) {
 
 	mWatcher->removeFD();
 
-	memset( ke, 0, sizeof( KEvent ) );
-
-	// move end to current
-	memcpy( ke, &mChangeList[mChangeListCount], sizeof( KEvent ) );
-	memset( &mChangeList[mChangeListCount], 0, sizeof( KEvent ) );
+	// The entries after it move down one: the list stays sorted by name, which bsearch()
+	// needs. Moving the last one into its place left the list unsorted, and later removals
+	// could no longer find their file, whose Delete was then never reported.
+	KEvent* last = &mChangeList[mChangeListCount];
+	memmove( ke, ke + 1, ( last - ke ) * sizeof( KEvent ) );
+	memset( last, 0, sizeof( KEvent ) );
 	--mChangeListCount;
+	return true;
 }
 
 void WatcherKqueue::rescan() {
@@ -267,6 +315,23 @@ void WatcherKqueue::rescan() {
 
 	DirectorySnapshotDiff Diff = mDirSnap.scan();
 
+	// Replaced at its path by another directory: the descriptor watches the one that is gone,
+	// and would never report the new one's changes.
+	const bool replaced = mDirSnap.DirectoryInfo.Inode != 0 &&
+						  mDirSnap.DirectoryInfo.identity() != mDirectoryIdentity;
+	if ( replaced )
+		reopenDirectory();
+	// Files at the same names may also belong to the replaced tree. Their descriptors must
+	// follow them before callbacks run, not only the directory's descriptor. Retry failures
+	// on later polls even when no further native notification arrives.
+	if ( replaced || mFilesNeedReopen ) {
+		mFilesNeedReopen = false;
+		for ( const FileInfo& info : mDirSnap.Files ) {
+			if ( info.isRegularFile() && !refreshFile( info ) )
+				mFilesNeedReopen = true;
+		}
+	}
+
 	if ( Diff.DirChanged ) {
 		sendDirChanged();
 	}
@@ -276,8 +341,12 @@ void WatcherKqueue::rescan() {
 		MovedList::iterator mit;
 
 		/// Files
+		// A file listed by the scan but gone before it could be opened, or never opened, is
+		// not tracked: it is still reported from the snapshot, so that every reported file
+		// gets its Delete.
 		DiffIterator( FilesCreated ) {
-			addFile( ( *it ).Filepath );
+			if ( !addFile( ( *it ).Filepath ) )
+				handleAction( ( *it ).Filepath, Actions::Add, "", *it );
 		}
 
 		DiffIterator( FilesModified ) {
@@ -285,7 +354,8 @@ void WatcherKqueue::rescan() {
 		}
 
 		DiffIterator( FilesDeleted ) {
-			removeFile( ( *it ).Filepath );
+			if ( !removeFile( ( *it ).Filepath ) )
+				handleAction( ( *it ).Filepath, Actions::Delete, "", *it );
 		}
 
 		DiffMovedIterator( FilesMoved ) {
@@ -297,8 +367,21 @@ void WatcherKqueue::rescan() {
 
 		/// Directories
 		DiffIterator( DirsCreated ) {
-			addWatch( ( *it ).Filepath, Listener, Recursive, this );
+			// A non-recursive watch reports the directory as one of its entries, but does not
+			// watch inside it, as addAll() does.
+			if ( !Recursive ) {
+				handleFolderAction( ( *it ).Filepath, Actions::Add, "", *it );
+				continue;
+			}
+			// Reported once its watch exists, so that an entry created inside it by a listener
+			// reacting to the event is not missed, but before the directories found inside it.
+			WatchID id = addWatch( ( *it ).Filepath, Listener, Recursive, this );
 			handleFolderAction( ( *it ).Filepath, Actions::Add, "", *it );
+			auto added = id > 0 ? mWatches.find( id ) : mWatches.end();
+			WatcherKqueue* child =
+				added != mWatches.end() ? dynamic_cast<WatcherKqueue*>( added->second ) : NULL;
+			if ( child )
+				child->reportDirectories();
 		}
 
 		DiffIterator( DirsModified ) {
@@ -331,17 +414,23 @@ WatchID WatcherKqueue::watchingDirectory( std::string dir ) {
 	return Errors::FileNotFound;
 }
 
+void WatcherKqueue::retire() {
+	Watcher::retire();
+	// Native descendants check the root, but generic ones, created when file descriptors run
+	// out, report on their own: the whole tree is retired.
+	for ( const auto& child : mWatches )
+		child.second->retire();
+}
+
 void WatcherKqueue::handleAction( const std::string& filename, efsw::Action action,
-								  const std::string& oldFilename, const FileInfo& fileInfo ) {
+								  const std::string& oldFilename, const FileInfo& ) {
 	WatcherKqueue* rootWatch = root();
-	if ( rootWatch->mCollectActions ) {
-		rootWatch->mActionBatch.add( ID, Directory, FileSystem::fileNameFromPath( filename ),
-									 action, FileSystem::fileNameFromPath( oldFilename ),
-									 fileInfo );
-	} else {
-		Listener->handleFileAction( ID, Directory, FileSystem::fileNameFromPath( filename ), action,
-									FileSystem::fileNameFromPath( oldFilename ) );
-	}
+	if ( rootWatch->Retired )
+		return;
+	// Each native child has its own internal ID; callbacks use the registration's ID.
+	Listener->handleFileAction( rootWatch->ID, Directory,
+							   FileSystem::fileNameFromPath( filename ), action,
+							   FileSystem::fileNameFromPath( oldFilename ) );
 }
 
 void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action action,
@@ -352,22 +441,17 @@ void WatcherKqueue::handleFolderAction( std::string filename, efsw::Action actio
 }
 
 void WatcherKqueue::sendDirChanged() {
-	if ( NULL != mParent ) {
-		Listener->handleFileAction( mParent->ID, mParent->Directory,
-									FileSystem::fileNameFromPath( Directory ), Actions::Modified );
-	}
+	// Reported by the parent like its other entries, with the registration's ID.
+	if ( NULL != mParent )
+		mParent->handleFolderAction( Directory, Actions::Modified, "", mDirSnap.DirectoryInfo );
 }
 
 void WatcherKqueue::watch() {
 	if ( -1 == mKqueue ) {
 		return;
 	}
-	bool isRootWatch = NULL == mParent;
-	if ( isRootWatch && mReportCrossDirectoryMoves && Recursive ) {
-		mActionBatch.clear();
-		mCollectActions = true;
-		mNeedsRecursiveRescan = false;
-	}
+	if ( mFilesNeedReopen || mDirSnap.DirectoryInfo.identity() != mDirectoryIdentity )
+		rescan();
 
 	int nev = 0;
 	KEvent event;
@@ -410,8 +494,15 @@ void WatcherKqueue::watch() {
 
 					FileInfo fi( entry->Filepath );
 
-					if ( fi != *entry ) {
-						*entry = fi;
+					if ( fi.Inode == 0 && !FileInfo::exists( entry->Filepath ) ) {
+						// Gone from its path since: moved with its directory, or deleted.
+						// Keep the entry until the directory's scan reports what happened.
+						needScan = true;
+					} else if ( fi != *entry ) {
+						if ( entry->sameInode( fi ) )
+							*entry = fi;
+						else if ( !refreshFile( fi ) )
+							mFilesNeedReopen = true;
 
 						mDirSnap.updateFile( entry->Filepath );
 
@@ -428,18 +519,21 @@ void WatcherKqueue::watch() {
 		}
 	}
 
-	if ( needScan ) {
+	if ( needScan )
 		rescan();
-		WatcherKqueue* rootWatch = root();
-		if ( rootWatch->mCollectActions )
-			rootWatch->mNeedsRecursiveRescan = true;
-	}
+}
 
-	if ( isRootWatch && mCollectActions ) {
-		if ( mNeedsRecursiveRescan )
-			rescanTree();
-		mActionBatch.dispatch( Listener );
-		mCollectActions = false;
+void WatcherKqueue::reportDirectories() {
+	for ( const auto& entry : mWatches ) {
+		WatcherKqueue* child = dynamic_cast<WatcherKqueue*>( entry.second );
+		if ( child ) {
+			handleFolderAction( entry.second->Directory, Actions::Add, "",
+								child->mDirSnap.DirectoryInfo );
+			child->reportDirectories();
+		} else {
+			handleFolderAction( entry.second->Directory, Actions::Add, "",
+								FileInfo( entry.second->Directory ) );
+		}
 	}
 }
 
@@ -450,18 +544,9 @@ WatcherKqueue* WatcherKqueue::root() {
 	return watch;
 }
 
-void WatcherKqueue::rescanTree() {
-	rescan();
-	for ( WatchMap::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
-		WatcherKqueue* watch = dynamic_cast<WatcherKqueue*>( it->second );
-		if ( NULL != watch )
-			watch->rescanTree();
-		else
-			it->second->watch();
-	}
-}
-
-Watcher* WatcherKqueue::findWatcher( const std::string path ) {
+Watcher* WatcherKqueue::findWatcher( std::string path ) {
+	// Watch directories end with a slash; snapshot entries, like deleted directories, do not.
+	FileSystem::dirAddSlashAtEnd( path );
 	WatchMap::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); it++ ) {
@@ -485,8 +570,16 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 		std::string npath( newPath );
 		FileSystem::dirAddSlashAtEnd( npath );
 
+		// Subdirectories are watched by kqueue watches, or by generic watches when file
+		// descriptors ran out, which update their own tree.
 		std::vector<std::pair<WatcherKqueue*, std::string>> stack;
-		stack.push_back( std::make_pair( static_cast<WatcherKqueue*>( watch ), npath ) );
+		auto moveWatch = [&stack]( Watcher* moved, const std::string& path ) {
+			if ( WatcherKqueue* kqueueWatch = dynamic_cast<WatcherKqueue*>( moved ) )
+				stack.push_back( std::make_pair( kqueueWatch, path ) );
+			else if ( WatcherGeneric* genericWatch = dynamic_cast<WatcherGeneric*>( moved ) )
+				genericWatch->moveDirectory( path );
+		};
+		moveWatch( watch, npath );
 
 		while ( !stack.empty() ) {
 			WatcherKqueue* wkq = stack.back().first;
@@ -505,11 +598,11 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 			qsort( &wkq->mChangeList[1], wkq->mChangeListCount, sizeof( KEvent ), comparator );
 
 			for ( auto& childPair : wkq->mWatches ) {
-				WatcherKqueue* childWkq = static_cast<WatcherKqueue*>( childPair.second );
-				std::string childFolderName = FileSystem::fileNameFromPath( childWkq->Directory );
+				std::string childFolderName =
+					FileSystem::fileNameFromPath( childPair.second->Directory );
 				std::string childNewPath = curNPath + childFolderName;
 				FileSystem::dirAddSlashAtEnd( childNewPath );
-				stack.push_back( std::make_pair( childWkq, childNewPath ) );
+				moveWatch( childPair.second, childNewPath );
 			}
 		}
 	}
@@ -521,8 +614,6 @@ void WatcherKqueue::moveDirectory( std::string oldPath, std::string newPath,
 
 WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener* watcher,
 								 bool recursive, WatcherKqueue* parent ) {
-	static bool s_ug = false;
-
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -556,7 +647,7 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 	if ( mWatcher->availablesFD() ) {
 		WatcherKqueue* watch = new WatcherKqueue( ++mLastWatchID, dir, watcher, recursive, mWatcher,
-												  parent, mReportCrossDirectoryMoves );
+												  parent );
 
 		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 
@@ -574,28 +665,27 @@ WatchID WatcherKqueue::addWatch( const std::string& directory, FileWatchListener
 
 			// Probably the folder has too many files, create a generic watcher
 			if ( EACCES != le ) {
-				WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
-															recursive, mReportCrossDirectoryMoves );
-
-				mWatches.insert( std::make_pair( mLastWatchID, watch ) );
+				addGenericWatch( dir, watcher, recursive );
 			} else {
 				return Errors::Log::createLastError( Errors::Unspecified, link );
 			}
 		}
 	} else {
-		if ( !s_ug ) {
-			efDEBUG( "Started using WatcherGeneric, reached file descriptors limit: %ld.\n",
-					 mWatcher->mFileDescriptorCount );
-			s_ug = true;
-		}
+		efDEBUG( "Using a generic watcher, file descriptor limit reached: %ld\n",
+				 mWatcher->mFileDescriptorCount.load() );
 
-		WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher,
-													recursive, mReportCrossDirectoryMoves );
-
-		mWatches.insert( std::make_pair( mLastWatchID, watch ) );
+		addGenericWatch( dir, watcher, recursive );
 	}
 
 	return mLastWatchID;
+}
+
+void WatcherKqueue::addGenericWatch( const std::string& dir, FileWatchListener* watcher,
+									 bool recursive ) {
+	WatcherGeneric* watch = new WatcherGeneric( ++mLastWatchID, dir, watcher, mWatcher, recursive );
+	// A fallback descendant belongs to the same logical registration as the native tree.
+	watch->SharedActionOwner = root();
+	mWatches.insert( std::make_pair( mLastWatchID, watch ) );
 }
 
 bool WatcherKqueue::initOK() {

@@ -7,15 +7,23 @@
 namespace efsw {
 
 class DirWatcherGeneric;
+class FileInfo;
 
 class WatcherGeneric : public Watcher {
   public:
 	FileWatcherImpl* WatcherImpl;
 	DirWatcherGeneric* DirWatch;
-	bool ReportCrossDirectoryMoves;
+	/// The kqueue registration owning this fallback descendant. Supplies the public watch ID
+	/// and preserves its snapshots until the native parent resolves a directory relocation.
+	Watcher* SharedActionOwner{ NULL };
+
+	void retire() override;
+
+	/// The watched directory was moved: every directory of the tree is now below directory.
+	void moveDirectory( const std::string& directory );
 
 	WatcherGeneric( WatchID id, const std::string& directory, FileWatchListener* fwl,
-					FileWatcherImpl* fw, bool recursive, bool reportCrossDirectoryMoves = false );
+					FileWatcherImpl* fw, bool recursive );
 
 	~WatcherGeneric();
 

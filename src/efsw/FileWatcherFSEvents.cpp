@@ -5,6 +5,8 @@
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
+#include <algorithm>
+#include <sys/stat.h>
 #include <sys/utsname.h>
 
 namespace efsw {
@@ -111,18 +113,41 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 		}
 	}
 
-	std::vector<std::shared_ptr<WatcherFSEvents>> watches;
+	std::vector<std::shared_ptr<WatcherFSEvents>>& watches = fileWatcher->mWatchBuffer;
+	watches.clear();
+	size_t crossMoveWatches = 0;
 	{
 		std::lock_guard<std::mutex> lock( fileWatcher->mWatchesMutex );
 		watches.reserve( fileWatcher->mWatches.size() );
-		for ( const auto& watch : fileWatcher->mWatches )
+		for ( const auto& watch : fileWatcher->mWatches ) {
 			watches.push_back( watch.second );
+			if ( watch.second->ReportCrossDirectoryMoves )
+				crossMoveWatches++;
+		}
 	}
 
+	// Moves inside one registration are paired by its own processing. Only moves between
+	// two registrations that both opted in need the whole callback, so skip otherwise.
+	const bool correlate = isGranular() && crossMoveWatches >= 2;
+	if ( correlate )
+		fileWatcher->pairCrossWatchMoves( eventCount );
+
 	for ( const auto& watcher : watches ) {
+		// A listener may have removed this watch from an earlier callback of this batch.
+		if ( watcher->Removed )
+			continue;
 		watcher->EventBuffer.clear();
 		for ( size_t i = 0; i < eventCount; ++i ) {
 			FSEvent& event = fileWatcher->mEventBuffer[i];
+			if ( correlate && fileWatcher->mClaimedBy[i] == watcher.get() ) {
+				// Deliver the destination record in place, so the Moved event keeps its
+				// position among the other events of this registration.
+				if ( !fileWatcher->mMovedFrom[i].empty() ) {
+					watcher->EventBuffer.push_back( event );
+					watcher->EventBuffer.back().MovedFrom = fileWatcher->mMovedFrom[i];
+				}
+				continue;
+			}
 			bool mustRescan = event.Flags & ( kFSEventStreamEventFlagUserDropped |
 											  kFSEventStreamEventFlagKernelDropped |
 											  kFSEventStreamEventFlagMustScanSubDirs );
@@ -135,8 +160,205 @@ void FileWatcherFSEvents::FSEventCallback( ConstFSEventStreamRef /*streamRef*/, 
 			watcher->process();
 		}
 	}
+	watches.clear();
 
 	efDEBUG( "\n" );
+}
+
+static const size_t noEvent = static_cast<size_t>( -1 );
+
+const WatcherFSEvents* FileWatcherFSEvents::reportingWatch( const std::string& path ) const {
+	const WatcherFSEvents* owner = NULL;
+	for ( const auto& watch : mWatchBuffer ) {
+		if ( !watch->Removed && watch->reportsPath( path ) &&
+			 ( NULL == owner || watch->Directory.size() > owner->Directory.size() ) )
+			owner = watch.get();
+	}
+	return owner;
+}
+
+void FileWatcherFSEvents::pairCrossWatchMoves( size_t eventCount ) {
+	mClaimedBy.assign( eventCount, NULL );
+	mMovedFrom.assign( eventCount, std::string() );
+	mInodeNext.assign( eventCount, noEvent );
+	mInodeChains.clear();
+
+	// Chain the records of each inode in arrival order, so pairing and duplicate suppression
+	// only visit records of the same file instead of the whole callback.
+	for ( size_t i = 0; i < eventCount; ++i ) {
+		const Uint64 inode = mEventBuffer[i].inode;
+		if ( inode == 0 )
+			continue;
+		auto chain = mInodeChains.find( inode );
+		if ( chain == mInodeChains.end() ) {
+			mInodeChains.emplace( inode, InodeChain{ i, i } );
+		} else {
+			mInodeNext[chain->second.Last] = i;
+			chain->second.Last = i;
+		}
+	}
+
+	for ( const auto& chain : mInodeChains )
+		pairInode( chain.second.First, eventCount );
+}
+
+void FileWatcherFSEvents::pairInode( size_t first, size_t eventCount ) {
+	std::vector<size_t>& records = mChainRecords;
+	records.clear();
+	for ( size_t k = first; k != noEvent; k = mInodeNext[k] )
+		if ( !mClaimedBy[k] && ( mEventBuffer[k].Flags & efswFSEventStreamEventFlagItemRenamed ) )
+			records.push_back( k );
+	if ( records.size() < 2 )
+		return;
+	if ( records.size() == 2 ) {
+		if ( mEventBuffer[records[0]].Path != mEventBuffer[records[1]].Path )
+			pairCrossWatchMove( records[0], records[1], eventCount );
+		return;
+	}
+
+	// A move pairs a path that no longer exists with the one where the inode is now: a
+	// directory, or a file with no other link, so there is one on each volume, since inode
+	// numbers are only unique within one. Pairing claims every record at both paths, so the
+	// inode moves between registrations at most once per volume in a callback. Each path is
+	// looked at once, and each source tried once per destination: whether it pairs with one
+	// does not depend on the records.
+	const Uint64 inode = mEventBuffer[first].inode;
+	mPathStates.clear();
+	mDestinations.clear();
+	for ( size_t record : records ) {
+		const std::string& path = mEventBuffer[record].Path;
+		if ( PathDestination == pathState( path, inode ) &&
+			 std::find_if( mDestinations.begin(), mDestinations.end(),
+						   [&path]( const std::string* known ) { return *known == path; } ) ==
+				 mDestinations.end() )
+			mDestinations.push_back( &path );
+	}
+	for ( const std::string* destination : mDestinations )
+		pairWithDestination( *destination, inode, eventCount );
+}
+
+FileWatcherFSEvents::PathState FileWatcherFSEvents::pathState( const std::string& path,
+															   Uint64 inode ) {
+	auto known = mPathStates.find( path );
+	if ( known != mPathStates.end() )
+		return known->second;
+	PathState state = PathMissing;
+	if ( FileInfo::exists( path ) ) {
+		struct stat now;
+		state =
+			stat( path.c_str(), &now ) == 0 && static_cast<Uint64>( now.st_ino ) == inode &&
+					( S_ISDIR( now.st_mode ) || ( S_ISREG( now.st_mode ) && now.st_nlink == 1 ) )
+				? PathDestination
+				: PathOther;
+	}
+	mPathStates.emplace( path, state );
+	return state;
+}
+
+void FileWatcherFSEvents::pairWithDestination( const std::string& destination, Uint64 inode,
+											   size_t eventCount ) {
+	const std::vector<size_t>& records = mChainRecords;
+	mFailedSources.clear();
+	// The next records to try as a destination and as a source: each only moves forward.
+	size_t nextDestination = 0;
+	size_t nextSource = 0;
+	for ( size_t r = 0; r < records.size(); r++ ) {
+		const size_t record = records[r];
+		// Paired with an earlier destination, on another volume.
+		if ( mClaimedBy[record] )
+			continue;
+		const std::string& path = mEventBuffer[record].Path;
+		if ( path == destination ) {
+			// The first later source that pairs with it. A later destination record has fewer
+			// sources after it, all tried here: none would pair either.
+			for ( nextSource = std::max( nextSource, r + 1 ); nextSource < records.size();
+				  nextSource++ ) {
+				const size_t source = records[nextSource];
+				const std::string& sourcePath = mEventBuffer[source].Path;
+				if ( mClaimedBy[source] || PathMissing != pathState( sourcePath, inode ) ||
+					 mFailedSources.count( sourcePath ) )
+					continue;
+				if ( pairCrossWatchMove( record, source, eventCount ) )
+					return;
+				mFailedSources.insert( sourcePath );
+			}
+			return;
+		}
+		if ( PathMissing != pathState( path, inode ) || mFailedSources.count( path ) )
+			continue;
+		// The first later destination record.
+		nextDestination = std::max( nextDestination, r + 1 );
+		while ( nextDestination < records.size() &&
+				mEventBuffer[records[nextDestination]].Path != destination )
+			nextDestination++;
+		if ( nextDestination == records.size() )
+			continue;
+		if ( pairCrossWatchMove( record, records[nextDestination], eventCount ) )
+			return;
+		mFailedSources.insert( path );
+	}
+}
+
+bool FileWatcherFSEvents::pairCrossWatchMove( size_t firstIndex, size_t secondIndex,
+											  size_t eventCount ) {
+	const FSEvent& first = mEventBuffer[firstIndex];
+	const FSEvent& second = mEventBuffer[secondIndex];
+
+	// Resolve ownership before touching the filesystem: most renames stay in one registration.
+	const WatcherFSEvents* firstWatch = reportingWatch( first.Path );
+	const WatcherFSEvents* secondWatch = reportingWatch( second.Path );
+	if ( NULL == firstWatch || NULL == secondWatch || firstWatch == secondWatch ||
+		 !firstWatch->ReportCrossDirectoryMoves || !secondWatch->ReportCrossDirectoryMoves )
+		return false;
+	// A registration reporting both paths (an outer one of nested registrations) sees the
+	// whole move itself; the inner ones then get their own half as Add/Delete.
+	for ( const auto& watch : mWatchBuffer ) {
+		if ( watch->reportsPath( first.Path ) && watch->reportsPath( second.Path ) )
+			return false;
+	}
+
+	// FSEvents does not label the old and new paths. After the rename, the missing path is
+	// the source and the existing path is the destination.
+	const bool firstExists = FileInfo::exists( first.Path );
+	if ( firstExists == FileInfo::exists( second.Path ) )
+		return false;
+	const size_t sourceIndex = firstExists ? secondIndex : firstIndex;
+	const size_t destinationIndex = firstExists ? firstIndex : secondIndex;
+	const WatcherFSEvents* sourceWatch = firstExists ? secondWatch : firstWatch;
+	const WatcherFSEvents* destinationWatch = firstExists ? firstWatch : secondWatch;
+	const std::string& sourcePath = mEventBuffer[sourceIndex].Path;
+	const std::string& destinationPath = mEventBuffer[destinationIndex].Path;
+
+	// Inodes are volume-scoped, and a hard-linked file has no single identity to follow.
+	struct stat sourceRootStat;
+	struct stat destinationStat;
+	if ( stat( sourceWatch->Directory.c_str(), &sourceRootStat ) != 0 ||
+		 stat( destinationPath.c_str(), &destinationStat ) != 0 )
+		return false;
+	if ( static_cast<Uint64>( destinationStat.st_ino ) != first.inode ||
+		 destinationStat.st_dev != sourceRootStat.st_dev ||
+		 !( S_ISDIR( destinationStat.st_mode ) ||
+			( S_ISREG( destinationStat.st_mode ) && destinationStat.st_nlink == 1 ) ) )
+		return false;
+
+	// Each registration skips its own records of this move, including the Created/Removed
+	// duplicates FSEvents emits for the same paths, so neither reports a second account of
+	// it. Other registrations covering one of the paths still see them.
+	const long moveFlags = efswFSEventStreamEventFlagItemRenamed |
+						   efswFSEventStreamEventFlagItemCreated |
+						   efswFSEventStreamEventFlagItemRemoved;
+	for ( size_t k = mInodeChains[first.inode].First; k != noEvent && k < eventCount;
+		  k = mInodeNext[k] ) {
+		const FSEvent& record = mEventBuffer[k];
+		if ( !( record.Flags & moveFlags ) )
+			continue;
+		if ( record.Path == sourcePath )
+			mClaimedBy[k] = sourceWatch;
+		else if ( record.Path == destinationPath )
+			mClaimedBy[k] = destinationWatch;
+	}
+	mMovedFrom[destinationIndex] = sourcePath;
+	return true;
 }
 
 FileWatcherFSEvents::FileWatcherFSEvents( FileWatcher* parent ) :
@@ -160,6 +382,9 @@ FileWatcherFSEvents::~FileWatcherFSEvents() {
 		std::lock_guard<std::mutex> lock( mWatchesMutex );
 		stream = stopStream();
 	}
+	// Even without a stream left to stop, a callback may still be running: a listener that
+	// removed the last watch stopped the stream from inside it.
+	waitForCallbacks();
 	releaseStreamAfterCallbacks( stream );
 
 	{
@@ -239,6 +464,14 @@ FSEventStreamRef FileWatcherFSEvents::stopStream() {
 		FSEventStreamInvalidate( stream );
 	}
 	return stream;
+}
+
+void FileWatcherFSEvents::waitForCallbacks() {
+	// A callback that removes a watch cannot wait for itself: the watch's Removed flag stops
+	// the rest of its deliveries.
+	if ( NULL != mDispatchQueue && dispatch_get_specific( &DispatchQueueIdentity ) != this )
+		dispatch_sync( mDispatchQueue, ^{
+					   } );
 }
 
 void FileWatcherFSEvents::releaseStreamAfterCallbacks( FSEventStreamRef stream ) {
@@ -338,13 +571,7 @@ void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
 		for ( WatchMap::iterator iter = mWatches.begin(); iter != mWatches.end(); ++iter ) {
 			if ( dir == iter->second->Directory ) {
 				removedWatch = iter->second;
-				mWatches.erase( iter );
-				if ( mWatching ) {
-					if ( mWatches.empty() )
-						replacedStream = stopStream();
-					else
-						rebuildStream( replacedStream );
-				}
+				replacedStream = eraseWatchLocked( iter );
 				break;
 			}
 		}
@@ -352,6 +579,7 @@ void FileWatcherFSEvents::removeWatch( const std::string& directory ) {
 
 	if ( removedWatch ) {
 		efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+		waitForCallbacks();
 		releaseStreamAfterCallbacks( replacedStream );
 	}
 }
@@ -366,17 +594,25 @@ void FileWatcherFSEvents::removeWatch( WatchID watchid ) {
 			return;
 
 		removedWatch = iter->second;
-		mWatches.erase( iter );
-		if ( mWatching ) {
-			if ( mWatches.empty() )
-				replacedStream = stopStream();
-			else
-				rebuildStream( replacedStream );
-		}
+		replacedStream = eraseWatchLocked( iter );
 	}
 
 	efDEBUG( "Removed watch %s\n", removedWatch->Directory.c_str() );
+	waitForCallbacks();
 	releaseStreamAfterCallbacks( replacedStream );
+}
+
+FSEventStreamRef FileWatcherFSEvents::eraseWatchLocked( WatchMap::iterator iter ) {
+	iter->second->Removed = true;
+	mWatches.erase( iter );
+	FSEventStreamRef replacedStream = NULL;
+	if ( mWatching ) {
+		if ( mWatches.empty() )
+			replacedStream = stopStream();
+		else
+			rebuildStream( replacedStream );
+	}
+	return replacedStream;
 }
 
 void FileWatcherFSEvents::watch() {

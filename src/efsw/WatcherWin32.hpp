@@ -51,6 +51,10 @@ RefreshResult RefreshWatch( WatcherStructWin32* pWatch );
 
 void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOverlapped );
 
+/// Reports the watch's ExtendedEvents, which the extended notification callback parsed from its
+/// buffer. Runs with the file watcher's mWatchesLock held.
+void ProcessExtendedEvents( WatcherWin32* pWatch );
+
 DWORD PendingMoveWaitTimeout( const WatcherWin32* pWatch );
 
 void FlushPendingMoves( WatcherWin32* pWatch );
@@ -95,7 +99,6 @@ class WatcherWin32 : public Watcher {
 	char* DirName;
 	sLastModifiedEvent LastModifiedEvent;
 	std::vector<PendingRenameWin32> PendingRenames;
-	std::vector<PendingRenameWin32> PendingRemovals;
 };
 
 } // namespace efsw

@@ -1,7 +1,9 @@
 #ifndef EFSW_FILEWATCHEROSX_HPP
 #define EFSW_FILEWATCHEROSX_HPP
 
+#include <atomic>
 #include <efsw/FileWatcherImpl.hpp>
+#include <efsw/RetiringWatches.hpp>
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS
 
@@ -56,13 +58,11 @@ class FileWatcherKqueue : public FileWatcherImpl {
 
 	std::vector<WatchID> mRemoveList;
 
-	long mFileDescriptorCount;
-
-	bool mAddingWatcher;
+	/// Changed by addWatch(), from any thread, and by the polling thread's rescans.
+	std::atomic<long> mFileDescriptorCount;
 
 	unsigned int mPollingFreq{ 500 };
-
-	bool isAddingWatcher() const;
+	RetiringWatches mRetiring;
 
 	bool pathInWatches( const std::string& path ) override;
 

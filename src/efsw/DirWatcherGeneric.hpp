@@ -37,16 +37,18 @@ class DirWatcherGeneric {
 
 	DirWatcherGeneric* findDirWatcherFast( std::string dir );
 
+	/// Sets the directory, after it moved, and the directories of the tree below it.
+	void resetDirectory( std::string directory );
+
   protected:
 	bool Deleted;
 
-	DirWatcherGeneric* createDirectory( std::string newdir );
+	DirWatcherGeneric* createDirectory( const FileInfo& arrival );
 
 	void removeDirectory( std::string dir );
 
 	void moveDirectory( std::string oldDir, std::string newDir );
 
-	void resetDirectory( std::string directory );
 
 	void handleAction( const std::string& filename, unsigned long action,
 					   const std::string& oldFilename, const FileInfo& fileInfo );

@@ -30,7 +30,7 @@ FileWatcherGeneric::~FileWatcherGeneric() {
 }
 
 WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchListener* watcher,
-									  bool recursive, const std::vector<WatcherOption>& options ) {
+									  bool recursive, const std::vector<WatcherOption>& /*options*/ ) {
 	std::string dir( directory );
 
 	FileSystem::dirAddSlashAtEnd( dir );
@@ -41,7 +41,9 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		return Errors::Log::createLastError( Errors::FileNotFound, dir );
 	} else if ( !fi.isReadable() ) {
 		return Errors::Log::createLastError( Errors::FileNotReadable, dir );
-	} else if ( pathInWatches( dir ) ) {
+	}
+
+	if ( pathInWatches( dir ) ) {
 		return Errors::Log::createLastError( Errors::FileRepeated, dir );
 	}
 
@@ -58,56 +60,57 @@ WatchID FileWatcherGeneric::addWatch( const std::string& directory, FileWatchLis
 		}
 	}
 
-	mLastWatchID++;
+	WatchID id;
+	{
+		Lock lock( mWatchesLock );
+		id = ++mLastWatchID;
+	}
 
-	bool reportCrossDirectoryMoves =
-		getOptionValue( options, Options::ReportCrossDirectoryMoves, 0 ) != 0;
-	WatcherGeneric* pWatch = new WatcherGeneric( mLastWatchID, dir, watcher, this, recursive,
-												 reportCrossDirectoryMoves );
+	// Built without the lock, which would pause the polling of every other watch while the
+	// directory tree is read; its lookups of the other watches take the lock themselves. It
+	// is registered once complete, so the polling thread never sees it half built.
+	// Cross-directory move correlation is not enabled for polling in this branch, including
+	// moves inside a recursive registration. Keep the ordinary snapshot Add/Delete behavior.
+	WatcherGeneric* pWatch = new WatcherGeneric( id, dir, watcher, this, recursive );
 
 	Lock lock( mWatchesLock );
+	// Another thread may have registered the directory meanwhile.
+	if ( pathInWatches( dir ) ) {
+		delete pWatch;
+		return Errors::Log::createLastError( Errors::FileRepeated, dir );
+	}
 	mWatches.push_back( pWatch );
 
-	return pWatch->ID;
+	return id;
 }
 
 void FileWatcherGeneric::removeWatch( const std::string& directory ) {
 	std::string dir( directory );
 	FileSystem::dirAddSlashAtEnd( dir );
 
-	WatchList::iterator it = mWatches.begin();
-
-	for ( ; it != mWatches.end(); ++it ) {
+	Lock lock( mWatchesLock );
+	for ( WatchList::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		if ( ( *it )->Directory == dir ) {
-			WatcherGeneric* watch = ( *it );
-
-			Lock lock( mWatchesLock );
-
-			mWatches.erase( it );
-
-			efSAFE_DELETE( watch );
-
+			eraseWatchLocked( it );
 			return;
 		}
 	}
 }
 
 void FileWatcherGeneric::removeWatch( WatchID watchid ) {
-	WatchList::iterator it = mWatches.begin();
-
-	for ( ; it != mWatches.end(); ++it ) {
+	Lock lock( mWatchesLock );
+	for ( WatchList::iterator it = mWatches.begin(); it != mWatches.end(); ++it ) {
 		if ( ( *it )->ID == watchid ) {
-			WatcherGeneric* watch = ( *it );
-
-			Lock lock( mWatchesLock );
-
-			mWatches.erase( it );
-
-			efSAFE_DELETE( watch );
-
+			eraseWatchLocked( it );
 			return;
 		}
 	}
+}
+
+void FileWatcherGeneric::eraseWatchLocked( WatchList::iterator it ) {
+	WatcherGeneric* watch = *it;
+	mWatches.erase( it );
+	mRetiring.release( watch );
 }
 
 void FileWatcherGeneric::watch() {
@@ -122,11 +125,15 @@ void FileWatcherGeneric::run() {
 		{
 			Lock lock( mWatchesLock );
 
-			WatchList::iterator it = mWatches.begin();
-
-			for ( ; it != mWatches.end(); ++it ) {
-				( *it )->watch();
+			// A callback can remove registrations while this pass is scanning them.
+			std::vector<Watcher*>& scanned = mRetiring.beginPass();
+			scanned.assign( mWatches.begin(), mWatches.end() );
+			for ( Watcher* watch : scanned ) {
+				if ( watch->Retired )
+					continue;
+				watch->watch();
 			}
+			mRetiring.endPass();
 		}
 
 		if ( mInitOK )
@@ -156,6 +163,8 @@ std::vector<std::string> FileWatcherGeneric::directories() {
 }
 
 bool FileWatcherGeneric::pathInWatches( const std::string& path ) {
+	// The polling thread changes the directory trees of the watches while it scans them.
+	Lock lock( mWatchesLock );
 	WatchList::iterator it = mWatches.begin();
 
 	for ( ; it != mWatches.end(); ++it ) {

@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace efsw {
@@ -66,6 +67,16 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	/// Stops and invalidates the active stream. mWatchesMutex must be held by the caller.
 	FSEventStreamRef stopStream();
 
+	/// Waits until a callback running on the dispatch queue returns, unless called from one.
+	/// A removal waits whatever happened to the stream, even if replacing it failed: a running
+	/// callback may still be delivering to the removed watch, whose listener the caller may
+	/// destroy next.
+	void waitForCallbacks();
+
+	/// Marks a watch removed and erases it, then replaces or stops the stream.
+	/// mWatchesMutex must be held. @return The replaced stream, to release after callbacks.
+	FSEventStreamRef eraseWatchLocked( WatchMap::iterator iter );
+
 	/// Releases an invalidated stream after callbacks already submitted to the dispatch queue.
 	void releaseStreamAfterCallbacks( FSEventStreamRef stream );
 
@@ -83,7 +94,45 @@ class FileWatcherFSEvents : public FileWatcherImpl {
 	dispatch_queue_t mDispatchQueue;
 	std::vector<const void*> mStreamPaths;
 	std::vector<FSEvent> mEventBuffer;
+	std::vector<std::shared_ptr<WatcherFSEvents>> mWatchBuffer;
 	bool mWatching;
+
+	/// Per-callback scratch storage for cross-registration move correlation. Only touched on
+	/// the serial dispatch queue; kept as members to reuse their allocations.
+	struct InodeChain {
+		size_t First;
+		size_t Last;
+	};
+	std::unordered_map<Uint64, InodeChain> mInodeChains;
+	/// Next record with the same inode, in arrival order.
+	std::vector<size_t> mInodeNext;
+	/// The registration that must skip each record, if any.
+	std::vector<const WatcherFSEvents*> mClaimedBy;
+	/// Source path of records reported to their claiming registration as a Moved event.
+	std::vector<std::string> mMovedFrom;
+
+	/// What a path of the inode being paired is now: gone, where the inode is, or another file.
+	enum PathState { PathMissing, PathDestination, PathOther };
+	/// The rename records of the inode being paired, and what each path is now.
+	std::vector<size_t> mChainRecords;
+	std::unordered_map<std::string, PathState> mPathStates;
+	/// The paths where the inode is now: one on each volume.
+	std::vector<const std::string*> mDestinations;
+	/// Sources that cannot pair with the destination being tried.
+	std::unordered_set<std::string> mFailedSources;
+
+	/// Pairs the two rename records of moves between different registrations that both enabled
+	/// Options::ReportCrossDirectoryMoves. Fills mClaimedBy and mMovedFrom.
+	void pairCrossWatchMoves( size_t eventCount );
+	/// Pairs the rename records of one inode, whose chain starts at first.
+	void pairInode( size_t first, size_t eventCount );
+	/// Pairs a source of the inode being paired with its records at destination, at most once.
+	void pairWithDestination( const std::string& destination, Uint64 inode, size_t eventCount );
+	/// @return What path is now for the inode being paired, looked at once per inode.
+	PathState pathState( const std::string& path, Uint64 inode );
+	bool pairCrossWatchMove( size_t first, size_t second, size_t eventCount );
+	/// @return The deepest registration reporting the path, or NULL.
+	const WatcherFSEvents* reportingWatch( const std::string& path ) const;
 
 	bool pathInWatches( const std::string& path ) override;
 };

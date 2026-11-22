@@ -46,7 +46,6 @@ UTEST( InotifyOverlapping, RecursiveAncestorThenRecursiveDescendant ) {
 	EXPECT_EQ( efsw::Errors::FileOverlapping, watchB );
 
 	fileWatcher.watch();
-	sleepMs( 300 );
 
 	// The existing recursive tree must be unaffected by the rejected call.
 	EXPECT_TRUE( createFile( sub + "/file.txt", "content" ) );
@@ -75,7 +74,6 @@ UTEST( InotifyOverlapping, RecursiveAncestorThenNonRecursiveDescendant ) {
 	EXPECT_EQ( efsw::Errors::FileOverlapping, watchB );
 
 	fileWatcher.watch();
-	sleepMs( 300 );
 
 	EXPECT_TRUE( createFile( sub + "/file.txt", "content" ) );
 	EXPECT_TRUE( listenerA.waitForActions( efsw::Actions::Add, "file.txt", 3000 ) );
@@ -103,7 +101,6 @@ UTEST( InotifyOverlapping, DescendantThenRecursiveAncestor ) {
 	EXPECT_EQ( efsw::Errors::FileOverlapping, watchB );
 
 	fileWatcher.watch();
-	sleepMs( 300 );
 
 	// Registration order must not change the result, and no partial
 	// registration of the rejected recursive ancestor may exist.
@@ -155,7 +152,6 @@ UTEST( InotifyOverlapping, NonRecursiveAncestorWithRecursiveDescendantAllowed ) 
 	ASSERT_TRUE( watchB > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 300 );
 
 	// Both watches must keep working independently.
 	EXPECT_TRUE( createFile( root + "/root_file.txt", "content" ) );

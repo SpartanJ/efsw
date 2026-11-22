@@ -1,5 +1,6 @@
 #include <efsw/Debug.hpp>
 #include <efsw/FileSystem.hpp>
+#include <efsw/FileWatcherWin32.hpp>
 #include <efsw/String.hpp>
 #include <efsw/WatcherWin32.hpp>
 
@@ -11,11 +12,6 @@
 namespace efsw {
 
 static constexpr ULONGLONG pendingMoveTimeoutMs = 100;
-
-static std::string parentPath( const std::string& path ) {
-	std::size_t separator = path.find_last_of( "/\\" );
-	return separator == std::string::npos ? "" : path.substr( 0, separator + 1 );
-}
 
 struct EFSW_FILE_NOTIFY_EXTENDED_INFORMATION_EX {
 	DWORD NextEntryOffset;
@@ -64,6 +60,9 @@ void WatchCallbackOld( WatcherWin32* pWatch ) {
 	PFILE_NOTIFY_INFORMATION pNotify;
 	size_t offset = 0;
 	do {
+		// A listener removed this watch: the rest of the buffer is not reported.
+		if ( pWatch->StopNow )
+			break;
 		bool skip = false;
 
 		pNotify = (PFILE_NOTIFY_INFORMATION)&pWatch->Buffer[offset];
@@ -126,63 +125,33 @@ void WatchCallbackEx( WatcherWin32* pWatch ) {
 		}
 	} while ( pNotify->NextEntryOffset != 0 );
 
-	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
-		const ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
-		const std::string& nfile = event.FileName;
-		bool skip = false;
+	ProcessExtendedEvents( pWatch );
+}
 
-		if ( pWatch->ReportCrossDirectoryMoves && pWatch->Recursive &&
-			 event.Action == FILE_ACTION_REMOVED && event.FileId.QuadPart != 0 ) {
-			PendingRenameWin32 pending;
-			pending.FileName = nfile;
-			pending.FileId = event.FileId;
-			pending.CreatedAt = GetTickCount64();
-			pWatch->PendingRemovals.emplace_back( std::move( pending ) );
+void ProcessExtendedEvents( WatcherWin32* pWatch ) {
+	FileWatcherWin32* fileWatcher = static_cast<FileWatcherWin32*>( pWatch->Watch );
+	for ( size_t i = 0; i < pWatch->ExtendedEvents.size(); i++ ) {
+		// A listener removed this watch: the rest of the buffer is not reported.
+		if ( pWatch->StopNow )
+			break;
+		ExtendedEventWin32& event = pWatch->ExtendedEvents[i];
+
+		// Removed and added records may arrive from different watch handles in either order.
+		// The FileWatcher-level matcher owns both held sides and consumes matched records.
+		if ( FileWatcherWin32::isCrossWatchCandidate( pWatch, event.Action, event.FileId ) ) {
+			fileWatcher->holdOrMatchCrossWatchEvent( pWatch, event.Action,
+													 std::move( event.FileName ), event.FileId );
 			continue;
 		}
+		// Anything reported immediately must not overtake a held Add/Remove of its path, nor,
+		// when it takes the path away, one inside it.
+		if ( pWatch->ReportCrossDirectoryMoves )
+			fileWatcher->flushCrossWatchEventsFor( pWatch, event.FileName,
+												   FILE_ACTION_RENAMED_OLD_NAME == event.Action ||
+													   FILE_ACTION_REMOVED == event.Action );
 
-		if ( pWatch->ReportCrossDirectoryMoves && pWatch->Recursive &&
-			 event.Action == FILE_ACTION_ADDED && event.FileId.QuadPart != 0 ) {
-			size_t matches = 0;
-			auto source = pWatch->PendingRemovals.end();
-			for ( auto it = pWatch->PendingRemovals.begin(); it != pWatch->PendingRemovals.end();
-				  ++it ) {
-				if ( it->FileId.QuadPart == event.FileId.QuadPart ) {
-					source = it;
-					matches++;
-				}
-			}
-
-			if ( matches == 1 ) {
-				FileInfo destination( std::string( pWatch->DirName ) + nfile );
-				bool identityMatches =
-					destination.Inode != 0 &&
-					destination.Inode == static_cast<Uint64>( event.FileId.QuadPart );
-				bool unambiguousIdentity =
-					destination.isDirectory() ||
-					( destination.isRegularFile() && destination.LinkCount == 1 );
-				if ( parentPath( source->FileName ) != parentPath( nfile ) && identityMatches &&
-					 unambiguousIdentity ) {
-					std::string oldFile( source->FileName );
-					pWatch->PendingRemovals.erase( source );
-					pWatch->Watch->handleAction( pWatch, nfile, FILE_ACTION_RENAMED_NEW_NAME,
-												 oldFile );
-					continue;
-				}
-			}
-
-			if ( matches != 0 ) {
-				for ( auto it = pWatch->PendingRemovals.begin();
-					  it != pWatch->PendingRemovals.end(); ) {
-					if ( it->FileId.QuadPart == event.FileId.QuadPart ) {
-						pWatch->Watch->handleAction( pWatch, it->FileName, FILE_ACTION_REMOVED );
-						it = pWatch->PendingRemovals.erase( it );
-					} else {
-						++it;
-					}
-				}
-			}
-		}
+		const std::string& nfile = event.FileName;
+		bool skip = false;
 
 		if ( FILE_ACTION_MODIFIED == event.Action ) {
 			FileInfo fifile( std::string( pWatch->DirName ) + nfile );
@@ -236,17 +205,15 @@ DWORD PendingMoveWaitTimeout( const WatcherWin32* pWatch ) {
 	auto updateTimeout = [&]( const std::vector<PendingRenameWin32>& pending ) {
 		for ( const PendingRenameWin32& event : pending ) {
 			const ULONGLONG elapsed = now - event.CreatedAt;
-			const DWORD remaining =
-				elapsed >= pendingMoveTimeoutMs
-					? 0
-					: static_cast<DWORD>( pendingMoveTimeoutMs - elapsed );
+			const DWORD remaining = elapsed >= pendingMoveTimeoutMs
+										? 0
+										: static_cast<DWORD>( pendingMoveTimeoutMs - elapsed );
 			if ( remaining < timeout )
 				timeout = remaining;
 		}
 	};
 
 	updateTimeout( pWatch->PendingRenames );
-	updateTimeout( pWatch->PendingRemovals );
 	return timeout;
 }
 
@@ -265,7 +232,6 @@ void FlushPendingMoves( WatcherWin32* pWatch ) {
 	};
 
 	flush( pWatch->PendingRenames );
-	flush( pWatch->PendingRemovals );
 }
 
 /// Unpacks events and passes them to a user defined callback.
@@ -281,7 +247,7 @@ void CALLBACK WatchCallback( DWORD dwNumberOfBytesTransfered, LPOVERLAPPED lpOve
 		if ( nullptr != pWatch && !pWatch->StopNow ) {
 			/// Missed file actions due to buffer overflowed
 			pWatch->PendingRenames.clear();
-			pWatch->PendingRemovals.clear();
+			static_cast<FileWatcherWin32*>( pWatch->Watch )->discardCrossWatchEvents( pWatch );
 			std::string dir = pWatch->DirName;
 			FileSystem::dirRemoveSlashAtEnd( dir );
 			pWatch->Listener->handleMissedFileActions( pWatch->ID, dir );

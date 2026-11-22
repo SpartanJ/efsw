@@ -45,7 +45,7 @@ UTEST( Symlink, FollowSymlinkToDirectory ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 
 	listener.clearEvents();
 
@@ -89,13 +89,14 @@ UTEST( Symlink, SymlinkTargetOutsideScope ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 
 	listener.clearEvents();
 
 	std::string fileInOutside = outsideDir + "/outside_file.txt";
 	EXPECT_TRUE( createFile( fileInOutside, "content" ) );
-	ASSERT_FALSE( listener.waitForActions( efsw::Actions::Add, "outside_file.txt" ) );
+	EXPECT_TRUE( waitForAllPending( listener, testDir ) );
+	ASSERT_EQ( -1, listener.indexOf( efsw::Actions::Add, "outside_file.txt" ) );
 
 	fileWatcher.removeWatch( testDir );
 	removeDirectory( testDir );

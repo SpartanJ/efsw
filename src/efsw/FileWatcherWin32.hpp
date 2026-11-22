@@ -6,7 +6,9 @@
 #if EFSW_PLATFORM == EFSW_PLATFORM_WIN32
 
 #include <efsw/WatcherWin32.hpp>
+#include <list>
 #include <map>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -44,6 +46,29 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	/// @return Returns a list of the directories that are being watched
 	std::vector<std::string> directories() override;
 
+	// Cross-watch move correlation. All of these run with mWatchesLock held.
+
+	/// @return True when the event is an Add/Remove half that may belong to a move between
+	/// directories and must go through holdOrMatchCrossWatchEvent().
+	static bool isCrossWatchCandidate( const WatcherWin32* watch, DWORD action,
+									   const LARGE_INTEGER& fileId );
+	/// Pairs the half with a held opposite half and reports a Moved event, or holds it until
+	/// the opposite half arrives or the wait interval expires.
+	void holdOrMatchCrossWatchEvent( WatcherWin32* watch, DWORD action, std::string fileName,
+									 const LARGE_INTEGER& fileId );
+	/// Reports the held halves of a watch that concern a path or one of its parent
+	/// directories, oldest first, so an event reported immediately cannot overtake them.
+	/// @param withContents Also those inside the path, for an event that takes the path away,
+	/// such as a rename's old name: they would otherwise be reported after it, at a path that
+	/// no longer exists.
+	void flushCrossWatchEventsFor( WatcherWin32* watch, const std::string& fileName,
+								   bool withContents = false );
+	/// @return Milliseconds until the oldest held half expires, or INFINITE.
+	DWORD crossWatchTimeout() const;
+	/// Reports every held half whose wait interval expired, in arrival order.
+	void flushCrossWatchEvents();
+	void discardCrossWatchEvents( WatcherWin32* watch );
+
   protected:
 	HANDLE mIOCP;
 	Watches mWatches;
@@ -53,6 +78,30 @@ class FileWatcherWin32 : public FileWatcherImpl {
 	WatchID mLastWatchID;
 	Thread* mThread;
 	Mutex mWatchesLock;
+	struct CrossWatchEvent {
+		WatcherWin32* Watch;
+		std::string FileName;
+		LONGLONG FileId;
+		ULONGLONG CreatedAt;
+		bool Removed;
+		ULONGLONG Sequence;
+	};
+	typedef std::list<CrossWatchEvent> CrossWatchEvents;
+	/// Held Add/Remove halves in arrival order. Arrival order is also expiry order.
+	CrossWatchEvents mCrossWatchEvents;
+	/// Reused copy of mWatches, flushed when the completion wait times out.
+	std::vector<WatcherStructWin32*> mFlushedWatches;
+	/// Indexes into mCrossWatchEvents: by file identity, by watch-relative name, ordered so that
+	/// the names inside a directory are one range, and by sequence.
+	std::unordered_multimap<LONGLONG, CrossWatchEvents::iterator> mCrossWatchById;
+	std::multimap<std::string, CrossWatchEvents::iterator> mCrossWatchByName;
+	std::unordered_map<ULONGLONG, CrossWatchEvents::iterator> mCrossWatchBySequence;
+	/// Reused list of the sequences of the held halves a flush reports.
+	std::vector<ULONGLONG> mFlushedSequences;
+	ULONGLONG mCrossWatchSequence{ 0 };
+
+	void emitCrossWatchEvent( CrossWatchEvents::iterator it );
+	void eraseCrossWatchEvent( CrossWatchEvents::iterator it );
 
 	bool pathInWatches( const std::string& path ) override;
 

@@ -20,7 +20,6 @@ UTEST( MoveFromUnwatched, FileModificationEvents ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
 
 	std::string fileInWatched = watchedDir + "/moved_file.txt";
 	EXPECT_TRUE( renameFile( fileInUnwatched, fileInWatched ) );
@@ -30,7 +29,6 @@ UTEST( MoveFromUnwatched, FileModificationEvents ) {
 	listener.clearEvents();
 
 	EXPECT_TRUE( writeFile( fileInWatched, " modified content" ) );
-	sleepMs( 100 );
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "moved_file.txt" ) );
 
 	fileWatcher.removeWatch( watchedDir );
@@ -57,7 +55,7 @@ UTEST( RenameWatched, FolderChildrenAddModifiedDelete ) {
 	EXPECT_TRUE( watchId > 0 );
 
 	fileWatcher.watch();
-	sleepMs( 100 );
+	EXPECT_TRUE( waitForPending( listener, testDir ) );
 	listener.clearEvents();
 
 	std::string renamedSubDir = testDir + "/renamed_subdir";
@@ -69,7 +67,6 @@ UTEST( RenameWatched, FolderChildrenAddModifiedDelete ) {
 
 	std::string renamedFile1 = renamedSubDir + "/child1.txt";
 	EXPECT_TRUE( writeFile( renamedFile1, " modified" ) );
-	sleepMs( 100 );
 
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Modified, "child1.txt" ) );
 
@@ -77,7 +74,6 @@ UTEST( RenameWatched, FolderChildrenAddModifiedDelete ) {
 
 	std::string newFile3 = renamedSubDir + "/child3.txt";
 	EXPECT_TRUE( createFile( newFile3, "content3" ) );
-	sleepMs( 100 );
 
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "child3.txt" ) );
 
@@ -85,7 +81,6 @@ UTEST( RenameWatched, FolderChildrenAddModifiedDelete ) {
 
 	std::string file2Path = renamedSubDir + "/child2.txt";
 	EXPECT_TRUE( removeFile( file2Path ) );
-	sleepMs( 100 );
 
 	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Delete, "child2.txt" ) );
 

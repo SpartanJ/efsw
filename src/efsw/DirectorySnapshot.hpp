@@ -25,6 +25,10 @@ class DirectorySnapshot {
 
 	DirectorySnapshotDiff scan();
 
+	/// A generic or native parent resolves its directory moving or disappearing. Keep the
+	/// entries while that path is missing, so the parent can relocate their watches.
+	DirectorySnapshotDiff scan( bool keepMissingDirectory );
+
 	FileInfoList::iterator nodeInFiles( const FileInfo& fi, const FileInfoList& currentFiles );
 
 	void addFile( std::string path );

@@ -11,6 +11,26 @@
 
 using namespace efsw_test;
 
+namespace {
+
+void expectCrossDirectoryMove( TestListener& source, const std::string& oldName,
+							   TestListener& destination, const std::string& newName,
+							   const std::string& oldPath, int* utest_result ) {
+	if ( nativeCrossDirectoryMoves() ) {
+		EXPECT_TRUE( destination.waitForActions( efsw::Actions::Moved, newName ) );
+		EXPECT_TRUE( destination.checkEvent( efsw::Actions::Moved, newName, oldPath ) );
+		EXPECT_EQ( -1, source.indexOf( efsw::Actions::Delete, oldName ) );
+		EXPECT_EQ( -1, destination.indexOf( efsw::Actions::Add, newName ) );
+	} else {
+		EXPECT_TRUE( source.waitForActions( efsw::Actions::Delete, oldName ) );
+		EXPECT_TRUE( destination.waitForActions( efsw::Actions::Add, newName ) );
+		EXPECT_EQ( -1, source.indexOf( efsw::Actions::Moved, oldName ) );
+		EXPECT_EQ( -1, destination.indexOf( efsw::Actions::Moved, newName ) );
+	}
+}
+
+} // namespace
+
 UTEST( Moved, RenameFile ) {
 	std::string testDir = getTemporaryDirectory();
 	EXPECT_TRUE( createDirectory( testDir ) );
@@ -110,7 +130,120 @@ UTEST( Moved, MoveFileBetweenDirectories ) {
 
 #if EFSW_PLATFORM == EFSW_PLATFORM_INOTIFY || EFSW_PLATFORM == EFSW_PLATFORM_FSEVENTS || \
 	EFSW_PLATFORM == EFSW_PLATFORM_KQUEUE || EFSW_PLATFORM == EFSW_PLATFORM_WIN32
-UTEST( Moved, CrossDirectoryBetweenIndependentWatchesStaysDeleteAdd ) {
+UTEST( Moved, CrossDirectoryBetweenIndependentWatchesIsMoved ) {
+	std::string sourceDir = getTemporaryDirectory() + "_source";
+	std::string destinationDir = getTemporaryDirectory() + "_destination";
+	EXPECT_TRUE( createDirectory( sourceDir ) );
+	EXPECT_TRUE( createDirectory( destinationDir ) );
+
+	std::string sourceFile = sourceDir + "/file.txt";
+	std::string destinationFile = destinationDir + "/file.txt";
+	std::string canonicalSource;
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
+	EXPECT_TRUE( fileWatcher.addWatch( sourceDir, &listener, true, options ) > 0 );
+	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &listener, true, options ) > 0 );
+
+	fileWatcher.watch();
+	EXPECT_TRUE( createFile( sourceDir + "/source_watch_ready" ) );
+	EXPECT_TRUE( createFile( destinationDir + "/destination_watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "source_watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "destination_watch_ready" ) );
+	listener.clearEvents();
+	EXPECT_TRUE( createFile( sourceFile, "test content" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	canonicalSource = efsw::FileSystem::getRealPath( sourceFile );
+	listener.clearEvents();
+
+	EXPECT_TRUE( renameFile( sourceFile, destinationFile ) );
+	expectCrossDirectoryMove( listener, "file.txt", listener, "file.txt", canonicalSource,
+							  utest_result );
+
+	fileWatcher.removeWatch( sourceDir );
+	fileWatcher.removeWatch( destinationDir );
+	removeDirectory( sourceDir );
+	removeDirectory( destinationDir );
+}
+
+UTEST( Moved, CrossDirectoryBetweenNonRecursiveWatchesIsMoved ) {
+	std::string sourceDir = getTemporaryDirectory() + "_source";
+	std::string destinationDir = getTemporaryDirectory() + "_destination";
+	EXPECT_TRUE( createDirectory( sourceDir ) );
+	EXPECT_TRUE( createDirectory( destinationDir ) );
+
+	std::string sourceFile = sourceDir + "/file.txt";
+	std::string destinationFile = destinationDir + "/file.txt";
+	std::string canonicalSource;
+
+	TestListener listener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
+	EXPECT_TRUE( fileWatcher.addWatch( sourceDir, &listener, false, options ) > 0 );
+	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &listener, false, options ) > 0 );
+
+	fileWatcher.watch();
+	EXPECT_TRUE( createFile( sourceDir + "/source_watch_ready" ) );
+	EXPECT_TRUE( createFile( destinationDir + "/destination_watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "source_watch_ready" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "destination_watch_ready" ) );
+	listener.clearEvents();
+	EXPECT_TRUE( createFile( sourceFile, "test content" ) );
+	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	canonicalSource = efsw::FileSystem::getRealPath( sourceFile );
+	listener.clearEvents();
+
+	EXPECT_TRUE( renameFile( sourceFile, destinationFile ) );
+	expectCrossDirectoryMove( listener, "file.txt", listener, "file.txt", canonicalSource,
+							  utest_result );
+
+	fileWatcher.removeWatch( sourceDir );
+	fileWatcher.removeWatch( destinationDir );
+	removeDirectory( sourceDir );
+	removeDirectory( destinationDir );
+}
+
+UTEST( Moved, CrossDirectoryBetweenWatchesUsesDestinationListener ) {
+	std::string sourceDir = getTemporaryDirectory() + "_source";
+	std::string destinationDir = getTemporaryDirectory() + "_destination";
+	EXPECT_TRUE( createDirectory( sourceDir ) );
+	EXPECT_TRUE( createDirectory( destinationDir ) );
+
+	std::string sourceFile = sourceDir + "/file.txt";
+	std::string destinationFile = destinationDir + "/file.txt";
+	TestListener sourceListener;
+	TestListener destinationListener;
+	efsw::FileWatcher fileWatcher( useGeneric, 100 );
+	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
+	EXPECT_TRUE( fileWatcher.addWatch( sourceDir, &sourceListener, false, options ) > 0 );
+	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &destinationListener, false, options ) > 0 );
+
+	fileWatcher.watch();
+	EXPECT_TRUE( createFile( sourceDir + "/source_watch_ready" ) );
+	EXPECT_TRUE( createFile( destinationDir + "/destination_watch_ready" ) );
+	EXPECT_TRUE( sourceListener.waitForActions( efsw::Actions::Add, "source_watch_ready" ) );
+	EXPECT_TRUE(
+		destinationListener.waitForActions( efsw::Actions::Add, "destination_watch_ready" ) );
+	sourceListener.clearEvents();
+	destinationListener.clearEvents();
+	EXPECT_TRUE( createFile( sourceFile, "test content" ) );
+	EXPECT_TRUE( sourceListener.waitForActions( efsw::Actions::Add, "file.txt" ) );
+	std::string canonicalSource = efsw::FileSystem::getRealPath( sourceFile );
+	sourceListener.clearEvents();
+	destinationListener.clearEvents();
+
+	EXPECT_TRUE( renameFile( sourceFile, destinationFile ) );
+	expectCrossDirectoryMove( sourceListener, "file.txt", destinationListener, "file.txt",
+							  canonicalSource, utest_result );
+
+	fileWatcher.removeWatch( sourceDir );
+	fileWatcher.removeWatch( destinationDir );
+	removeDirectory( sourceDir );
+	removeDirectory( destinationDir );
+}
+
+UTEST( Moved, CrossDirectoryWithoutOptionOnBothWatchesStaysDeleteAdd ) {
 	std::string sourceDir = getTemporaryDirectory() + "_source";
 	std::string destinationDir = getTemporaryDirectory() + "_destination";
 	EXPECT_TRUE( createDirectory( sourceDir ) );
@@ -124,7 +257,7 @@ UTEST( Moved, CrossDirectoryBetweenIndependentWatchesStaysDeleteAdd ) {
 	efsw::FileWatcher fileWatcher( useGeneric, 100 );
 	std::vector<efsw::WatcherOption> options = { { efsw::Options::ReportCrossDirectoryMoves, 1 } };
 	EXPECT_TRUE( fileWatcher.addWatch( sourceDir, &listener, true, options ) > 0 );
-	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &listener, true, options ) > 0 );
+	EXPECT_TRUE( fileWatcher.addWatch( destinationDir, &listener, true ) > 0 );
 
 	fileWatcher.watch();
 	EXPECT_TRUE( createFile( sourceDir + "/source_watch_ready" ) );
@@ -168,10 +301,8 @@ UTEST( Moved, CrossDirectoryDirectoryKeepsSubtreeWatched ) {
 	listener.clearEvents();
 
 	EXPECT_TRUE( renameFile( movedDir, destinationMovedDir ) );
-	EXPECT_TRUE( listener.waitForActions( efsw::Actions::Moved, "moved_dir" ) );
-	EXPECT_TRUE( listener.checkEvent( efsw::Actions::Moved, "moved_dir", canonicalSource ) );
-	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Delete, "moved_dir" ) );
-	EXPECT_FALSE( listener.checkEvent( efsw::Actions::Add, "moved_dir" ) );
+	expectCrossDirectoryMove( listener, "moved_dir", listener, "moved_dir", canonicalSource,
+							  utest_result );
 
 	listener.clearEvents();
 	EXPECT_TRUE( writeFile( destinationMovedDir + "/child.txt", "modified" ) );
